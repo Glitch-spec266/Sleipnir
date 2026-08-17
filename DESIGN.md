@@ -339,7 +339,159 @@ the cheapest option in dollars may be the one that runs you out of window.
   downshifting a task that needs a large context window is not a cost decision,
   it is a correctness failure.
 
+---
+
+# Phase 2 — executor
+
+One adapter interface, three implementations, plus the machinery around them:
+per-task timeout, concurrency cap (default 3), graceful cancellation,
+structured stderr capture, and a dry-run mode.
+
+**No Phase 1 schema changes were needed.** Every result the executor composes
+fits the approved models as written. That is the strongest evidence available
+that the schema was right.
+
+## The one deliberate deviation from the brief
+
+The brief says an adapter "returns a result record". Adapters return a
+`DispatchOutcome` — raw observed facts — and the **executor** composes the
+`AttemptFinished` record.
+
+An adapter cannot build a correct record. It does not know the attempt's cost
+(metered pricing is Phase 3's price snapshot), and it does not know whether
+acceptance checks passed, because those run after it returns. Building the
+record in the adapter would either duplicate that logic three times or drag
+pricing into the adapter layer. So: adapters report, the executor decides.
+
+## Module layout
+
+```
+adapters/base.py       DispatchRequest / DispatchOutcome / DispatchPreview
+adapters/claude.py     `claude -p` headless      (verified against real output)
+adapters/codex.py      `codex exec`              (UNVERIFIED — see below)
+adapters/openrouter.py plain HTTP via httpx      (MockTransport-tested)
+process.py             async subprocess: streaming, timeout, process-group kill
+context.py             InputContract -> the exact prompt a subagent receives
+artifacts.py           attempt workspace layout, output collection
+checks.py              acceptance checks
+runlog.py              append-only results.jsonl, fsync per record
+executor.py            readiness, concurrency, cancellation, record composition
+```
+
+The fake used in tests sits at the **spawn boundary**, not in place of
+`ProcessRunner`. Mocking one layer up would leave the streaming, timeout, drain
+and kill logic — the code most likely to deadlock, and least likely to be
+noticed doing it — completely untested.
+
+## What the live run found that the fakes could not
+
+118 tests passed against fakes. Then I ran it end to end against the real CLI
+with two dependent tasks. It found three real defects.
+
+**1. Session ids collided on every re-run.** The Claude adapter seeded its
+`--session-id` from `uuid5(task, attempt)` — deterministic, for traceability.
+Re-dispatching attempt 1 of a task therefore reused an id the CLI already knew:
+
+```
+Error: Session ID 150180bb-... is already in use.
+```
+
+Every resume and every re-run failed instantly with `provider_error`, burning a
+retry before any work started. With `max_attempts=1` the task would simply die.
+This is the recovery path the entire Phase 1 design exists to protect, and it
+was broken in a way no fake would ever reproduce. Session ids now fold in a
+per-execution `run_id`. Verified by clearing the log and re-dispatching attempt
+1: 2/2 succeeded, no collision.
+
+**2. Tool denials were downgrading successful work.** A subagent was denied one
+tool, worked around it, and produced correct output — and the adapter marked it
+`PARTIAL`/`tool_error` because `permission_denials` was non-empty, which would
+trigger a retry that doubles the cost for nothing. Denials are now recorded in
+`provider_meta` but do not change status. **Whether the work is good is decided
+by what landed on disk**, via the output contract and acceptance checks — never
+by provider chatter.
+
+**3. The run report read `cost=$0.0000` after doing real work**, because
+subscription spend is not metered spend. True but useless. `RunReport` now
+carries `notional_usd` alongside `cost_usd`.
+
+One further bug was caught by the fakes and is worth recording: on the
+streaming path, every HTTP error funnelled through a generic `httpx.HTTPError`
+handler and came out as retryable `PROVIDER_ERROR`. A permanent 400 would have
+consumed the entire retry ladder on a request that could never succeed. Status
+classification now has exactly one home.
+
+## Two measured facts that should change Phase 3 and 4
+
+**Every `claude -p` spawn costs ~30k cache-creation tokens before it does any
+work** — about $0.022–0.06 on Haiku for a one-word answer. Two trivial tasks in
+the smoke run cost $0.073 notional. That is a *floor*, independent of task
+size.
+
+The routing consequence is direct: **dispatching a `mechanical` task to
+`claude -p` can cost more than the work is worth.** A rename or a formatting
+pass should almost certainly go to OpenRouter, which has no system-prompt
+overhead. Phase 3's router should treat per-dispatch fixed cost as a first-class
+input, not just per-token price. (`--bare` may cut this overhead substantially,
+but it requires `ANTHROPIC_API_KEY` and so changes the billing mode from
+subscription to metered — worth measuring before relying on it.)
+
+**Window-token accounting is currently ~10x too pessimistic.** Two trivial
+tasks consumed ~300,000 `window_tokens`. Breaking down one:
+
+```
+input 1,130 + cache_write 7,284 + output 1,929 + cache_read 150,941 = 161,284
+```
+
+Cache reads are **94%** of it. The executor currently counts a cache-read token
+as equal to an input token, when it is priced at roughly a tenth. This is the
+top open question for Phase 4, and I did not change it unilaterally because it
+touches the meaning of a Phase 1 field:
+
+- **(A) Keep 1:1.** Over-estimates consumption, which is the safe direction for
+  a governor — it downshifts too eagerly rather than blowing the window.
+- **(B) Weight by price ratio** (cache reads at ~0.1). Much closer to true
+  economic consumption, but if the real subscription limit counts raw tokens
+  rather than weighted ones, this under-estimates and the governor overruns.
+
+**Recommendation: (B), but only once Phase 4 has inspected what the 5-hour
+window actually meters.** That inspection is already on the Phase 4 list, and
+guessing before it is exactly the mistake the usage-record findings warn
+against. Until then (A) stands, and it is stated in the field docs so nobody
+reads the number as economic truth.
+
+## Other decisions worth overruling
+
+- **`codex` is not installed here, so its CLI surface is unverified.** Rather
+  than hardcode remembered flags, the whole invocation is a `CodexInvocation`
+  dataclass and the usage parser recurses looking for any recognisable usage
+  block instead of indexing a known path. When it finds none it says so
+  explicitly (`usage_found: False`) rather than reporting zeros, because a
+  zeroed usage record tells the governor the call was free. Verify the flags on
+  your machine before trusting a real run.
+- **OpenRouter models have no filesystem**, so they cannot write the files an
+  `OutputContract` demands. The adapter appends a `file:<path>` fenced-block
+  protocol to the prompt and materialises what comes back, confined to the
+  attempt directory — a block claiming `../../.ssh/authorized_keys` is dropped,
+  and there is a test for it.
+- **`llm_judge` acceptance checks raise at executor construction**, not at task
+  time. A plan that cannot be fully checked must fail before anything is
+  dispatched; discovering at task 40 that a check silently passed because it
+  was unimplemented is strictly worse than refusing the plan.
+- **`json_schema` checks implement a documented subset** (type, required,
+  properties, items, enum, bounds). Full JSON Schema means the `jsonschema`
+  dependency, which is not on the sanctioned list. Anything richer should use a
+  `CommandCheck` running a real validator, which keeps the dependency in the
+  plan rather than in Sleipnir. Say the word if you want the real thing.
+- **`httpx` was added** — sanctioned by constraint 2, but it is a new runtime
+  dependency and you asked to be told.
+- **`StaticRouter` is a placeholder** implementing the `Router` protocol from a
+  fixed config table. It exists so the executor could be finished and tested
+  without hardcoding a single model name in the executor itself. Phase 3
+  replaces it.
+- **The budget governor's seam is `Executor._launch`.** Phase 4 consults it
+  before dispatch; nothing else in the executor needs to change.
+
 ## Not built, on purpose
 
-No executor, no adapters, no router, no governor, no CLI. Phase 2 begins when
-you say go.
+No router (Phase 3), no budget governor (Phase 4), no CLI (Phase 5).
