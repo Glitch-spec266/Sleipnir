@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Sleipnir run state — never commit a run directory
+/runs/
+artifacts/
+plan.json
+results.jsonl
+revisions.jsonl
+run.lock
+.sleipnir-cache/
