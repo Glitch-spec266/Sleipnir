@@ -25,6 +25,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from sleipnir.config import SleipnirConfig
 from sleipnir.projection import TaskState
 from sleipnir.router import TierRouter, required_context_tokens
@@ -38,6 +40,9 @@ from sleipnir.schema import (
     Tier,
     TokenUsage,
 )
+
+#: Model name the CLI uses for messages it generated itself, never an API call.
+SYNTHETIC_MODEL = "<synthetic>"
 
 DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 WINDOW_HOURS = 5
@@ -102,6 +107,12 @@ def parse_usage_line(payload: dict[str, Any]) -> UsageRecord | None:
         return None
     usage = message.get("usage")
     if not isinstance(usage, dict):
+        return None
+
+    # The CLI writes its own generated messages under model "<synthetic>".
+    # They carry a usage block but were never API calls, so costing them
+    # invents spend that never happened. Nine of them in the local corpus.
+    if message.get("model") == SYNTHETIC_MODEL:
         return None
 
     stamp = payload.get("timestamp")
@@ -228,6 +239,162 @@ def current_window(
     return start, start + span
 
 
+# ---------------------------------------------------------------------------
+# Real window utilisation, read from the credential the `claude` CLI holds
+# ---------------------------------------------------------------------------
+#
+# Everything above estimates window consumption by summing tokens. That is a
+# proxy, and a shaky one: cache reads are ~97% of all input and nobody outside
+# Anthropic knows what weight the meter gives them (a 1:1 sum and a
+# price-weighted sum of the same corpus differ by 6.4x).
+#
+# The CLI does not estimate. It asks `GET /api/oauth/usage` and is told a
+# percentage. Crucially the response carries *no* token count and, on a
+# subscription, `limit_dollars`/`used_dollars`/`remaining_dollars` are all null
+# — so the true figure is a percentage and nothing else. No amount of local
+# summing could have reconstructed it.
+#
+# Reading it needs the OAuth token in ~/.claude/.credentials.json. That is a
+# deliberate, operator-approved exception to the rule that Sleipnir never
+# touches provider credentials, and it is deliberately narrow:
+#
+#   * read-only, and only ``claudeAiOauth.accessToken`` — the same file also
+#     holds unrelated plugin secrets, which are never read;
+#   * the token is never logged, never persisted, never placed in an exception
+#     message, and never reaches a BudgetSnapshot or the Manifest;
+#   * every failure — missing file, changed shape, expired token, HTTP error,
+#     no network — falls back to local estimation rather than raising.
+#
+# The percentage is folded back into the existing token units by solving for
+# the limit that makes local accounting agree with the true utilisation:
+#
+#     implied_limit = locally_measured_used / (utilisation / 100)
+#
+# which is self-calibrating: whatever weight the real meter gives cache reads,
+# the implied limit absorbs it, and every downstream headroom calculation keeps
+# working in tokens without a new unit.
+
+OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+
+#: Below this the division above is numerically unstable and would imply a
+#: wildly wrong limit, so utilisation is reported but no limit is derived.
+MIN_UTILISATION_FOR_IMPLIED_LIMIT = 5.0
+
+#: Utilisation is re-read at most this often. Three reasons, in order of how
+#: much they matter: the endpoint is itself rate-limited (observed returning 429
+#: after a handful of calls in quick succession), so a governor that asked per
+#: dispatch would throttle itself out of the reading it depends on; the window
+#: moves in minutes rather than seconds; and it is a network call sitting on the
+#: dispatch path. Failures are cached for the same interval as successes, so a
+#: 429 cannot trigger a retry storm against the endpoint that reports throttling.
+UTILISATION_TTL_S = 300.0
+
+
+@dataclass(frozen=True, slots=True)
+class WindowUtilization:
+    """What the meter itself reports. Percentages, never tokens."""
+
+    five_hour_percent: float
+    resets_at: datetime | None = None
+    seven_day_percent: float | None = None
+    seven_day_resets_at: datetime | None = None
+    source: str = OAUTH_USAGE_URL
+
+    def implied_limit_tokens(self, used_tokens: int) -> int | None:
+        """Token limit consistent with ``used_tokens`` being this percentage."""
+        if self.five_hour_percent < MIN_UTILISATION_FOR_IMPLIED_LIMIT:
+            return None
+        if used_tokens <= 0:
+            return None
+        return int(used_tokens / (self.five_hour_percent / 100.0))
+
+
+def read_oauth_token(path: Path = DEFAULT_CREDENTIALS_PATH) -> str | None:
+    """Read the CLI's OAuth access token, or None.
+
+    Returns None for every failure mode. The token is never logged and never
+    appears in an exception raised from here; a caller that cannot obtain it
+    falls back to estimating locally.
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    oauth = payload.get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        return None
+    expires_at = oauth.get("expiresAt")
+    if isinstance(expires_at, (int, float)):
+        # Stored in milliseconds. An expired token would 401; skip the round trip.
+        if expires_at / 1000.0 <= datetime.now(UTC).timestamp():
+            return None
+    token = oauth.get("accessToken")
+    return token if isinstance(token, str) and token else None
+
+
+def _parse_bucket(node: Any) -> tuple[float | None, datetime | None]:
+    if not isinstance(node, dict):
+        return None, None
+    percent = node.get("utilization")
+    if not isinstance(percent, (int, float)) or isinstance(percent, bool):
+        return None, None
+    resets = node.get("resets_at")
+    parsed_reset: datetime | None = None
+    if isinstance(resets, str):
+        try:
+            parsed_reset = datetime.fromisoformat(resets.replace("Z", "+00:00"))
+        except ValueError:
+            parsed_reset = None
+    return float(percent), parsed_reset
+
+
+def fetch_window_utilization(
+    *,
+    token: str | None = None,
+    url: str = OAUTH_USAGE_URL,
+    timeout_s: float = 10.0,
+    transport: Any = None,
+) -> WindowUtilization | None:
+    """Ask the meter. Returns None on any failure, never raises, never logs."""
+    token = token or read_oauth_token()
+    if not token:
+        return None
+    try:
+        client_kwargs: dict[str, Any] = {"timeout": timeout_s}
+        if transport is not None:
+            client_kwargs["transport"] = transport
+        with httpx.Client(**client_kwargs) as client:
+            response = client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                },
+            )
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+    except Exception:
+        # Deliberately broad. A bearer token is in scope here, and a leaked
+        # traceback is the one failure mode that would matter more than losing
+        # the reading. Falling back to local estimation is always safe.
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    five_pct, five_reset = _parse_bucket(payload.get("five_hour"))
+    if five_pct is None:
+        return None
+    seven_pct, seven_reset = _parse_bucket(payload.get("seven_day"))
+    return WindowUtilization(
+        five_hour_percent=five_pct,
+        resets_at=five_reset,
+        seven_day_percent=seven_pct,
+        seven_day_resets_at=seven_reset,
+    )
+
+
 @dataclass(slots=True)
 class DownshiftDecision:
     task_id: str
@@ -260,12 +427,17 @@ class BudgetGovernor:
         projects_dir: Path = DEFAULT_PROJECTS_DIR,
         cache_read_weight: float = 1.0,
         now: datetime | None = None,
+        read_real_utilization: bool = True,
     ) -> None:
         self.config = config
         self.router = router
         self.projects_dir = projects_dir
         self.cache_read_weight = cache_read_weight
         self._now = now
+        #: When true, prefer the meter's own percentage over the local token
+        #: estimate. Falls back silently whenever the reading is unavailable.
+        self.read_real_utilization = read_real_utilization
+        self._utilisation_cache: tuple[float, WindowUtilization | None] | None = None
         self.decisions: list[DownshiftDecision] = []
         self._plan_tiers: dict[str, Tier] = {}
         self._snapshot_cache: tuple[BudgetSnapshot, datetime] | None = None
@@ -295,6 +467,20 @@ class BudgetGovernor:
             for record in in_window
         )
 
+        # Prefer the meter's own answer to our estimate of it. The reading is a
+        # percentage, so it is folded back into token units by solving for the
+        # limit consistent with what we measured locally — self-calibrating,
+        # whatever weight the real meter gives cache reads.
+        limit = self.config.window_tokens_limit
+        utilisation = self.utilization()
+        if utilisation is not None:
+            implied = utilisation.implied_limit_tokens(used)
+            if implied is not None:
+                limit = implied
+            if utilisation.resets_at is not None:
+                end = utilisation.resets_at
+                start = end - timedelta(hours=WINDOW_HOURS)
+
         projection = (
             self.project(plan, states) if plan is not None else Projection()
         )
@@ -310,6 +496,25 @@ class BudgetGovernor:
             projected_plan_window_tokens=projection.window_tokens,
             parse_warnings=scan.warnings[:10],
         )
+
+    def utilization(self) -> WindowUtilization | None:
+        """The meter's own reading, cached briefly. None if unavailable.
+
+        Disabled by ``read_real_utilization=False``, and silently unavailable
+        whenever the credential is missing, expired, or the endpoint changes —
+        in every such case the caller keeps the local estimate.
+        """
+        if not self.read_real_utilization:
+            return None
+        now = self.now().timestamp()
+        if (
+            self._utilisation_cache is not None
+            and now - self._utilisation_cache[0] < UTILISATION_TTL_S
+        ):
+            return self._utilisation_cache[1]
+        reading = fetch_window_utilization()
+        self._utilisation_cache = (now, reading)
+        return reading
 
     # -- projection -----------------------------------------------------------
 

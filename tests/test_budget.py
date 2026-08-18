@@ -310,3 +310,210 @@ def test_snapshot_surfaces_parse_warnings(tmp_path: Path):
     gov = governor(tmp_path)
     snapshot = gov.snapshot()
     assert any("does not exist" in w for w in snapshot.parse_warnings)
+
+
+def test_synthetic_records_are_not_costed():
+    """The CLI writes its own messages under model "<synthetic>".
+
+    They carry a usage block but were never API calls, so costing them invents
+    spend that never happened. Nine appear in the local transcript corpus.
+    """
+    from sleipnir.budget import parse_usage_line
+
+    payload = {
+        "type": "assistant",
+        "timestamp": "2026-08-18T12:00:00.000Z",
+        "requestId": "req_synthetic",
+        "message": {
+            "model": "<synthetic>",
+            "usage": {"input_tokens": 5, "output_tokens": 7},
+        },
+    }
+    assert parse_usage_line(payload) is None
+
+    payload["message"]["model"] = "claude-opus-5"
+    assert parse_usage_line(payload) is not None
+
+
+# ---------------------------------------------------------------------------
+# Real window utilisation (operator-approved credential read)
+# ---------------------------------------------------------------------------
+
+
+def _creds(tmp_path, *, token="tok-abc", expires_ms=None, extra=None):
+    import json as _json
+    from datetime import UTC as _UTC, datetime as _dt, timedelta as _td
+
+    if expires_ms is None:
+        expires_ms = int((_dt.now(_UTC) + _td(hours=1)).timestamp() * 1000)
+    payload = {
+        "claudeAiOauth": {
+            "accessToken": token,
+            "refreshToken": "refresh",
+            "expiresAt": expires_ms,
+        },
+        # The same file holds unrelated plugin secrets. They must never be read.
+        "pluginSecrets": {"someplugin": {"api_token": "MUST-NOT-BE-READ"}},
+    }
+    if extra:
+        payload.update(extra)
+    p = tmp_path / ".credentials.json"
+    p.write_text(_json.dumps(payload), encoding="utf-8")
+    return p
+
+
+@pytest.mark.allow_utilization_reads
+def test_reads_only_the_oauth_access_token(tmp_path):
+    from sleipnir.budget import read_oauth_token
+
+    assert read_oauth_token(_creds(tmp_path, token="tok-xyz")) == "tok-xyz"
+
+
+@pytest.mark.allow_utilization_reads
+def test_missing_credential_file_yields_none_not_an_error(tmp_path):
+    from sleipnir.budget import read_oauth_token
+
+    assert read_oauth_token(tmp_path / "nope.json") is None
+
+
+@pytest.mark.allow_utilization_reads
+def test_expired_token_is_not_used(tmp_path):
+    """Skip the round trip rather than send a token that will 401."""
+    from sleipnir.budget import read_oauth_token
+
+    assert read_oauth_token(_creds(tmp_path, expires_ms=1)) is None
+
+
+@pytest.mark.allow_utilization_reads
+def test_unexpected_credential_shape_yields_none(tmp_path):
+    import json as _json
+
+    from sleipnir.budget import read_oauth_token
+
+    p = tmp_path / ".credentials.json"
+    p.write_text(_json.dumps({"somethingElse": {}}), encoding="utf-8")
+    assert read_oauth_token(p) is None
+
+    p.write_text("{not json", encoding="utf-8")
+    assert read_oauth_token(p) is None
+
+
+@pytest.mark.allow_utilization_reads
+def test_utilisation_is_parsed_from_the_meters_response():
+    import httpx as _httpx
+
+    from sleipnir.budget import fetch_window_utilization
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        assert request.headers["authorization"] == "Bearer tok-abc"
+        return _httpx.Response(
+            200,
+            json={
+                "five_hour": {
+                    "utilization": 77.0,
+                    "resets_at": "2026-08-18T18:20:00.481653+00:00",
+                    # Null on a subscription: there is no token count and no
+                    # dollar figure, only a percentage.
+                    "limit_dollars": None,
+                    "used_dollars": None,
+                },
+                "seven_day": {"utilization": 22.0, "resets_at": None},
+            },
+        )
+
+    reading = fetch_window_utilization(
+        token="tok-abc", transport=_httpx.MockTransport(handler)
+    )
+    assert reading is not None
+    assert reading.five_hour_percent == 77.0
+    assert reading.seven_day_percent == 22.0
+    assert reading.resets_at is not None
+
+
+@pytest.mark.allow_utilization_reads
+def test_a_failing_endpoint_degrades_to_none_rather_than_raising():
+    import httpx as _httpx
+
+    from sleipnir.budget import fetch_window_utilization
+
+    def boom(request: _httpx.Request) -> _httpx.Response:
+        raise _httpx.ConnectError("no network")
+
+    assert (
+        fetch_window_utilization(token="t", transport=_httpx.MockTransport(boom))
+        is None
+    )
+
+    def unauthorised(request: _httpx.Request) -> _httpx.Response:
+        return _httpx.Response(401, text="expired")
+
+    assert (
+        fetch_window_utilization(
+            token="t", transport=_httpx.MockTransport(unauthorised)
+        )
+        is None
+    )
+
+
+@pytest.mark.allow_utilization_reads
+def test_a_changed_response_shape_degrades_to_none():
+    import httpx as _httpx
+
+    from sleipnir.budget import fetch_window_utilization
+
+    def renamed(request: _httpx.Request) -> _httpx.Response:
+        return _httpx.Response(200, json={"5h": {"pct": 77.0}})
+
+    assert (
+        fetch_window_utilization(token="t", transport=_httpx.MockTransport(renamed))
+        is None
+    )
+
+
+def test_implied_limit_solves_for_the_limit_matching_local_accounting():
+    """The reading is a percentage; everything downstream works in tokens.
+
+    Solving limit = used / (pct/100) is self-calibrating: whatever weight the
+    real meter gives cache reads is absorbed into the implied limit, so the
+    1:1-versus-price-weighted question stops mattering.
+    """
+    from sleipnir.budget import WindowUtilization
+
+    reading = WindowUtilization(five_hour_percent=50.0)
+    assert reading.implied_limit_tokens(1_000_000) == 2_000_000
+
+    reading = WindowUtilization(five_hour_percent=77.0)
+    assert reading.implied_limit_tokens(7_700_000) == 10_000_000
+
+
+def test_implied_limit_refuses_when_utilisation_is_too_small_to_divide_by():
+    """Near zero the division explodes and would imply a wildly wrong limit."""
+    from sleipnir.budget import WindowUtilization
+
+    assert WindowUtilization(five_hour_percent=0.0).implied_limit_tokens(1_000) is None
+    assert WindowUtilization(five_hour_percent=1.0).implied_limit_tokens(1_000) is None
+    assert WindowUtilization(five_hour_percent=50.0).implied_limit_tokens(0) is None
+
+
+@pytest.mark.allow_utilization_reads
+def test_a_rate_limited_meter_degrades_and_does_not_retry_immediately():
+    """The usage endpoint is itself rate-limited — observed returning 429.
+
+    A governor that retried on 429 would throttle itself out of the very
+    reading it depends on, so a failure must be cached like a success.
+    """
+    import httpx as _httpx
+
+    from sleipnir.budget import fetch_window_utilization
+
+    calls = {"n": 0}
+
+    def throttled(request: _httpx.Request) -> _httpx.Response:
+        calls["n"] += 1
+        return _httpx.Response(429, text="rate limited")
+
+    assert (
+        fetch_window_utilization(token="t", transport=_httpx.MockTransport(throttled))
+        is None
+    )
+    assert calls["n"] == 1, "a 429 must not be retried inside a single call"

@@ -578,3 +578,109 @@ into a 2-task DAG, `--dry-run --explain` showed the routing without spending,
 - **`cache_read_weight` defaults to 1.0**, which over-estimates window
   consumption roughly tenfold. Still awaiting a decision on what the 5-hour
   window actually meters.
+
+---
+
+# The window is a percentage, not a token count
+
+Phase 4 left one question open: does the 5-hour window meter raw tokens or
+price-weighted ones? The two differ by **6.44×** on the local corpus, so
+choosing wrong meant being six times out on the only resource that binds a
+subscription run.
+
+The question turned out to be unanswerable from the client side, and the reason
+matters more than the answer.
+
+Claude Code does not estimate window consumption. The binary contains
+`fetchUtilization: GET /api/oauth/usage`, with buckets `five_hour`,
+`seven_day`, `seven_day_opus`, `seven_day_sonnet`, `seven_day_overage_included`
+and `org_spend_cap_reached`. A live call returns:
+
+```json
+{"five_hour": {"utilization": 77.0,
+               "resets_at": "2026-08-18T18:20:00+00:00",
+               "limit_dollars": null,
+               "used_dollars": null,
+               "remaining_dollars": null}}
+```
+
+**On a subscription every dollar field is null.** There is no token count and no
+limit anywhere in the response — the true figure is a percentage and nothing
+else. No amount of local summing could ever have reconstructed it, so both
+candidate weightings were answers to a question that has no client-side form.
+
+## Folding a percentage back into tokens
+
+Everything downstream — `window_headroom_tokens`, `will_exhaust_window`, the
+projection — works in tokens. Rather than introduce a second unit, the reading
+is converted by solving for the limit that makes local accounting agree with the
+true utilisation:
+
+```
+implied_limit = locally_measured_used / (utilisation / 100)
+```
+
+This is self-calibrating. Whatever weight the real meter gives cache reads is
+absorbed into the implied limit, so the 1:1-versus-price-weighted question stops
+mattering rather than being resolved. Below 5% utilisation the division is
+numerically unstable and no limit is derived.
+
+## The cost of reading it
+
+The endpoint needs the OAuth token in `~/.claude/.credentials.json`, which is a
+deliberate, operator-approved exception to the rule that Sleipnir never touches
+provider credentials. It is kept narrow:
+
+- read-only, and only `claudeAiOauth.accessToken` — the same file also holds
+  unrelated plugin secrets, which are never read;
+- the token is never logged, never persisted, never placed in an exception
+  message, and never reaches a `BudgetSnapshot` or the `Manifest`;
+- every failure — missing file, expired token, changed shape, HTTP error, no
+  network — falls back to local estimation rather than raising.
+
+Two facts found by using it, neither reachable from a fake:
+
+- **The usage endpoint is itself rate-limited.** It returned 429 after a handful
+  of calls in quick succession. A governor consulting it per dispatch would
+  throttle itself out of the reading it depends on, which makes the TTL cache
+  load-bearing rather than an optimisation. Failures are cached as hard as
+  successes so a 429 cannot start a retry storm against the endpoint that
+  reports throttling.
+- **`expiresAt` is milliseconds**, and the token is checked against it before
+  any request, so an expired credential costs no round trip.
+
+The test suite is hermetic by default: `tests/conftest.py` patches both the
+credential read and the endpoint call out, and a test that exercises them must
+opt in with `@pytest.mark.allow_utilization_reads` and a mock transport. Before
+that guard existed the suite made 18 authenticated calls per run, putting a
+bearer token on the wire every time anyone typed `pytest`.
+
+# What the second parallel build contributed
+
+Phases 3–5 were built twice, independently, from the same design document. The
+convergence was near-total — tier→model routing, transcript-derived budgets,
+deduplication on `requestId`, ignoring `iterations[]` — which is good evidence
+the architecture is determined by the problem rather than by taste.
+
+The divergences were all in places the document was silent and only measurement
+could settle:
+
+- **The `-1` price sentinel.** Five live models (`openrouter/auto`, `fusion`,
+  `pareto-code`, `bodybuilder`, `auto-beta`) price at `-1`, meaning "cost
+  depends which model this routes to". The implausible-price guard is a `>`
+  test and does not catch a negative, so unguarded they read as
+  −$1,000,000/Mtok and win every routing decision forever.
+- **Non-finite prices.** `float()` accepts `"Infinity"`, `"1e400"` and `"NaN"`.
+  NaN is the dangerous one: every comparison against it is False, so it slips
+  past both the negative and implausible guards and then silently destroys any
+  ordering built on it.
+- **`<synthetic>` records.** The CLI writes its own generated messages under
+  that model name. They carry a usage block but were never API calls.
+- **Attempt rotation.** `resolve()` now takes the *n*-th cheapest accepted
+  candidate on attempt *n*. Free models rate-limit individually — one returned
+  429 while its neighbour answered instantly — so an identical retry fails
+  identically. It also yields tier escalation with no escalation ladder.
+- **A refusal that did not refuse.** `test_no_catalogue_and_no_network_refuses_to_run`
+  simulated "no network" by deleting the cache without blocking the fetch, so on
+  any networked machine the live fetch succeeded and the refusal never fired.
+  One of the project's stated safety guarantees was passing by accident.

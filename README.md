@@ -44,7 +44,7 @@ src/sleipnir/router.py       tier -> model, with full routing rationale
 src/sleipnir/budget.py       5-hour window accounting and downshift
 src/sleipnir/planner.py      prompt -> validated task DAG
 src/sleipnir/cli.py          plan / run / status / resume / explain
-tests/                       199 tests, including the executable form of the
+tests/                       217 tests, including the executable form of the
                              manifest size bound
 ```
 
