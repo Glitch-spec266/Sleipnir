@@ -495,3 +495,86 @@ reads the number as economic truth.
 ## Not built, on purpose
 
 No router (Phase 3), no budget governor (Phase 4), no CLI (Phase 5).
+
+---
+
+# Phases 3–5 — router, budget governor, CLI
+
+## Phase 3 — router
+
+`pricing.py` fetches the OpenRouter catalogue at runtime and caches it with a
+TTL; `config.py` reads a TOML policy file; `router.py` resolves tier → model.
+**No model name and no price appears anywhere in the source.**
+
+Three refusals worth stating plainly:
+
+- **A model with no usable price is dropped, never defaulted to zero.** A
+  zero-priced model is one the router would always choose.
+- **No catalogue and no cache is a hard error**, not a fallback to guesses. A
+  stale cache *is* used (with `stale=True` surfaced), because an expired price
+  beats no price.
+- **An implausible price is treated as a units change, not a fact.** Prices are
+  documented as USD per token; if that ever became per-million, every number
+  would be 1e6 too high. Anything over $10,000/Mtok is dropped with a warning.
+
+`--explain` prints every candidate with its accept/reject reason, not just the
+winner. A router you cannot interrogate is a router you cannot trust with money.
+
+The measured ~30k spawn overhead is encoded as `dispatch_overhead_tokens`, and
+the shipped example config deliberately points `mechanical` at metered models
+first for exactly that reason.
+
+## Phase 4 — budget governor
+
+Reading the real records changed the numbers by orders of magnitude. Against the
+transcripts on this machine:
+
+| | |
+|---|---|
+| naive sum of `input_tokens` | **436 tokens** |
+| actual window consumption | **16,195,657 tokens** |
+| duplicate records dropped | **173 of 294 (59%)** |
+
+A parser that sums the obvious field under-reports by ~37,000×, and one that
+skips deduplication over-reports by ~2.4×. Both traps are now covered by tests
+built from the verified record shape.
+
+Windows are **anchored to first use**, not a rolling lookback: a block starts at
+the first turn following a gap of five hours. With no activity in range the
+governor reports a fresh window rather than inventing consumption.
+
+Downshift walks the ladder one rung at a time, most expensive task first,
+recomputing after each step, and logs every decision with its reason.
+`no_downshift` tasks are never moved, and `longctx` is never moved — leaving
+that tier is a correctness failure, not a saving.
+
+**The governor never acts on a number it could not verify.** With
+`window_tokens_limit` unset there is no headroom, so it neither downshifts nor
+denies. Denial is reserved for a known limit with zero headroom left.
+
+## Phase 5 — CLI
+
+`plan` / `run` / `status` / `resume` / `explain`, plus `--dry-run` and
+`--explain`. `run` and `resume` are the same operation: status is a fold of the
+append-only log, so recovery is the normal path rather than a special mode.
+
+The planner is itself a dispatched task — a synthetic `Task` whose declared
+output is `plan.json`, sent through the ordinary adapter path. It inherits the
+same artifact layout, timeout handling and cost accounting as any other
+dispatch, and the generated DAG is validated against the full Phase 1 schema, so
+a cycle or a dangling dependency fails at planning time rather than at task 40.
+
+Verified end to end against the real `claude` CLI: `plan` decomposed a prompt
+into a 2-task DAG, `--dry-run --explain` showed the routing without spending,
+`run` executed in dependency order, and `status` reported burn rate and a
+441-token manifest.
+
+## Still open
+
+- **The OpenRouter catalogue shape is unverified.** This environment's egress
+  policy denies CONNECT to openrouter.ai, so the parser was written defensively
+  rather than confirmed. Verify on a machine with network access.
+- **`codex` remains unverified** for the same reason as Phase 2 — not installed.
+- **`cache_read_weight` defaults to 1.0**, which over-estimates window
+  consumption roughly tenfold. Still awaiting a decision on what the 5-hour
+  window actually meters.

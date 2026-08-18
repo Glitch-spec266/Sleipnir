@@ -1,0 +1,83 @@
+# Sleipnir configuration.
+#
+# Sleipnir ships NO model names and NO prices. Everything below is yours to
+# set, and the live OpenRouter catalogue supplies context windows and pricing
+# at runtime. Copy this to sleipnir.toml and edit.
+
+concurrency = 3
+catalog_ttl_s = 21600          # 6h; the catalogue is re-fetched after this
+reserve_fraction = 0.10        # keep 10% of the window unspent
+
+# Leave unset until you know what your plan actually meters. With no limit the
+# governor reports burn rate but will not invent headroom it cannot verify.
+# window_tokens_limit = 20_000_000
+# metered_budget_usd = 25.0
+
+# --- backends --------------------------------------------------------------
+
+[[backends]]
+name = "claude-sub"
+adapter = "claude"
+billing = "subscription"       # spends window quota, not dollars
+# MEASURED: every `claude -p` spawn carries ~30k cache-creation tokens of
+# system-prompt overhead before it does any work. That is why routing a
+# trivial mechanical task here can cost more than the work is worth.
+dispatch_overhead_tokens = 30000
+# Ordered by preference — cheapest last is NOT assumed, you decide.
+# `context` is a local hint for models the OpenRouter catalogue does not list.
+models = [
+    { id = "opus" },
+    { id = "sonnet" },
+    { id = "haiku" },
+]
+
+[[backends]]
+name = "openrouter"
+adapter = "openrouter"
+billing = "metered"            # spends dollars, not window quota
+dispatch_overhead_tokens = 0
+# Empty models list = every model in the live catalogue is a candidate.
+models = []
+
+# [[backends]]
+# name = "codex-sub"
+# adapter = "codex"
+# billing = "subscription"
+# models = [{ id = "gpt-5-codex" }]
+
+# --- tiers -----------------------------------------------------------------
+# `prefer` is an ordered list of backends. The first backend with a candidate
+# that satisfies the tier wins; within a catalogue-backed pool the cheapest
+# satisfying model is chosen.
+
+[tiers.reason]
+prefer = ["claude-sub", "openrouter"]
+min_context = 100000
+require_parameters = ["reasoning"]
+output_ratio = 0.35
+
+[tiers.code]
+prefer = ["claude-sub", "openrouter"]
+min_context = 64000
+output_ratio = 0.30
+
+[tiers.mechanical]
+# Deliberately NOT claude-sub first: the ~30k fixed spawn overhead dwarfs the
+# work for renames and formatting. Metered models have no such floor.
+prefer = ["openrouter", "claude-sub"]
+min_context = 16000
+max_price_per_mtok = 0.60
+output_ratio = 0.25
+
+[tiers.extract]
+prefer = ["openrouter", "claude-sub"]
+min_context = 32000
+max_price_per_mtok = 1.50
+output_ratio = 0.15
+
+[tiers.longctx]
+# longctx is excluded from the downshift ladder on purpose: moving a task off
+# it is not a cost saving, it is a correctness failure.
+prefer = ["openrouter", "claude-sub"]
+min_context = 400000
+output_ratio = 0.10

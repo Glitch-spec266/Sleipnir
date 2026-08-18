@@ -61,9 +61,21 @@ DRY_RUN_SUMMARY = "<summary of this dependency, available at run time>"
 
 
 class Router(Protocol):
-    """Tier -> concrete model. Implemented for real in Phase 3."""
+    """Tier -> concrete model. Implemented by TierRouter.
 
-    def resolve(self, task: Task, *, attempt: int, tier: Tier) -> RoutingDecision: ...
+    ``downshift_reason`` is how the budget governor explains itself: it decides
+    the tier, the router resolves the model, and the reason travels with the
+    decision into the result record so every downshift is auditable.
+    """
+
+    def resolve(
+        self,
+        task: Task,
+        *,
+        attempt: int,
+        tier: Tier,
+        downshift_reason: str | None = None,
+    ) -> RoutingDecision: ...
 
 
 @dataclass(slots=True)
@@ -77,7 +89,14 @@ class StaticRouter:
 
     assignments: Mapping[Tier, tuple[Adapter, str]]
 
-    def resolve(self, task: Task, *, attempt: int, tier: Tier) -> RoutingDecision:
+    def resolve(
+        self,
+        task: Task,
+        *,
+        attempt: int,
+        tier: Tier,
+        downshift_reason: str | None = None,
+    ) -> RoutingDecision:
         if tier not in self.assignments:
             raise KeyError(f"no model configured for tier {tier.value!r}")
         adapter, model = self.assignments[tier]
@@ -86,9 +105,19 @@ class StaticRouter:
             tier_final=tier,
             model=model,
             adapter=adapter,
-            escalated=tier is not task.tier,
+            downshifted=bool(downshift_reason),
+            downshift_reason=downshift_reason,
+            escalated=tier is not task.tier and not downshift_reason,
             rationale=f"static assignment for tier {tier.value!r} (attempt {attempt})",
         )
+
+
+class Governor(Protocol):
+    """Budget control. Implemented by BudgetGovernor (Phase 4)."""
+
+    def tier_for(self, task: Task) -> tuple[Tier, str | None]: ...
+
+    def should_dispatch(self, task: Task) -> tuple[bool, str]: ...
 
 
 @dataclass(slots=True)
@@ -140,11 +169,13 @@ class Executor:
         config: ExecutorConfig,
         runner: ProcessRunner | None = None,
         run_id: str | None = None,
+        governor: Governor | None = None,
     ) -> None:
         assert_checks_supported(plan.tasks)
         self.plan = plan
         self.adapters = adapters
         self.router = router
+        self.governor = governor
         self.log = log
         self.config = config
         self.runner = runner or ProcessRunner()
@@ -340,8 +371,32 @@ class Executor:
         with contextlib.suppress(BaseException):
             await asyncio.shield(gathered)
 
+    def _tier_for(self, task: Task, attempt: int) -> tuple[Tier, str | None]:
+        """Which tier this attempt runs at, and why if it moved.
+
+        Retry escalation outranks a budget downshift. The task already failed at
+        the cheaper tier; sending it back there to save money buys a second
+        failure at the same price as the first.
+        """
+        escalated = task.retry.tier_for_attempt(task.tier, attempt)
+        if escalated is not task.tier:
+            return escalated, None
+        if self.governor is not None:
+            return self.governor.tier_for(task)
+        return task.tier, None
+
     async def _attempt(self, task: Task, attempt: int) -> None:
-        routing = self.router.resolve(task, attempt=attempt, tier=task.retry.tier_for_attempt(task.tier, attempt))
+        tier, downshift_reason = self._tier_for(task, attempt)
+
+        if self.governor is not None:
+            allowed, why = self.governor.should_dispatch(task)
+            if not allowed:
+                self._deny(task, attempt, tier, why)
+                return
+
+        routing = self.router.resolve(
+            task, attempt=attempt, tier=tier, downshift_reason=downshift_reason
+        )
         adapter = self._adapter_for(routing)
         request = self._request(task, attempt, routing, dry_run=False)
         started_at = datetime.now(UTC)
@@ -394,6 +449,41 @@ class Executor:
                 task, request.workspace, runner=self.runner, env=self.config.resolved_env()
             )
         self._record(task, attempt, routing, outcome, checks, request, started_at)
+
+    def _deny(self, task: Task, attempt: int, tier: Tier, why: str) -> None:
+        """Record a dispatch the governor refused.
+
+        A denial is written to the log as a terminal attempt, not skipped in
+        silence: `status` must be able to say the plan stopped because the
+        window ran out, and BUDGET_DENIED is non-retryable so the scheduler
+        will not immediately try again.
+        """
+        now = datetime.now(UTC)
+        routing = RoutingDecision(
+            tier_requested=task.tier,
+            tier_final=tier,
+            model="<none>",
+            adapter=Adapter.OPENROUTER,
+            rationale=f"not dispatched: {why}"[:1_000],
+        )
+        self.log.append(
+            AttemptFinished(
+                run_id=self.run_id,
+                task_id=task.id,
+                attempt=attempt,
+                spec_hash=task.spec_hash(),
+                plan_revision=self.plan.revision,
+                routing=routing,
+                status=AttemptStatus.FAILED,
+                failure_kind=FailureKind.BUDGET_DENIED,
+                started_at=now,
+                ended_at=now,
+                wall_time_s=0.0,
+                cost=CostEstimate(billing_mode=BillingMode.METERED),
+                summary=f"budget governor refused this dispatch: {why}"[:700],
+            )
+        )
+        self._report.failed += 1
 
     # -- record composition --------------------------------------------------
 
