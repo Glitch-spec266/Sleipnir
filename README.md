@@ -10,15 +10,23 @@ never re-enters the orchestrator's context.** The plan lives on disk. The
 orchestrator is re-invoked fresh each cycle with only a compact, size-bounded
 manifest.
 
-## Status: Phase 2 (executor) — awaiting review
+## Status: Phase 4 (budget governor) complete
+
+Phase numbers here are the *engineering* sequence used throughout `DESIGN.md`,
+the module docstrings and the tests. `project.md` counts *workflow* phases and is
+offset by one, because its Phase 1 is a requirements round rather than code.
 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | state schema + design | complete |
-| 2 | executor + adapters (`claude`, `codex`, `openrouter`) | **complete, under review** |
-| 3 | tier router | not started |
-| 4 | budget governor | not started |
-| 5 | CLI | not started |
+| 2 | executor + adapters (`claude`, `codex`, `openrouter`) | complete |
+| 3 | tier router + live pricing | **complete** |
+| 4 | budget governor + usage parser | **complete** |
+| 5 | planner + run loop | not started |
+| 6 | CLI | not started |
+
+`project.md` is the live state board; `overview.md` is the plain-language
+architecture guide.
 
 Read [`DESIGN.md`](DESIGN.md) for the tradeoffs, the manifest size math, and the
 open decisions.
@@ -38,7 +46,14 @@ src/sleipnir/context.py      InputContract -> the exact subagent prompt
 src/sleipnir/artifacts.py    attempt workspaces and output collection
 src/sleipnir/checks.py       acceptance checks
 src/sleipnir/runlog.py       append-only results.jsonl, fsync per record
-tests/                       118 tests, including the executable form of the
+src/sleipnir/pricing.py      live OpenRouter price fetch, cached to a disk
+                             snapshot; never populated from memory
+src/sleipnir/router.py       tier -> concrete model, scoring per-dispatch fixed
+                             cost as a first-class term
+src/sleipnir/usage.py        defensive parser for Claude Code's own usage
+                             records; dedupes, and refuses to guess
+src/sleipnir/governor.py     the only component allowed to refuse work
+tests/                       206 tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -62,13 +77,20 @@ growth.
 
 ## Development
 
-Python 3.12+. Runtime dependency: `pydantic`. No agent frameworks.
+Python 3.12+. Runtime dependencies: `pydantic`, `httpx`. No agent frameworks.
 
 ```sh
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python "pydantic>=2.7" "pytest>=8"
+python3 -m venv .venv
+.venv/bin/python -m pip install "pydantic>=2.7" "httpx>=0.27" "pytest>=8"
 .venv/bin/python -m pytest -q
 ```
+
+`uv` works too if you have it; it is not installed on the development machine.
+
+The router needs prices. They are fetched from
+`https://openrouter.ai/api/v1/models`, which requires no API key, and cached to
+`.sleipnir-cache/prices.json`. *Dispatching* to OpenRouter does need
+`OPENROUTER_API_KEY` in the environment — including for its free models.
 
 ## Security note
 

@@ -17,3 +17,8 @@ results.jsonl
 revisions.jsonl
 run.lock
 .sleipnir-cache/
+
+# graphify: keep the graph, drop machine-specific sidecars
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/cache/
