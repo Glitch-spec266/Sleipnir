@@ -13,6 +13,8 @@ A zero price would tell the budget governor that every model is free.
 
 from __future__ import annotations
 
+import math
+
 import json
 import time
 from collections.abc import Callable
@@ -209,6 +211,19 @@ def parse_models(payload: dict[str, Any]) -> tuple[dict[str, ModelInfo], list[st
         if prompt is None or completion is None:
             warnings.append(f"{model_id}: unparseable prompt/completion price; dropped")
             continue
+        if prompt < 0 or completion < 0:
+            # OpenRouter marks its meta-models (openrouter/auto, fusion,
+            # pareto-code, bodybuilder, auto-beta — five of them live on
+            # 2026-08-18) with -1, meaning "cost depends which model this
+            # routes to". Unguarded that is -$1,000,000/Mtok, which makes them
+            # the cheapest entries in the catalogue and wins every routing
+            # decision forever. The implausible-price guard below is a `>`
+            # test and does not catch it.
+            warnings.append(
+                f"{model_id}: negative price ({min(prompt, completion):.0f}/Mtok) is a "
+                "sentinel for 'cost depends which model is picked'; dropped"
+            )
+            continue
         if prompt > IMPLAUSIBLE_PRICE_PER_MTOK or completion > IMPLAUSIBLE_PRICE_PER_MTOK:
             warnings.append(
                 f"{model_id}: price of ${max(prompt, completion):.0f}/Mtok is implausible — "
@@ -249,9 +264,14 @@ def _float(value: Any) -> float | None:
         return float(value)
     if isinstance(value, str):
         try:
-            return float(value)
+            parsed = float(value)
         except ValueError:
             return None
+        # "Infinity", "1e400" and "NaN" all survive float() and none is a price.
+        # NaN is the dangerous one: every comparison against it is False, so it
+        # slips past both the negative and the implausible-price guards below
+        # and then silently destroys any ordering built on it.
+        return parsed if math.isfinite(parsed) else None
     return None
 
 
