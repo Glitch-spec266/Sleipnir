@@ -1,0 +1,200 @@
+# Sleipnir — project instructions
+
+Read `project.md` for current state, `overview.md` for how the code works, and
+`DESIGN.md` for why each tradeoff was made.
+
+## The one invariant
+
+> **Subtask output never re-enters the orchestrator's context.**
+
+Everything else is negotiable. This is not. If it leaks even once — even as
+"just a short summary" — the cost of a run goes from linear to quadratic and the
+entire project is worse than doing the work in a single long session.
+
+Concretely, this means:
+
+- **Never add a field to `Manifest`, or anything nested inside it, that can carry
+  artifact content.** Paths only. `EvidenceEntry.artifact_paths` is paths by
+  design, and that is structural rather than a matter of policy.
+- **Never inline the full DAG into the manifest.** The chosen approach is group
+  rollups plus an on-demand `read_plan(group=…)` drill-down. Inlining a
+  "compressed" skeleton reintroduces Θ(n) growth quietly, which is the dangerous
+  kind.
+- `test_manifest_size_is_constant_in_task_count` is the executable form of this
+  rule. If a change makes it fail, the change is wrong — do not adjust the test
+  to fit.
+
+## Rules that will bite you if ignored
+
+- **Task status is never stored.** It is always folded from `results.jsonl` over
+  `plan.json` via `projection.fold_results`. Do not add a status field, a cache,
+  or a checkpoint file. The absence of derived state on disk is exactly what
+  makes crash recovery a normal read instead of a repair routine.
+- **`Task.spec_hash()` must keep excluding routing fields** — `tier`, `priority`,
+  `timeout_s`, `retry`, `adapter_hint`, `group`. If tier entered the hash, every
+  budget downshift would invalidate completed work and the governor would fight
+  the executor. `test_spec_hash_ignores_routing_fields` pins this.
+- **Adapters report; the executor decides.** An adapter returns a
+  `DispatchOutcome` of raw observed facts and must never decide whether a task
+  succeeded. It cannot know — acceptance checks run after it returns, and pricing
+  lives elsewhere.
+- **Whether the work is good is decided by what landed on disk**, through the
+  output contract and the acceptance checks. Never by provider chatter. A tool
+  permission denial is recorded in `provider_meta` and changes nothing about
+  status; treating it as failure once caused successful work to be retried at
+  double cost.
+- **A check that cannot be performed fails at executor construction, not at task
+  time.** A plan that cannot be fully verified must be refused before anything is
+  dispatched.
+- **`results.jsonl` is append-only, fsynced per record.** A torn *final* line is
+  discarded and logged; a torn line anywhere else is real corruption and must
+  fail loudly rather than be silently repaired.
+- **You may not read from a task you do not declare as a dependency.** Both
+  `summaries` and `artifacts` are cross-checked against `depends_on`. Without
+  this, a task can race its own input producer.
+
+## The router (Phase 3)
+
+- **No model name and no price may appear in the source.** Both arrive as data:
+  prices from the live catalogue, capability claims from the operator's TOML
+  config. The catalogue has no capability column, so the router never infers one.
+- **`--explain` prints every candidate with its accept/reject reason**, not just
+  the winner. A router you cannot interrogate is a router you cannot trust with
+  money. Keep it that way.
+- **`resolve()` uses its `attempt` argument** to take the *n*-th cheapest viable
+  candidate. This is load-bearing twice over: free models rate-limit
+  individually, so an identical retry fails identically; and it produces tier
+  escalation (sonnet then opus) with no ladder code. Do not "simplify" it back to
+  always picking the cheapest.
+- **A missing price is never zero.** `PriceBook.get` raises rather than
+  defaulting, and the router drops the candidate. Zero would read as free forever
+  and that candidate would win every comparison it entered.
+- **Reject non-finite prices explicitly.** `float()` accepts `"Infinity"`,
+  `"1e400"` and `"NaN"`. NaN is the trap: every comparison against it is False, so
+  it passes a `>= 0` guard *and* silently destroys any ordering built on it.
+- **Reject negative prices explicitly.** Five live `openrouter/*` meta-models
+  price at `-1`, the sentinel for "cost depends which model is picked". The
+  implausible-price guard is a `>` test and does not catch a negative, so
+  unguarded they read as −$1,000,000/Mtok and win every route forever.
+- **Keep the implausible-price guard too.** Prices are documented as USD per
+  token; if that ever became per-million, every number would be 1e6 too high.
+  Anything over $10,000/Mtok is a units change, not a fact.
+- **An unknown context window does not exclude a candidate.** Unknown is not the
+  same as too small; refusing on absent data over-refuses.
+- **Nothing from the network may reach a dispatch.** `RoutingDecision.model`
+  comes from config; the catalogue supplies only prices, keyed by ids used for
+  lookup. Keep it that way — it is why a hostile catalogue cannot inject a model,
+  URL, or argv element.
+
+## Money and resources
+
+- **Window quota is the scarce resource, not dollars.** This runs on a Claude
+  subscription: `claude -p` costs ~$0 marginal but consumes the 5-hour usage
+  window. Dollar figures in reports are **notional** — what the work would have
+  cost at metered API rates — and must be labelled as such. `RunReport` carries
+  `notional_usd` alongside `cost_usd` for exactly this reason.
+- **`CostEstimate` carries `amount_usd` and `window_tokens` separately on
+  purpose.** They are two scarce resources that do not convert. Never collapse
+  them into one number; the cheapest option in dollars may be the one that
+  exhausts the window.
+- **Every `claude -p` spawn costs ~30k cache-creation tokens before doing any
+  work.** That is a floor, independent of task size. Per-dispatch fixed cost is a
+  first-class router input — routing a trivial task to an expensive spawn can
+  cost more than the work is worth.
+- **Cache-read tokens are counted 1:1 with input tokens, deliberately.** This
+  over-estimates window consumption by roughly 10×, which makes the governor
+  downshift too eagerly rather than blow the window. Do not "fix" this to a ~0.1
+  weight until Phase 3 has measured what the 5-hour window actually meters.
+- **Never quote model prices from memory.** Fetch
+  `https://openrouter.ai/api/v1/models` (public, no key required) and cache to a
+  disk snapshot.
+- **Never sum `input_tokens` alone** when parsing usage records — it read `2`
+  against 47,052 cache-creation tokens in a real record. Sum all four input
+  channels. Do not also sum `iterations[]`; it repeats the same counts and
+  double-counts every turn. Dedupe on `requestId`.
+
+## The budget governor (Phase 4)
+
+- **Never invent a window limit.** With no known limit the governor allows and
+  reports burn rate. A guessed limit throttles a run that had room or clears one
+  that did not, and nothing downstream can tell which happened.
+- **An observed HTTP 429 is ground truth and outranks every estimate.** Real
+  transcripts carry `{"error":"rate_limit","apiErrorStatus":429}`. It stops
+  subscription dispatch and leaves metered dispatch alone — the window is spent,
+  dollars are not.
+- **A blown dollar budget is a refusal, never a downshift.** A cheaper model
+  still spends dollars, so only refusing actually stops it. `BUDGET_DENIED` must
+  never be retried at the tier that was denied.
+- **Deduplicate usage records on `requestId`.** Measured at 52-59% duplicates
+  across two corpora — skipping this does not skew the budget, it *doubles* it.
+  Records lacking an id get a synthesised one so they dedupe too.
+- **Skip `<synthetic>` records.** They are CLI-generated messages, not API calls.
+- **Never sum `iterations[]` as well as the top level.** Measured: they agree on
+  every record, so summing both exactly doubles every turn.
+- **The usage parser must never read message content.** It extracts counters only.
+  Transcripts hold prompts and source code, and a budget scan that touched them
+  would become a data-exfiltration path. There is a canary test for this.
+- **The window is a percentage, not a token count.** `GET /api/oauth/usage`
+  returns `five_hour.utilization`; on a subscription every dollar and token field
+  in that response is null. Never try to reconstruct the limit by summing
+  tokens — it has no client-side form. It is folded back into token units by
+  solving `implied_limit = used / (utilisation/100)`, which absorbs whatever
+  weight the real meter gives cache reads.
+- **The credential read is narrow and must stay narrow.** Read-only; only
+  `claudeAiOauth.accessToken` (the same file holds unrelated plugin secrets that
+  are never touched); never logged, never persisted, never in an exception
+  message, never in a `BudgetSnapshot` or the `Manifest`. Every failure path
+  falls back to local estimation rather than raising — the `except` is
+  deliberately broad because a leaked traceback carrying a bearer token would
+  matter more than losing the reading.
+- **The usage endpoint is itself rate-limited** (observed 429). Cache failures as
+  hard as successes; a governor that retried on 429 would throttle itself out of
+  the reading that tells it about throttling.
+- **Tests must never touch the credential or the endpoint.** `tests/conftest.py`
+  makes that the default; opting in needs `@pytest.mark.allow_utilization_reads`
+  and a mock transport. Before that guard the suite made 18 authenticated calls
+  per run.
+
+## Environment on this machine
+
+- `claude` and `codex` CLIs are both installed. `codex`'s flags are still
+  unverified against the adapter.
+- **`uv` is not installed.** The README says to use it; use `python3 -m venv`
+  and `pip` instead. A `.venv` exists.
+- `OPENROUTER_API_KEY` comes from the user's shell environment. **Never write a
+  key into the repo, and never echo a key's value into a transcript.**
+- `ANTHROPIC_API_KEY` is deliberately unset — setting it would switch `claude -p`
+  from subscription billing to metered billing.
+
+## Working style here
+
+- **Fakes are not enough.** Phase 2's 118 fake-based tests all passed, and a
+  single live smoke run then found three real bugs — including one that broke the
+  resume path the entire design exists to protect. Every phase ends with at least
+  one small live run.
+- The test fake sits at the **spawn boundary**, not in place of `ProcessRunner`.
+  Mocking one layer up leaves the streaming, timeout, drain and kill logic
+  untested — the code most likely to deadlock and least likely to be noticed
+  doing it.
+- **Two runtime dependencies: `pydantic` and `httpx`.** Adding a third is a
+  decision to raise, not to make. `pytest` is dev-only.
+- Prefer refusing a plan over degrading silently. A zeroed usage record tells the
+  governor a call was free, which is worse than reporting that usage could not be
+  found.
+
+## Security
+
+`plan.json` is **executable content** — `CommandCheck` runs arbitrary shell from
+it. Never load a plan from an untrusted source, and never add a feature that
+fetches or shares plans without addressing this first.
+
+The OpenRouter adapter materialises files from model output. That write path is
+confined to the attempt directory, and a block claiming a path like
+`../../.ssh/authorized_keys` is dropped. There is a test for it. Keep it.
+
+## Checkpoint discipline
+
+At the end of every stage or phase, in this order: refresh graphify if structure
+changed → update `project.md` (phase, decisions, next steps) → refresh
+`overview.md` → add anything durable here. Then ask before committing. Never
+push unprompted.

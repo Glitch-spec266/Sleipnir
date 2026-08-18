@@ -279,3 +279,23 @@ def test_shipped_example_config_is_valid():
     path = Path(__file__).resolve().parents[1] / "sleipnir.example.toml"
     cfg = SleipnirConfig.load(path)
     assert set(cfg.tiers) == set(Tier)
+
+
+def test_successive_attempts_rotate_through_accepted_candidates():
+    """A retry must not repeat an identical call.
+
+    Free models rate-limit one at a time (observed live: one returned HTTP 429
+    while its neighbour answered instantly), so re-issuing the same request
+    fails the same way. Rotating also yields tier escalation for free, since the
+    second-cheapest accepted model is usually the stronger one.
+    """
+    r = router(
+        model("a/cheap", price=0.10, context=64_000),
+        model("b/mid", price=0.20, context=64_000),
+        model("c/dear", price=0.30, context=64_000),
+    )
+    task = make_task("t", tier=Tier.MECHANICAL)
+    picks = [
+        r.resolve(task, attempt=n, tier=Tier.MECHANICAL).model for n in (1, 2, 3, 4)
+    ]
+    assert picks == ["a/cheap", "b/mid", "c/dear", "a/cheap"]
