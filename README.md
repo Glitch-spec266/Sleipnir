@@ -10,15 +10,15 @@ never re-enters the orchestrator's context.** The plan lives on disk. The
 orchestrator is re-invoked fresh each cycle with only a compact, size-bounded
 manifest.
 
-## Status: Phase 2 (executor) — awaiting review
+## Status: Phases 1–5 complete — awaiting review
 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | state schema + design | complete |
-| 2 | executor + adapters (`claude`, `codex`, `openrouter`) | **complete, under review** |
-| 3 | tier router | not started |
-| 4 | budget governor | not started |
-| 5 | CLI | not started |
+| 2 | executor + adapters (`claude`, `codex`, `openrouter`) | complete |
+| 3 | tier router | complete |
+| 4 | budget governor | complete |
+| 5 | CLI | complete |
 
 Read [`DESIGN.md`](DESIGN.md) for the tradeoffs, the manifest size math, and the
 open decisions.
@@ -38,7 +38,13 @@ src/sleipnir/context.py      InputContract -> the exact subagent prompt
 src/sleipnir/artifacts.py    attempt workspaces and output collection
 src/sleipnir/checks.py       acceptance checks
 src/sleipnir/runlog.py       append-only results.jsonl, fsync per record
-tests/                       118 tests, including the executable form of the
+src/sleipnir/pricing.py      live OpenRouter catalogue, TTL cache
+src/sleipnir/config.py       TOML backend + per-tier policy
+src/sleipnir/router.py       tier -> model, with full routing rationale
+src/sleipnir/budget.py       5-hour window accounting and downshift
+src/sleipnir/planner.py      prompt -> validated task DAG
+src/sleipnir/cli.py          plan / run / status / resume / explain
+tests/                       199 tests, including the executable form of the
                              manifest size bound
 ```
 
