@@ -150,7 +150,13 @@ class TierRouter:
             if not accepted:
                 continue
 
-            winner, info = accepted[0]
+            # Rotate by attempt rather than always taking the cheapest.
+            # Free models rate-limit individually — one returned HTTP 429 while
+            # its neighbour answered instantly — so an identical retry fails
+            # identically. Taking the nth-cheapest makes a retry a genuinely
+            # different call, and as a side effect gives tier escalation
+            # (second-cheapest is usually the stronger model) with no ladder.
+            winner, info = accepted[(max(attempt, 1) - 1) % len(accepted)]
             explanation.decision = self._decide(
                 task, tier, backend, winner, info, policy, downshift_reason, attempt
             )

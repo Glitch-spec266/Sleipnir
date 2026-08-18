@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import httpx
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from test_router import CONFIG_TOML
 from sleipnir import cli
 from sleipnir.adapters.base import DispatchOutcome, DispatchRequest
 from sleipnir.planner import PlanningError, assemble_plan, extract_plan_json
+from sleipnir.pricing import ModelCatalog
 from sleipnir.schema import Adapter, AttemptStatus, BillingMode
 
 GOOD_TASKS = {
@@ -257,8 +259,19 @@ def test_missing_plan_is_a_clean_error(workspace: Path, capsys):
 
 
 def test_no_catalogue_and_no_network_refuses_to_run(workspace: Path, monkeypatch, capsys):
+    """Deleting the cache is not enough — the fetch must actually be blocked.
+
+    Without this the test only passes on a machine that happens to be offline:
+    a live fetch succeeds, the refusal never fires, and the run proceeds. That
+    made one of the project's stated safety guarantees pass by accident.
+    """
     seed_plan(workspace, monkeypatch)
     (workspace / "models.json").unlink()
+
+    async def no_network(self):
+        raise httpx.ConnectError("network disabled for this test")
+
+    monkeypatch.setattr(ModelCatalog, "_fetch", no_network)
     monkeypatch.setattr(cli, "build_adapters", lambda config: {})
     assert invoke(workspace, "run") == 2
     assert "will not guess model prices" in capsys.readouterr().err

@@ -203,3 +203,53 @@ def test_http_error_falls_back_rather_than_crashing(tmp_path: Path):
         ),
     )
     assert run(catalog.load()).stale is True
+
+
+# ---------------------------------------------------------------------------
+# Adversarial catalogue input (ported from the parallel build's live findings)
+# ---------------------------------------------------------------------------
+
+
+def _entry(model_id: str, prompt: str, completion: str = "0.000001") -> dict:
+    return {
+        "id": model_id,
+        "context_length": 200_000,
+        "pricing": {"prompt": prompt, "completion": completion},
+    }
+
+
+def _parse(*entries: dict):
+    from sleipnir.pricing import parse_models
+
+    models, warnings = parse_models({"data": list(entries)})
+    return models, warnings
+
+
+def test_the_negative_price_sentinel_is_dropped():
+    """Five live models return -1: 'cost depends which model is picked'.
+
+    Unguarded that is -$1,000,000/Mtok, so they become the cheapest entries in
+    the catalogue and win every routing decision forever. The implausible-price
+    guard is a `>` test and does not catch it.
+    """
+    models, warnings = _parse(
+        _entry("real/model", "0.000003"), _entry("openrouter/auto", "-1")
+    )
+    assert "real/model" in models
+    assert "openrouter/auto" not in models
+    assert any("openrouter/auto" in w for w in warnings)
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_non_finite_prices_are_dropped(value):
+    """float() parses all of these. NaN passes every comparison guard silently."""
+    models, _ = _parse(_entry("real/model", "0.000003"), _entry("evil/model", value))
+    assert "real/model" in models
+    assert "evil/model" not in models
+
+
+def test_the_implausible_price_guard_still_works():
+    """Kept from the original: catches the API switching units to per-Mtok."""
+    models, warnings = _parse(_entry("units/changed", "50000"))
+    assert "units/changed" not in models
+    assert any("implausible" in w for w in warnings)
