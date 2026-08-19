@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–9 are complete with **409 tests passing**.
+Phases 1–9 are complete with **412 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -367,6 +367,10 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   are private bounded regular files whose ID matches the filename and whose
   requester PID is alive under the same user. Forged/dead requests and symlink
   payloads are discarded; answer status is a closed vocabulary written once.
+- 2026-08-19 — **Every persistent host path is a trust boundary.** Capability
+  audit append refuses file/directory symlinks, clipboard images refuse a
+  redirected destination, and Chromium refuses a symlinked profile before
+  Playwright launches. Rejected paths cause no external mutation.
 
 ## Open questions
 

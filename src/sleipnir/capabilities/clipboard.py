@@ -83,6 +83,10 @@ def read(*, destination_dir: Path = DEFAULT_DIR) -> ClipboardPayload:
         if mime_type not in offered:
             continue
         body = _run("--type", mime_type)
+        if destination_dir.exists() and (
+            destination_dir.is_symlink() or not destination_dir.is_dir()
+        ):
+            raise ClipboardError(f"unsafe clipboard attachment directory: {destination_dir}")
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = destination_dir / f"clipboard-{uuid.uuid4().hex}{suffix}"
         with destination.open("xb") as handle:

@@ -353,6 +353,10 @@ non-plan task id, while quota/notional accounting must include it.
   file, matching filename/ID and a live same-user requester PID before showing
   a prompt. Answer only with the closed status vocabulary in a private,
   write-once regular file; never follow request or answer symlinks.
+- **Host-state paths are not exempt from confinement.** Audit logs use private
+  no-follow append, while clipboard destinations and browser profiles must be
+  real directories. Validate before creation so rejecting a symlink does not
+  mutate whatever it targets.
 
 ## Checkpoint discipline
 

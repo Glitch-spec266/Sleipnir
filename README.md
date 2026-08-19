@@ -54,7 +54,7 @@ src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
 src/sleipnir/console.py      guarded chat + `/project` multi-model front door
 src/sleipnir/chat.py         Claude session transport + tool-free fast-lane gate
 src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate
-tests/                       409 tests, including the executable form of the
+tests/                       412 tests, including the executable form of the
                              manifest size bound
 ```
 
