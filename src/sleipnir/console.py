@@ -658,6 +658,10 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
                 first_turn[0] = False
                 if chat.fast_lane_capable(assessment):
                     state.status = "acting · fast lane"
+                    state.add(
+                        "sleipnir",
+                        f"Fast lane approved; {state.fast_model or 'fast model'} is acting.",
+                    )
                     reply = await chat.ask_claude(
                         "The tool-free capability check passed. Complete the operator's "
                         "preceding request now.",
@@ -669,6 +673,11 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
                     )
                 else:
                     state.status = "escalating · strong lane"
+                    state.add(
+                        "sleipnir",
+                        "Fast lane declined or failed closed; routing the untouched "
+                        f"request to {state.model or 'the strong model'}.",
+                    )
                     reply = await chat.ask_claude(
                         "The tool-free fast-lane check declined or failed closed. "
                         "Complete the operator's preceding request now.",

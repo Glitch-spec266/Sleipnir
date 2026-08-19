@@ -250,6 +250,7 @@ def test_capable_request_is_checked_without_tools_then_run_on_fast_model(monkeyp
     assert calls[0][1]["tools"] == ()
     assert "tools" not in calls[1][1]
     assert state.messages[-1].text == "done"
+    assert any("Fast lane approved" in message.text for message in state.messages)
     assert first_turn == [False]
 
 
@@ -274,6 +275,7 @@ def test_decline_or_malformed_check_routes_to_strong_model(monkeypatch, verdict)
     assert [call["model"] for call in calls] == ["fast", "strong"]
     assert calls[0]["tools"] == ()
     assert state.messages[-1].text == "handled safely"
+    assert any("routing the untouched request" in message.text for message in state.messages)
 
 
 def test_failed_fast_action_is_not_replayed_on_strong_model(monkeypatch):

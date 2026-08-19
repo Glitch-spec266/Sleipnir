@@ -1,16 +1,16 @@
 # Graph Report - Sleipnir  (2026-08-19)
 
 ## Corpus Check
-- 60 files · ~81,323 words
+- 60 files · ~81,445 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1576 nodes · 4537 edges · 59 communities (57 shown, 2 thin omitted)
+- 1576 nodes · 4537 edges · 58 communities (56 shown, 2 thin omitted)
 - Extraction: 84% EXTRACTED · 16% INFERRED · 0% AMBIGUOUS · INFERRED: 724 edges (avg confidence: 0.51)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `cec7a0c4`
+- Built from commit: `461630b2`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -57,7 +57,7 @@
 - test_schema.py
 - BaseModel
 - budget
-- OpenRouterAdapter
+- DispatchOutcome
 - screenshot
 - test_total_input_counts_cache_creation_tokens
 - browser.py
@@ -67,7 +67,6 @@
 - schema.py
 - Sleipnir — project instructions
 - ConsoleState
-- DispatchOutcome
 - process_guard.py
 - ProcessRunner
 - Sleipnir — Project State
@@ -102,7 +101,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (59 total, 2 thin omitted)
+## Communities (58 total, 2 thin omitted)
 
 ### Community 0 - "make_task"
 Cohesion: 0.12
@@ -125,8 +124,8 @@ Cohesion: 0.07
 Nodes (50): CatalogUnavailableError, _first_int(), _float(), ModelCatalog, _nonnegative_float(), parse_models(), _per_mtok(), Any (+42 more)
 
 ### Community 5 - "DispatchRequest"
-Cohesion: 0.08
-Nodes (26): ABC, AdapterError, BaseAdapter, DispatchPreview, DispatchRequest, RuntimeError, The adapter interface. An adapter's job is narrow on purpose: take a fully-…, One dispatch backend. Auth is never implemented here. The `claude` and `codex`… (+18 more)
+Cohesion: 0.07
+Nodes (33): ABC, AdapterError, BaseAdapter, DispatchPreview, DispatchRequest, RuntimeError, The adapter interface. An adapter's job is narrow on purpose: take a fully-…, One dispatch backend. Auth is never implemented here. The `claude` and `codex`… (+25 more)
 
 ### Community 6 - "test_adapters.py"
 Cohesion: 0.14
@@ -272,9 +271,9 @@ Nodes (25): AcceptanceCheck, assert_checks_supported(), _check_command(), _check
 Cohesion: 0.22
 Nodes (9): no_credential_reads(), no_real_utilization_reads(), fixture, Test-suite guardrails. The budget governor reads real window utilisation from…, Never call the usage endpoint from a test. Returns ``None``, which is the same…, Belt and braces: the token must not be read from disk either. A test that needs…, budget(), test_budget_headroom_is_none_when_limit_unknown() (+1 more)
 
-### Community 42 - "OpenRouterAdapter"
-Cohesion: 0.13
-Nodes (15): AsyncClient, _HttpFailure, materialize_file_blocks(), OpenRouterAdapter, Any, ClientFactory, Exception, Path (+7 more)
+### Community 42 - "DispatchOutcome"
+Cohesion: 0.09
+Nodes (20): AsyncClient, Response, DispatchOutcome, What the adapter observed. Raw facts only, no derived accounting., _HttpFailure, materialize_file_blocks(), OpenRouterAdapter, Any (+12 more)
 
 ### Community 43 - "screenshot"
 Cohesion: 0.22
@@ -307,10 +306,6 @@ Nodes (13): Checkpoint discipline, Environment on this machine, Lessons from the
 ### Community 52 - "ConsoleState"
 Cohesion: 0.17
 Nodes (15): _allocate_project_run(), _claude_dirs(), ConsoleState, Message, _project_argv(), Path, Everything the renderer needs, and nothing it does not. Notably absent: any…, The brain is asleep exactly when a run owns the directory. Derived, never… (+7 more)
-
-### Community 53 - "DispatchOutcome"
-Cohesion: 0.12
-Nodes (12): Response, DispatchOutcome, What the adapter observed. Raw facts only, no derived accounting., CodexAdapter, _first_int(), Any, Path, Walk every event for the last recognisable usage block. Deliberately structure-… (+4 more)
 
 ### Community 54 - "process_guard.py"
 Cohesion: 0.50

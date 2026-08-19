@@ -316,6 +316,8 @@ non-plan task id, while quota/notional accounting must include it.
   A failed assessment process is also safe to fall back because it had no
   tools; on the first turn rotate the possibly reserved session ID and send
   Sonnet the untouched original request.
+  Keep the content-free lane decision visible in the console transcript; a
+  transient status-bar label is not enough evidence of which model acted.
 - **`/project` is the complex-work boundary.** Ordinary messages use guarded
   chat. `/project <goal>` runs the real `plan` then `orchestrate` pipeline; do
   not replace it with a second planner or a prose complexity heuristic. Its

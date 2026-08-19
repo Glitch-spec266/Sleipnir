@@ -392,6 +392,10 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   Haiku assessment process itself is unavailable, Sleipnir rotates uncertain
   first-turn session state and gives Sonnet the untouched original request.
   Once any model has tools, failure is never replayed.
+- 2026-08-19 — **Lane choice stays visible after the status frame.** The console
+  records a content-free transcript notice when the fast lane is approved or
+  fails closed to the strong model, so operators and live verification can
+  distinguish Haiku action from Sonnet fallback without logging the request.
 
 ## Open questions
 
