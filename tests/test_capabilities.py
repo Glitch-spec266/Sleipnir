@@ -8,11 +8,13 @@ boundary — the same discipline the executor tests use for provider spawns.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 
 import pytest
 
+from sleipnir import cli
 from sleipnir.capabilities import audit, browser, clipboard, computer, secrets
 
 
@@ -293,3 +295,27 @@ def test_browser_rejects_a_symlinked_profile_before_launch(tmp_path, monkeypatch
     monkeypatch.setattr(browser, "_cdp_alive", lambda: False)
     with pytest.raises(computer.CapabilityError, match="unsafe browser profile"):
         asyncio.run(browser.ensure_browser(linked))
+
+
+def test_browser_close_does_not_start_a_browser(audit_log, monkeypatch, capsys):
+    monkeypatch.setattr(browser, "stop_browser", lambda: False)
+
+    class MustNotStart:
+        def __init__(self, **kwargs):
+            raise AssertionError("close must not construct or attach a browser")
+
+    monkeypatch.setattr(browser, "Browser", MustNotStart)
+    args = argparse.Namespace(action="close", args=[], headless=False)
+    assert asyncio.run(cli.cmd_browser(args)) == 0
+    assert "not running" in capsys.readouterr().out
+
+
+def test_bad_browser_arguments_fail_before_browser_start(monkeypatch):
+    class MustNotStart:
+        def __init__(self, **kwargs):
+            raise AssertionError("invalid input must not construct a browser")
+
+    monkeypatch.setattr(browser, "Browser", MustNotStart)
+    args = argparse.Namespace(action="fill", args=["#field"], headless=False)
+    with pytest.raises(cli.CliError, match="exactly 2"):
+        asyncio.run(cli.cmd_browser(args))

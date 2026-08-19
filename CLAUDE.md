@@ -354,6 +354,8 @@ non-plan task id, while quota/notional accounting must include it.
   can be stale or tampered with. Verify the live `/proc` argv, expected profile,
   debug port and session leadership before killing the process group; publish
   replacement PID state atomically without following symlinks.
+  Validate browser command arguments before attaching, and keep `close` on the
+  direct verified-PID path—a missing browser must not be started just to stop it.
 - **A credential request file is untrusted input.** Require a bounded regular
   file, matching filename/ID and a live same-user requester PID before showing
   a prompt. Answer only with the closed status vocabulary in a private,

@@ -1050,13 +1050,34 @@ async def cmd_computer(args: argparse.Namespace) -> int:
 
 
 async def cmd_browser(args: argparse.Namespace) -> int:
-    from sleipnir.capabilities.browser import Browser
+    from sleipnir.capabilities import audit
+    from sleipnir.capabilities.browser import Browser, stop_browser
 
     action, rest = args.action, args.args
+    expected = {
+        "open": (1, 1),
+        "text": (0, 1),
+        "click": (1, 1),
+        "fill": (2, 2),
+        "screenshot": (0, 1),
+        "close": (0, 0),
+    }
+    minimum, maximum = expected[action]
+    if not minimum <= len(rest) <= maximum:
+        requirement = (
+            f"exactly {minimum} argument(s)"
+            if minimum == maximum
+            else f"between {minimum} and {maximum} argument(s)"
+        )
+        raise CliError(f"`browser {action}` needs {requirement}")
+    if action == "close":
+        stopped = stop_browser()
+        audit.record("browser.shutdown", {"was_running": stopped})
+        print("browser closed" if stopped else "browser was not running")
+        return 0
+
     async with Browser(headless=args.headless) as web:
         if action == "open":
-            if not rest:
-                raise CliError("`browser open` needs a URL")
             await web.goto(rest[0])
             print(f"opened {rest[0]}")
         elif action == "text":
@@ -1067,9 +1088,6 @@ async def cmd_browser(args: argparse.Namespace) -> int:
             await web.fill(rest[0], rest[1])
         elif action == "screenshot":
             print(await web.screenshot(rest[0] if rest else "page.png"))
-        elif action == "close":
-            await web.shutdown()
-            print("browser closed")
     return 0
 
 
