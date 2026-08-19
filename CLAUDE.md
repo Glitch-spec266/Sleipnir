@@ -287,6 +287,33 @@ non-plan task id, while quota/notional accounting must include it.
   is the same rule as task status, for the same reason: no derived state on disk
   means crash recovery is an ordinary read.
 
+## Lessons from the first real console session
+
+- **A full-screen redraw loop must own the alternate screen buffer.**
+  `theme.ENTER_FULLSCREEN` / `EXIT_FULLSCREEN` are not cosmetic: without them
+  every frame lands in the operator's scrollback, and exiting looks like the
+  program launched itself hundreds of times.
+- **The shared browser outlives the command.** Never wrap a CLI browser action
+  in a context manager that closes Chromium; `Browser.close` detaches, and only
+  `shutdown()` ends it. A browser that dies with the command makes every
+  multi-step web flow impossible — which is the only reason the capability
+  exists.
+- **Closing a CDP connection does not close the browser.** `stop_browser`
+  signals the recorded process group. If you make `close` "tidier" by killing
+  the process, you reintroduce bug 2.
+- **A tool subprocess has no TTY.** Anything that needs the operator's fingers
+  must go through `capabilities/handoff.py` and be answered by the console.
+  `getpass` in a model-spawned process fails with "No such device or address",
+  and it fails at the worst possible moment — mid sign-in.
+- **A credential answer carries a status, never a value.** `await_answer`
+  returns `supplied`/`cancelled`/`failed`. A caller that could read the
+  plaintext is a caller that could log it.
+- **Pin a model for interactive turns.** With no `--model` the account default
+  answers every trivial message at full spawn cost. The console defaults to
+  `sonnet`; the alias is operator data, never a model id chosen in source.
+- **Draw the whole wordmark or none of it.** `logo_lines` is all-or-nothing;
+  slicing rows of ASCII art renders as debris.
+
 ## Checkpoint discipline
 
 At the end of every stage or phase, in this order: refresh graphify if structure

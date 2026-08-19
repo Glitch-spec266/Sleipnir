@@ -58,6 +58,12 @@ screen capture, Chromium navigation + text extraction + screenshot, operator
 shell, and a two-turn `claude` round trip proving session continuity
 (`SLEIPNIR-LINK-OK`, then correct recall on turn two).
 
+On 2026-08-19 the last missing join was verified live: a message typed into a
+real console reached `claude`, and `claude` called
+`python -m sleipnir.cli computer screenshot` on its own and read the resulting
+PNG. The model driving the host through the harness is no longer a design
+claim.
+
 Phase 9 closed the loop between workers and the brain. When workers go quiet,
 `gate.py` folds the run into a constant-size verdict — per-group counts and the
 ids of what failed — and the harness tries to answer the failure itself before
@@ -66,6 +72,43 @@ routing-only, so it cannot change what the work means. The brain is woken only
 when work has genuinely stopped *and* the harness cannot fix it. The console's
 asleep path is live too: an owned run lock means the brain is mid-build, and a
 cheap duty officer answers from the same bounded verdict.
+
+## What the first real console session found (2026-08-19)
+
+Five bugs, none of which any test or review had caught, all found by one
+operator using the thing for twenty minutes. Worth recording because of what
+they have in common: every one was invisible to a unit test because the unit
+behaved correctly in isolation.
+
+1. **The console had no `--model`, so every message went to the account
+   default.** A one-line question was answered by the most capable and slowest
+   model, paying a full ~30k-token spawn — roughly a minute per turn. The
+   console now defaults to `sonnet` and takes `--model`. Reported as "it routes
+   to other models unnecessarily"; in fact the console never touched the tier
+   router at all, which is exactly why nothing in the routing tests could see it.
+2. **`cmd_browser` wrapped every call in `async with Browser(...)`.** The browser
+   died with the command, so `browser open` and `browser click` were two
+   different browsers and the second started blank. Multi-step web flows — the
+   only reason the capability exists — were impossible. From the outside it
+   looked like the same window opening and closing repeatedly, which is what the
+   operator saw. Chromium is now launched detached and driven over CDP.
+3. **`secret prompt` could not be reached by the model it was built for.**
+   `secrets.capture` uses `getpass`, which needs a controlling terminal; a tool
+   subprocess has none (`/dev/tty` → "No such device"). The credential path
+   existed and was unreachable. Now a handoff: the subprocess files a labelled
+   request, the console prompts inside its own frame, and the value goes from
+   the operator's keyboard to the target without ever entering a file, a pipe,
+   or the requesting process.
+4. **The console never switched to the alternate screen buffer.** Every one of
+   twelve frames per second was appended to the operator's scrollback, so
+   exiting revealed hundreds of stacked copies of the UI. Reported, reasonably,
+   as "it opened like 70 sleipnir instances" — nothing had spawned at all.
+5. **`browser close` reported success while Chromium kept running.** Closing a
+   CDP *connection* does not close the browser. The pid is now recorded at
+   launch and the process group is signalled.
+
+The console header was also drawing `art[:1]` — the top row of a five-row
+wordmark — which renders as debris rather than a logo.
 
 ## The parallel-build merge (2026-08-18)
 
@@ -267,12 +310,14 @@ lookback. Both are preserved on the `parallel-build-local` branch.
 
 ## Next steps
 
-1. **Verify the one unverified leg**: that `claude`, running under the console,
-   actually invokes the `sleipnir computer` / `browser` / `secret` commands.
-   Every capability is live-verified standalone, and the console→`claude` link
-   is live-verified, but the join could not be tested from inside a Claude Code
-   session — nesting a `bypassPermissions` spawn is blocked there. One message
-   into a real `sleipnir` console settles it.
+1. ~~**Verify the one unverified leg**~~ — **done, live, 2026-08-19.** A message
+   typed into a real `sleipnir` console ("take a screenshot and tell me whats on
+   my screen rn") reached `claude`, which invoked
+   `python -m sleipnir.cli computer screenshot` itself and read back a real
+   3840x1080 dual-monitor capture. That closes the join the harness exists for:
+   console → `claude` → host capability → image back into the model's context.
+   `browser` and `secret` are still only verified standalone; the same path
+   should carry them, but neither has been exercised from inside the console.
 2. **Live-verify the gate against a real provider run.** Its logic is covered by
    24 unit tests plus an end-to-end CLI test proving the brain is never called,
    but every phase here has ended with a live run, and this one has not had

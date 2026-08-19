@@ -18,6 +18,9 @@ suite — still runs on a machine where the browser was never installed.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,12 +33,124 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 DEFAULT_PROFILE = Path.home() / ".sleipnir" / "browser-profile"
 
+#: Fixed port for the long-lived browser. A file-based endpoint would have to
+#: be reconciled with a browser that died; a fixed port is checked by simply
+#: asking it whether it is there.
+DEBUG_PORT = 9333
+CDP_ENDPOINT = f"http://127.0.0.1:{DEBUG_PORT}"
+#: Where the detached browser's pid is recorded. Needed because closing a
+#: CDP *connection* does not close the browser — `browser close` reported
+#: success while Chromium kept running, which is exactly the kind of stray
+#: process that makes a tool feel untrustworthy.
+PID_FILE = Path.home() / ".sleipnir" / "browser.pid"
+
+
+def _cdp_alive(timeout_s: float = 0.5) -> bool:
+    import httpx
+
+    try:
+        response = httpx.get(f"{CDP_ENDPOINT}/json/version", timeout=timeout_s)
+    except Exception:  # noqa: BLE001 - any failure means "not there"
+        return False
+    return response.status_code == 200
+
+
+async def ensure_browser(profile_dir: Path = DEFAULT_PROFILE, *, headless: bool = False) -> str:
+    """Start the shared browser if it is not already running, and return its endpoint.
+
+    This exists because a browser that dies with the command that opened it is
+    useless for the only job it was added for. ``browser open`` followed by
+    ``browser click`` are two separate CLI processes; with Playwright's managed
+    lifecycle the second one got a brand-new blank browser, so every multi-step
+    web flow — every sign-in, which is the point — was impossible. It also looks
+    exactly like a bug from the outside: the same window opening and closing
+    over and over.
+
+    So Chromium is launched as a detached OS process and driven over CDP.
+    Playwright still does the automation; it just no longer owns the process
+    lifetime.
+    """
+    import subprocess
+
+    from playwright.async_api import async_playwright
+
+    if _cdp_alive():
+        return CDP_ENDPOINT
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    playwright = await async_playwright().start()
+    try:
+        executable = playwright.chromium.executable_path
+    finally:
+        await playwright.stop()
+
+    argv = [
+        executable,
+        f"--remote-debugging-port={DEBUG_PORT}",
+        f"--user-data-dir={profile_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-blink-features=AutomationControlled",
+        # Without a starting page Chromium exits immediately on some builds.
+        "about:blank",
+    ]
+    if headless:
+        argv.insert(1, "--headless=new")
+    process = subprocess.Popen(  # noqa: S603 - fixed argv from the installed browser
+        argv,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text(str(process.pid), encoding="utf-8")
+
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline:
+        if _cdp_alive():
+            audit.record("browser.daemon_started", {"endpoint": CDP_ENDPOINT})
+            return CDP_ENDPOINT
+        await asyncio.sleep(0.2)
+    raise CapabilityError(
+        f"the browser did not open a debugging port on {CDP_ENDPOINT} within 20s"
+    )
+
 
 def available() -> bool:
     try:
         import playwright  # noqa: F401
     except ImportError:
         return False
+    return True
+
+
+def stop_browser(timeout_s: float = 8.0) -> bool:
+    """Terminate the detached browser, if one is running. True if it stopped."""
+    import os
+    import signal
+
+    if not PID_FILE.exists():
+        return False
+    try:
+        pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        PID_FILE.unlink(missing_ok=True)
+        return False
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        PID_FILE.unlink(missing_ok=True)
+        return False
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if not _cdp_alive(0.2):
+            break
+        time.sleep(0.2)
+    else:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+    PID_FILE.unlink(missing_ok=True)
     return True
 
 
@@ -52,23 +167,28 @@ class Browser:
     headless: bool = False
     _playwright: Any = None
     _context: Any = None
+    _browser: Any = None
 
     async def start(self) -> Browser:
+        """Attach to the shared browser, starting it only if nobody has.
+
+        Attaching rather than launching is the whole fix: the browser outlives
+        the command, so a sign-in survives from `browser open` to `browser fill`
+        to `browser click`.
+        """
         try:
             from playwright.async_api import async_playwright
         except ImportError as error:  # pragma: no cover - environment dependent
             raise CapabilityError(
                 "playwright is not installed; run `sleipnir setup`"
             ) from error
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        endpoint = await ensure_browser(self.profile_dir, headless=self.headless)
         self._playwright = await async_playwright().start()
-        self._context = await self._playwright.chromium.launch_persistent_context(
-            str(self.profile_dir),
-            headless=self.headless,
-            viewport={"width": 1440, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        audit.record("browser.start", {"profile": str(self.profile_dir), "headless": self.headless})
+        browser = await self._playwright.chromium.connect_over_cdp(endpoint)
+        contexts = browser.contexts
+        self._context = contexts[0] if contexts else await browser.new_context()
+        self._browser = browser
+        audit.record("browser.attached", {"endpoint": endpoint})
         return self
 
     @property
@@ -117,13 +237,35 @@ class Browser:
         return destination
 
     async def close(self) -> None:
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
+        """Detach. Deliberately does **not** close the browser.
+
+        Closing it here is what made multi-step web flows impossible: every CLI
+        command would tear down the session it had just established. Use
+        ``shutdown()`` to actually end it.
+        """
+        self._context = None
+        if self._browser is not None:
+            await self._browser.close()  # closes the CDP connection, not Chromium
+            self._browser = None
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
-        audit.record("browser.close", {})
+        audit.record("browser.detached", {})
+
+    async def shutdown(self) -> None:
+        """Really end the shared browser, discarding its live tabs.
+
+        The profile on disk survives, so logins persist into the next one.
+
+        The process is signalled directly rather than asked politely over CDP:
+        disconnecting a CDP client does not close the browser it was driving,
+        so the earlier version reported "browser closed" while Chromium carried
+        on running. The whole process group goes, because Chromium's renderers
+        are children that outlive a bare kill of the parent.
+        """
+        await self.close()
+        stop_browser()
+        audit.record("browser.shutdown", {})
 
     async def __aenter__(self) -> Browser:
         return await self.start()
@@ -132,4 +274,12 @@ class Browser:
         await self.close()
 
 
-__all__ = ["Browser", "DEFAULT_PROFILE", "available"]
+__all__ = [
+    "Browser",
+    "CDP_ENDPOINT",
+    "DEBUG_PORT",
+    "DEFAULT_PROFILE",
+    "available",
+    "ensure_browser",
+    "stop_browser",
+]
