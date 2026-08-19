@@ -7,6 +7,7 @@ between commands, and a redraw loop that filled the operator's scrollback.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -30,7 +31,9 @@ def test_a_request_carries_a_label_and_never_a_value(requests_dir):
     payload = json.loads(request.path.read_text())
     assert payload["label"] == "github password"
     assert payload["submit"] is True
-    assert set(payload) == {"id", "label", "submit", "at", "requester_pid"}
+    assert set(payload) == {
+        "id", "label", "submit", "at", "requester_pid", "browser_selector"
+    }
     assert "password" not in {key for key in payload if key != "label"}
 
 
@@ -39,6 +42,13 @@ def test_the_console_sees_a_pending_request(requests_dir):
     handoff.request_secret("aws key")
     found = handoff.pending()
     assert found is not None and found.label == "aws key"
+
+
+def test_console_polls_for_a_secret_while_the_model_turn_is_busy(requests_dir):
+    request = handoff.request_secret("browser password", browser_selector="#password")
+    state = console.ConsoleState(busy=True)
+    console.poll_secret_request(state)
+    assert state.secret_request == request
 
 
 def test_answering_clears_the_request_and_reports_only_a_status(requests_dir):
@@ -118,7 +128,7 @@ def test_a_typed_credential_never_reaches_the_transcript(requests_dir, monkeypat
     state = console.ConsoleState()
     state.secret_request = request
 
-    assert console.submit_secret(state, "hunter2-the-real-one") == "supplied"
+    assert asyncio.run(console.submit_secret(state, "hunter2-the-real-one")) == "supplied"
     assert typed_values == ["hunter2-the-real-one"]
 
     everything = " ".join(message.text for message in state.messages)
@@ -142,7 +152,7 @@ def test_an_empty_credential_cancels_rather_than_typing_nothing(requests_dir):
     request = handoff.request_secret("api key")
     state = console.ConsoleState()
     state.secret_request = request
-    assert console.submit_secret(state, "") == "cancelled"
+    assert asyncio.run(console.submit_secret(state, "")) == "cancelled"
     assert json.loads(request.answer_path.read_text()) == {"status": "cancelled"}
 
 
@@ -154,9 +164,37 @@ def test_delivery_failure_never_leaks_the_value_through_the_error(requests_dir, 
     request = handoff.request_secret("ssh passphrase")
     state = console.ConsoleState()
     state.secret_request = request
-    assert console.submit_secret(state, "topsecretvalue") == "failed"
+    assert asyncio.run(console.submit_secret(state, "topsecretvalue")) == "failed"
     everything = " ".join(message.text for message in state.messages)
     assert "topsecretvalue" not in everything
+
+
+def test_browser_secret_is_filled_over_cdp_without_desktop_focus(requests_dir, monkeypatch):
+    delivered = []
+
+    class FakeBrowser:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def fill_secret(self, selector, secret):
+            delivered.append((selector, secret.consume()))
+
+        async def press(self, selector, key):
+            delivered.append((selector, key))
+
+    monkeypatch.setattr("sleipnir.capabilities.browser.Browser", FakeBrowser)
+    request = handoff.request_secret(
+        "browser password",
+        submit=True,
+        browser_selector="#password",
+    )
+    state = console.ConsoleState(secret_request=request, busy=True)
+    assert asyncio.run(console.submit_secret(state, "dummy-live-secret")) == "supplied"
+    assert delivered == [("#password", "dummy-live-secret"), ("#password", "Enter")]
+    assert "dummy-live-secret" not in " ".join(message.text for message in state.messages)
 
 
 # --- the redraw bug ------------------------------------------------------

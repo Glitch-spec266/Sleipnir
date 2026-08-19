@@ -63,7 +63,9 @@ These are real shell commands available to you via Bash:
   {exe} browser text [selector]        read the current page
   {exe} browser click <selector>
   {exe} browser fill <selector> <text>
-  {exe} secret prompt "<label>"        ask the operator for a credential
+  {exe} secret prompt "<label>"        ask the operator; inject into focused app
+  {exe} secret prompt "<label>" --browser-selector "<css>"
+                                         fill a browser field without relying on focus
 
 Input is injected at the kernel level, so it reaches every window on this
 Wayland desktop exactly as a physical keyboard would. Take a screenshot and
@@ -707,7 +709,7 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
         state.status = "ready"
 
 
-def submit_secret(state: ConsoleState, typed: str) -> str:
+async def submit_secret(state: ConsoleState, typed: str) -> str:
     """Fulfil a pending credential request from the console's own input.
 
     The plaintext lives in a byte buffer for the duration of one injection and
@@ -726,7 +728,15 @@ def submit_secret(state: ConsoleState, typed: str) -> str:
         return "cancelled"
     secret = secrets.Secret(label=request.label, _buffer=bytearray(typed.encode("utf-8")))
     try:
-        secrets.type_into_focused_window(secret, submit=request.submit)
+        if request.browser_selector:
+            from sleipnir.capabilities.browser import Browser
+
+            async with Browser() as web:
+                await web.fill_secret(request.browser_selector, secret)
+                if request.submit:
+                    await web.press(request.browser_selector, "Enter")
+        else:
+            secrets.type_into_focused_window(secret, submit=request.submit)
         handoff.answer(request, "supplied")
         state.add("sleipnir", f"Credential for {request.label!r} typed into the focused window.")
         return "supplied"
@@ -741,7 +751,7 @@ def poll_secret_request(state: ConsoleState) -> None:
     """Notice a tool subprocess asking for a credential."""
     from sleipnir.capabilities import handoff
 
-    if state.secret_request is not None or state.busy:
+    if state.secret_request is not None:
         return
     request = handoff.pending()
     if request is not None:
@@ -820,7 +830,7 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
                     if char in ENTER:
                         typed = state.input_buffer
                         state.input_buffer = ""
-                        submit_secret(state, typed)
+                        await submit_secret(state, typed)
                     else:
                         apply_key(state, char)
                     continue

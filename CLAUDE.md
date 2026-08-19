@@ -358,6 +358,10 @@ non-plan task id, while quota/notional accounting must include it.
   file, matching filename/ID and a live same-user requester PID before showing
   a prompt. Answer only with the closed status vocabulary in a private,
   write-once regular file; never follow request or answer symlinks.
+- **Secret polling must run while the model is busy.** That is when its tool
+  subprocess is blocked waiting. For browser forms, carry a selector and fill
+  over CDP; focusing the terminal to collect masked input cannot be allowed to
+  redirect physical injection away from the intended browser field.
 - **Host-state paths are not exempt from confinement.** Audit logs use private
   no-follow append, while clipboard destinations and browser profiles must be
   real directories. Validate before creation so rejecting a symlink does not

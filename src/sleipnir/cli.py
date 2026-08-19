@@ -1090,11 +1090,23 @@ async def cmd_secret(args: argparse.Namespace) -> int:
         print(f"Sleipnir needs a credential: {args.label}", file=sys.stderr)
         print("It is typed into the focused window and never stored.", file=sys.stderr)
         secret = secrets.capture(args.label)
-        secrets.type_into_focused_window(secret, submit=args.submit)
+        if args.browser_selector:
+            from sleipnir.capabilities.browser import Browser
+
+            async with Browser() as web:
+                await web.fill_secret(args.browser_selector, secret)
+                if args.submit:
+                    await web.press(args.browser_selector, "Enter")
+        else:
+            secrets.type_into_focused_window(secret, submit=args.submit)
         print("credential supplied")
         return 0
 
-    request = handoff.request_secret(args.label, submit=args.submit)
+    request = handoff.request_secret(
+        args.label,
+        submit=args.submit,
+        browser_selector=args.browser_selector,
+    )
     print(f"waiting for the Sleipnir console to supply: {args.label}", file=sys.stderr)
     try:
         status = handoff.await_answer(request)
@@ -1184,6 +1196,10 @@ def build_parser() -> argparse.ArgumentParser:
     secret_parser.add_argument("label")
     secret_parser.add_argument(
         "--submit", action="store_true", help="press enter after typing the value"
+    )
+    secret_parser.add_argument(
+        "--browser-selector",
+        help="fill this selector in Sleipnir's persistent browser instead of the focused window",
     )
     secret_parser.set_defaults(func=cmd_secret)
 

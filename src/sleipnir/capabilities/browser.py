@@ -286,6 +286,10 @@ class Browser:
         await self.page.fill(selector, secret.consume())
         audit.record("browser.fill_secret", {"selector": selector, "label": secret.label})
 
+    async def press(self, selector: str, key: str) -> None:
+        await self.page.press(selector, key)
+        audit.record("browser.press", {"selector": selector, "key": key})
+
     async def text(self, selector: str = "body") -> str:
         return await self.page.inner_text(selector)
 

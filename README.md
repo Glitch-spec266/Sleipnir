@@ -54,7 +54,7 @@ src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
 src/sleipnir/console.py      guarded chat + `/project` multi-model front door
 src/sleipnir/chat.py         Claude session transport + tool-free fast-lane gate
 src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate
-tests/                       415 tests, including the executable form of the
+tests/                       417 tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -123,6 +123,9 @@ forwards the paste event, Sleipnir reads the image MIME with `wl-paste`, saves i
 as a private `0600` attachment, and gives Claude the path. The agent-facing
 `sleipnir computer copy` and `sleipnir computer paste` commands emit real
 Ctrl+Shift+C/V chords, preserving either text or image MIME in the focused app.
+For browser credentials, `secret prompt "<label>" --browser-selector "<css>"`
+fills the persistent page over CDP; focusing the console to type the masked
+value therefore cannot steal the target field.
 
 The splash uses a letter-free eight-legged horse emblem; the frame title carries
 the product name, so the mark itself is a logo rather than another nameplate.

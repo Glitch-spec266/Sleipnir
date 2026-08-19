@@ -532,6 +532,10 @@ reads the number as economic truth.
   one-attempt revision and real Codex produced the declared proof on attempt
   two. A separate PTY `/project` run planned and completed reason/code modules,
   proving the interactive command reaches the routed executor rather than chat.
+- **Browser secrets use browser identity, not desktop focus.** A waiting tool
+  request may name a selector; the console keeps polling during the active model
+  turn, accepts masked input, fills the persistent page over CDP, and wipes the
+  value. Physical injection remains for non-browser applications.
 - **Revision invalidation must cause execution.** `SUPERSEDED` means the task's
   own contract changed; `STALE` means an upstream contract changed. The
   executor schedules both as work and requires freshly `DONE` dependencies,
