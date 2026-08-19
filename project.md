@@ -401,6 +401,11 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   subprocess waits. Browser requests may carry a CSS selector; the console
   fills it over CDP and wipes the secret, avoiding the focus paradox where
   returning to the terminal loses the browser field.
+- 2026-08-19 — **The focus-independent browser secret path is live.** A real
+  non-TTY request blocked while a busy console detected it, CDP filled and
+  submitted a disposable password field, and the page exposed only
+  `SUBMITTED_LENGTH_25` before clearing it. The requester learned only
+  `credential supplied`; the dummy value appears in no Sleipnir state or log.
 
 ## Open questions
 
@@ -419,8 +424,9 @@ lookback. Both are preserved on the `parallel-build-local` branch.
    `python -m sleipnir.cli computer screenshot` itself and read back a real
    3840x1080 dual-monitor capture. That closes the join the harness exists for:
    console → `claude` → host capability → image back into the model's context.
-   `browser` and `secret` are still only verified standalone; the same path
-   should carry them, but neither has been exercised from inside the console.
+   Browser navigation and the new focus-independent secret/CDP handoff are also
+   live-verified standalone; the remaining proof is Claude initiating them from
+   inside the console after quota resets.
 2. ~~**Live-verify the gate against a real provider run.**~~ **Done, live,
    2026-08-19.** The gate persisted one finite failed-module-only escalation,
    real Codex completed attempt two, and the declared proof artifact passed.
