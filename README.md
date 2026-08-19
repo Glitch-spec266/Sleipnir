@@ -10,7 +10,7 @@ never re-enters the orchestrator's context.** The plan lives on disk. The
 orchestrator is re-invoked fresh each cycle with only a compact, size-bounded
 manifest.
 
-## Status: Phases 1–5 complete — awaiting review
+## Status: Phases 1–5 complete — final gate in progress
 
 | Phase | Scope | State |
 |---|---|---|
@@ -19,6 +19,7 @@ manifest.
 | 3 | tier router | complete |
 | 4 | budget governor | complete |
 | 5 | CLI | complete |
+| 6 | end-to-end resume gate, review, pentest | in progress |
 
 Read [`DESIGN.md`](DESIGN.md) for the tradeoffs, the manifest size math, and the
 open decisions.
@@ -44,7 +45,7 @@ src/sleipnir/router.py       tier -> model, with full routing rationale
 src/sleipnir/budget.py       5-hour window accounting and downshift
 src/sleipnir/planner.py      prompt -> validated task DAG
 src/sleipnir/cli.py          plan / run / status / resume / explain
-tests/                       217 tests, including the executable form of the
+tests/                       221 tests, including the executable form of the
                              manifest size bound
 ```
 

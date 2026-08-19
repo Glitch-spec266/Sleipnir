@@ -60,6 +60,21 @@ from sleipnir.schema import (
 DRY_RUN_SUMMARY = "<summary of this dependency, available at run time>"
 
 
+class ConcurrentExecutionError(RuntimeError):
+    """An unfinished attempt still belongs to a live executor process."""
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Probe process existence without sending a signal that changes state."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class Router(Protocol):
     """Tier -> concrete model. Implemented by TierRouter.
 
@@ -302,6 +317,8 @@ class Executor:
             self._report.final_states = self._states()
             return self._report
 
+        self._recover_open_attempts()
+
         running: dict[str, asyncio.Task[None]] = {}
         launched: set[str] = set()
         try:
@@ -337,6 +354,63 @@ class Executor:
             self._report.final_states = self._states()
         return self._report
 
+    def _recover_open_attempts(self) -> None:
+        """Close attempts whose executor died before writing a terminal record.
+
+        The start record was fsynced before dispatch, so its absence of a
+        matching finish is the durable crash marker. Recording INTERRUPTED
+        turns the normal projection back to READY (when retry policy permits)
+        and ensures the retry uses a fresh attempt workspace.
+
+        Usage is unknowable after an abrupt process death. The recovery record
+        therefore preserves the adapter's billing axis and marks a zero amount
+        as estimated; real subscription utilisation is reconciled separately
+        by the budget governor's provider meter.
+        """
+        open_attempts = self.log.open_attempts()
+        live = [started for started in open_attempts.values() if _pid_is_alive(started.pid)]
+        if live:
+            owners = ", ".join(
+                f"{started.task_id}#{started.attempt} (pid {started.pid})"
+                for started in live
+            )
+            raise ConcurrentExecutionError(
+                f"refusing to recover attempt(s) still owned by a live executor: {owners}"
+            )
+
+        now = datetime.now(UTC)
+        for started in open_attempts.values():
+            task = self.plan.by_id.get(started.task_id)
+            if task is None:
+                # A log for a different plan is corruption, not something this
+                # executor can safely invent a task contract for.
+                raise ValueError(
+                    f"open attempt {started.task_id!r} is not present in plan {self.plan.plan_id!r}"
+                )
+            adapter = self._adapter_for(started.routing)
+            self.log.append(
+                AttemptFinished(
+                    run_id=started.run_id,
+                    task_id=started.task_id,
+                    attempt=started.attempt,
+                    spec_hash=started.spec_hash,
+                    plan_revision=started.plan_revision,
+                    routing=started.routing,
+                    status=AttemptStatus.FAILED,
+                    failure_kind=FailureKind.INTERRUPTED,
+                    started_at=started.started_at,
+                    ended_at=now,
+                    wall_time_s=max(0.0, (now - started.started_at).total_seconds()),
+                    cost=CostEstimate(
+                        billing_mode=adapter.billing_mode,
+                        is_estimate=True,
+                    ),
+                    summary=(
+                        "executor stopped before this attempt wrote a terminal record; "
+                        "usage and cost are unavailable"
+                    ),
+                )
+            )
     async def _cancel_all(self, running: Mapping[str, asyncio.Task[None]]) -> None:
         """Cancel in-flight attempts and wait for each to record its own end.
 
@@ -606,6 +680,7 @@ class Executor:
 
 
 __all__ = [
+    "ConcurrentExecutionError",
     "DRY_RUN_SUMMARY",
     "Executor",
     "ExecutorConfig",

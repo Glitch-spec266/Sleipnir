@@ -231,9 +231,7 @@ class TierRouter:
             return "matches a deny pattern"
         if policy.allow and not any(pattern in model_id for pattern in policy.allow):
             return "does not match any allow pattern"
-        if context is None:
-            return "context window unknown"
-        if context < needed:
+        if context is not None and context < needed:
             return f"context {context:,} < {needed:,} required"
         if policy.max_price_per_mtok is not None:
             if price is None:

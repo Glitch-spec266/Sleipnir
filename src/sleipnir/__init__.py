@@ -1,7 +1,7 @@
 """Sleipnir — a budget-aware agentic orchestrator.
 
-Phase 1 ships the state schema only. Every later phase (executor, router,
-budget governor, CLI) is a consumer of the models in :mod:`sleipnir.schema`.
+Phases 1–5 provide the schema, executor, adapters, router, budget governor,
+planner, and CLI. The final end-to-end release gate is Phase 6.
 """
 
 __version__ = "0.1.0"

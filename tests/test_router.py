@@ -131,6 +131,21 @@ def test_models_with_too_little_context_are_rejected():
         r.resolve(make_task("t", tier=Tier.LONGCTX), attempt=1, tier=Tier.LONGCTX)
 
 
+def test_unknown_context_does_not_exclude_a_candidate():
+    """Missing catalogue metadata is uncertainty, not evidence of insufficiency."""
+    unknown = model("unknown/x", context=64_000, price=0.01)
+    unknown = unknown.__class__(
+        id=unknown.id,
+        context_length=None,
+        input_per_mtok=unknown.input_per_mtok,
+        output_per_mtok=unknown.output_per_mtok,
+    )
+    decision = router(unknown).resolve(
+        make_task("t", tier=Tier.LONGCTX), attempt=1, tier=Tier.LONGCTX
+    )
+    assert decision.model == "unknown/x"
+
+
 def test_price_cap_is_enforced():
     r = router(model("dear/x", price=50.0, out=50.0, context=64_000))
     # mechanical caps at $1.00/Mtok, and no subscription model is cheap enough

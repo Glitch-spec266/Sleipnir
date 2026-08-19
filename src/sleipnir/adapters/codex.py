@@ -1,12 +1,10 @@
 """Codex adapter — shells out to `codex exec`.
 
-**Unverified surface.** `codex` is not installed in the environment this was
-written in, so unlike the Claude adapter the flags below could not be checked
-against a real `--help`. Rather than hardcode a guess, the entire invocation is
-*configuration* (:class:`CodexInvocation`): if the real CLI disagrees, correct
-the dataclass, not this module's logic. The parsing is written defensively for
-the same reason — it scans for usage rather than assuming a key path, and says
-so explicitly when it finds none.
+The default invocation and JSONL usage shape were verified against Codex CLI
+0.148.0 on 2026-08-18.  The invocation remains configuration
+(:class:`CodexInvocation`) so future CLI changes do not leak into dispatch
+logic, and the parser remains structure-agnostic because event envelopes can
+change independently of their usage payload.
 
 Auth is the CLI's own. Sleipnir never touches OpenAI credentials.
 """
@@ -40,13 +38,23 @@ from sleipnir.schema import (
 #: any of them so a naming change does not silently zero the budget.
 _INPUT_KEYS = ("input_tokens", "prompt_tokens", "inputTokens", "promptTokens")
 _OUTPUT_KEYS = ("output_tokens", "completion_tokens", "outputTokens", "completionTokens")
-_CACHE_READ_KEYS = ("cached_tokens", "cache_read_input_tokens", "cacheReadInputTokens")
-_REASONING_KEYS = ("reasoning_tokens", "thinking_tokens", "reasoningTokens")
+_CACHE_READ_KEYS = (
+    "cached_input_tokens",
+    "cached_tokens",
+    "cache_read_input_tokens",
+    "cacheReadInputTokens",
+)
+_REASONING_KEYS = (
+    "reasoning_output_tokens",
+    "reasoning_tokens",
+    "thinking_tokens",
+    "reasoningTokens",
+)
 
 
 @dataclass(slots=True)
 class CodexInvocation:
-    """How to call the CLI. Data, not code — correct this after verifying."""
+    """How to call the CLI. Data, not dispatch logic."""
 
     executable: str = "codex"
     subcommand: tuple[str, ...] = ("exec",)
@@ -191,10 +199,18 @@ class CodexAdapter(BaseAdapter):
             if not isinstance(node, dict):
                 return
             if any(key in node for key in _INPUT_KEYS + _OUTPUT_KEYS):
+                input_tokens = _first_int(node, _INPUT_KEYS)
+                cache_read_tokens = _first_int(node, _CACHE_READ_KEYS)
                 candidate = TokenUsage(
-                    input_tokens=_first_int(node, _INPUT_KEYS),
+                    # Codex/OpenAI reports cached input as a subset of input,
+                    # while TokenUsage stores disjoint billing channels.
+                    input_tokens=max(0, input_tokens - cache_read_tokens),
                     output_tokens=_first_int(node, _OUTPUT_KEYS),
-                    cache_read_tokens=_first_int(node, _CACHE_READ_KEYS),
+                    cache_read_tokens=cache_read_tokens,
+                    thinking_tokens=min(
+                        _first_int(node, _REASONING_KEYS),
+                        _first_int(node, _OUTPUT_KEYS),
+                    ),
                 )
                 details = node.get("output_tokens_details") or node.get("completion_tokens_details")
                 if isinstance(details, dict):
@@ -222,7 +238,7 @@ class CodexAdapter(BaseAdapter):
             estimated_input_tokens=estimate_tokens(request.prompt),
             timeout_s=request.timeout_s,
             workspace=request.workspace.rel_dir,
-            notes=["codex CLI surface is UNVERIFIED — confirm flags before trusting a real run"],
+            notes=["codex exec JSONL surface verified with Codex CLI 0.148.0"],
         )
 
 

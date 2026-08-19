@@ -271,7 +271,7 @@ def test_claude_preview_does_not_spawn(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Codex — unverified CLI, so the invocation is data and parsing is defensive
+# Codex — real CLI shape verified; invocation remains configurable
 # ---------------------------------------------------------------------------
 
 
@@ -311,6 +311,25 @@ def test_codex_accepts_openai_style_key_names(tmp_path: Path):
     assert outcome.usage.output_tokens == 7
 
 
+def test_codex_normalizes_observed_cli_usage_without_double_counting_cache(tmp_path: Path):
+    stdout = json.dumps({
+        "type": "turn.completed",
+        "usage": {
+            "input_tokens": 13_987,
+            "cached_input_tokens": 9_984,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 5,
+            "reasoning_output_tokens": 2,
+        },
+    }).encode()
+    adapter = CodexAdapter(spawn=fake_spawner(stdout=stdout))
+    outcome = run(adapter.dispatch(request_for(tmp_path)))
+    assert outcome.usage.input_tokens == 4_003
+    assert outcome.usage.cache_read_tokens == 9_984
+    assert outcome.usage.total_input_tokens == 13_987
+    assert outcome.usage.thinking_tokens == 2
+
+
 def test_codex_says_so_when_usage_is_unknown(tmp_path: Path):
     """A zeroed usage record would tell the governor the call was free."""
     adapter = CodexAdapter(spawn=fake_spawner(stdout=b'{"type":"message","text":"hi"}'))
@@ -319,10 +338,10 @@ def test_codex_says_so_when_usage_is_unknown(tmp_path: Path):
     assert "unmeasured" in outcome.provider_meta["warning"]
 
 
-def test_codex_preview_flags_that_it_is_unverified(tmp_path: Path):
+def test_codex_preview_records_verified_cli_surface(tmp_path: Path):
     adapter = CodexAdapter()
     preview = adapter.preview(request_for(tmp_path))
-    assert any("UNVERIFIED" in note for note in preview.notes)
+    assert any("verified" in note for note in preview.notes)
 
 
 # ---------------------------------------------------------------------------
