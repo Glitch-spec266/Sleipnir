@@ -37,6 +37,17 @@ from pydantic import (
 
 SCHEMA_VERSION = 1
 
+_RESERVED_WORKSPACE_PATHS = frozenset(
+    {
+        "summary.md",
+        "prompt.txt",
+        "input-manifest.json",
+        "stdout.log",
+        "stderr.log",
+        "outcome.json",
+    }
+)
+
 # ---------------------------------------------------------------------------
 # Token accounting helper
 # ---------------------------------------------------------------------------
@@ -263,6 +274,16 @@ class InputContract(BaseModel):
     )
     max_input_bytes: int = Field(default=262_144, gt=0, le=16_777_216)
 
+    @field_validator("files")
+    @classmethod
+    def _files_are_contained(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if not value or value.startswith("/") or ".." in value.split("/"):
+                raise ValueError(
+                    "input file paths/globs must be non-empty, relative, and must not escape upward"
+                )
+        return values
+
     @model_validator(mode="after")
     def _artifact_budget_fits(self) -> Self:
         requested = sum(ref.max_bytes for ref in self.artifacts)
@@ -305,6 +326,8 @@ class ExpectedOutput(BaseModel):
     def _contained(cls, value: str) -> str:
         if value.startswith("/") or ".." in value.split("/"):
             raise ValueError("output path must be relative and must not escape upward")
+        if value in _RESERVED_WORKSPACE_PATHS or value.startswith(".checks/"):
+            raise ValueError("output path collides with a harness-owned workspace file")
         return value
 
 
@@ -711,6 +734,25 @@ class RevisionChange(BaseModel):
     op: RevisionOp
     task_id: TaskId
     detail: str = Field(max_length=400, default="")
+    task: Task | None = Field(
+        default=None,
+        description="Complete replacement task for add, retarget, or respec operations.",
+    )
+    dependency_id: TaskId | None = Field(
+        default=None, description="Dependency changed by add_edge or remove_edge."
+    )
+
+    @model_validator(mode="after")
+    def _payload_matches_operation(self) -> Self:
+        task_ops = {RevisionOp.ADD_TASK, RevisionOp.RETARGET_TASK, RevisionOp.RESPEC_TASK}
+        edge_ops = {RevisionOp.ADD_EDGE, RevisionOp.REMOVE_EDGE}
+        if (self.op in task_ops) != (self.task is not None):
+            raise ValueError(f"{self.op.value} requires exactly one complete task payload")
+        if self.task is not None and self.task.id != self.task_id:
+            raise ValueError("revision task payload id must match task_id")
+        if (self.op in edge_ops) != (self.dependency_id is not None):
+            raise ValueError(f"{self.op.value} requires exactly one dependency_id")
+        return self
 
 
 class PlanRevision(BaseModel):
@@ -870,6 +912,11 @@ class CostEstimate(BaseModel):
         description="Tokens charged against the 5-hour subscription window. "
         "Zero for metered calls.",
     )
+    quota_pool: str | None = Field(
+        default=None,
+        max_length=32,
+        description="Subscription quota consumed (for example claude or codex).",
+    )
     pricing: PriceSnapshot | None = None
     is_estimate: bool = Field(
         default=True,
@@ -880,6 +927,8 @@ class CostEstimate(BaseModel):
     def _modes_are_coherent(self) -> Self:
         if self.billing_mode is BillingMode.METERED and self.window_tokens:
             raise ValueError("metered calls do not consume the subscription window")
+        if self.billing_mode is BillingMode.METERED and self.quota_pool is not None:
+            raise ValueError("metered calls do not consume a subscription quota pool")
         return self
 
 

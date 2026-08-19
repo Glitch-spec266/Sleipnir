@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -136,3 +142,88 @@ def test_spawn_requests_its_own_session(tmp_path: Path):
     )
     assert calls[0]["argv"] == ["fake", "--flag"]
     assert calls[0]["kwargs"]["start_new_session"] is True
+
+
+def test_real_spawn_is_wrapped_with_linux_parent_death_guard(
+    tmp_path: Path, monkeypatch
+):
+    calls: list = []
+    monkeypatch.setattr("sleipnir.process._default_spawn", fake_spawner(calls=calls))
+    runner = ProcessRunner()
+    run(
+        runner.run(
+            ["provider-cli", "--flag"],
+            stdout_path=tmp_path / "out.log",
+            stderr_path=tmp_path / "err.log",
+        )
+    )
+    if sys.platform.startswith("linux"):
+        assert calls[0]["argv"] == [
+            sys.executable,
+            str(Path(__file__).parents[1] / "src" / "sleipnir" / "process_guard.py"),
+            "--",
+            "provider-cli",
+            "--flag",
+        ]
+    else:
+        assert calls[0]["argv"] == ["provider-cli", "--flag"]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux prctl contract")
+def test_parent_death_guard_terminates_child_after_hard_parent_kill():
+    guard = Path(__file__).parents[1] / "src" / "sleipnir" / "process_guard.py"
+    supervisor_code = f"""
+import subprocess, sys, time
+child = subprocess.Popen([
+    sys.executable, {str(guard)!r}, '--',
+    sys.executable, '-c', 'import time; time.sleep(30)'
+])
+print(child.pid, flush=True)
+time.sleep(30)
+"""
+    supervisor = subprocess.Popen(
+        [sys.executable, "-c", supervisor_code],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    assert supervisor.stdout is not None
+    child_pid = int(supervisor.stdout.readline().strip())
+    provider_pid: int | None = None
+
+    def stopped(pid: int) -> bool:
+        try:
+            return Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z"
+        except (FileNotFoundError, ProcessLookupError):
+            return True
+
+    try:
+        children = Path(f"/proc/{child_pid}/task/{child_pid}/children")
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            values = children.read_text().split() if children.exists() else []
+            if values:
+                provider_pid = int(values[0])
+                break
+            time.sleep(0.02)
+        assert provider_pid is not None
+        os.kill(supervisor.pid, signal.SIGKILL)
+        supervisor.wait(timeout=2)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            processes = [child_pid, provider_pid]
+            if all(stopped(pid) for pid in processes):
+                break
+            time.sleep(0.02)
+        else:
+            states = {
+                pid: ("stopped" if stopped(pid) else "running")
+                for pid in processes
+            }
+            pytest.fail(f"guarded child survived its parent's SIGKILL: {states}")
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(child_pid, signal.SIGKILL)
+        if provider_pid is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(provider_pid, signal.SIGKILL)

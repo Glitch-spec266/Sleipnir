@@ -1,6 +1,6 @@
 # Sleipnir — Project State
 
-_Started: 2026-08-18 · Last checkpoint: 2026-08-18, Phase 6 local gate_
+_Started: 2026-08-18 · Last checkpoint: 2026-08-19, sparse control + live Codex gate_
 
 ## Goal
 
@@ -31,14 +31,31 @@ and the tests.
 | 3 | tier router + live pricing + config | complete |
 | 4 | budget governor + usage parser + real utilisation | complete |
 | 5 | planner + CLI | complete |
-| 6 | final gate: end-to-end live run, review, heavy pentest | **in progress** |
-| 7 | live TUI dashboard (optional, post-release) | not started |
+| 6 | final gate: end-to-end live run, review, heavy pentest | complete |
+| 7 | live TUI dashboard + sparse-control console | complete |
+| 8 | interactive console, host control, browser control | complete |
 
 ## Current phase/stage
 
-Phases 1–5 complete. Phase 6 local review is in progress with **221 tests
-passing**. Provider-backed work is paused because the five-hour meter reached
-100%; the genuine killed-and-resumed run remains the release gate.
+Phases 1–8 are complete with **319 tests passing**.
+
+Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
+dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
+runs workers plus sparse brain control behind the same bounded console.
+Isolated provider-backed Codex execution and genuine hard-kill/resume recovery
+both pass end to end.
+
+Phase 8 turned Sleipnir into a front door rather than a batch tool. Bare
+`sleipnir` opens an animated green console; a typed message is handed to the
+real `claude` CLI with session continuity, and the harness attaches host
+capabilities the CLI does not have on its own — kernel-level keyboard/mouse
+injection, screen capture, a persistent logged-in browser, and a credential
+prompt that never lets a secret reach a model.
+
+Live-verified on this machine: pointer injection under Wayland, `spectacle`
+screen capture, Chromium navigation + text extraction + screenshot, operator
+shell, and a two-turn `claude` round trip proving session continuity
+(`SLEIPNIR-LINK-OK`, then correct recall on turn two).
 
 ## The parallel-build merge (2026-08-18)
 
@@ -110,12 +127,105 @@ lookback. Both are preserved on the `parallel-build-local` branch.
 - 2026-08-18 — **Open attempts are durable crash markers.** Resume closes an
   orphan as `INTERRUPTED`, preserves its billing axis, and retries in a fresh
   workspace. It refuses recovery while the recorded executor PID is alive.
+- 2026-08-18 — **A kernel lock owns each run directory.** Open-attempt PID
+  checks cannot close the race where two executors both see READY before either
+  appends. `run.lock` now uses non-blocking `flock`, which releases on process
+  death without stale-lock deletion.
+- 2026-08-18 — **The TUI is derived state, like status.** It renders only the
+  plan, folded result log and budget snapshot; it stores no status and reads no
+  artifact or summary content. It uses the standard library, keeping the two
+  runtime dependencies unchanged.
+- 2026-08-18 — **Attempt files are an untrusted boundary.** Summaries, outputs,
+  repository inputs and dependency artifacts must be regular files physically
+  inside their declared root. Symlink escapes and `../` input paths are refused,
+  harness-owned filenames cannot be task outputs, and unrelated credentials are
+  removed from agent CLI environments.
+- 2026-08-19 — **Claude control is sparse, not per-task.** `orchestrate` lets
+  workers run autonomously and wakes the reason-tier brain only at a terminal
+  impasse. It receives the constant-size manifest plus at most four urgent task
+  specs capped at 24k characters—never artifact content or transcripts.
+- 2026-08-19 — **Brain revisions are typed and locally enforced.** Complete task
+  or edge payloads are validated against the DAG; retargets may not disguise a
+  semantic change; superseded/stale blast radius is computed locally; the audit
+  is fsynced before `plan.json` is atomically replaced.
+- 2026-08-19 — **The default policy matches the product economics.** Claude is
+  first for reason/control, Codex subscription is first for bulk code, and
+  OpenRouter is first for mechanical/extract work. Claude is no longer the
+  example config's default worker for code tasks.
+- 2026-08-19 — **Subscription quota pools are separate.** Codex CLI usage is
+  reported as `codex_tokens`; it consumes neither the Claude 5-hour projection
+  nor metered-dollar budget. The example uses `@cli-default`, which deliberately
+  omits `--model` so an authenticated Codex CLI selects an account-supported
+  default instead of failing when a pinned alias is retired.
+- 2026-08-19 — **Semantic brain changes require operator review.** Routing-only
+  retargets may auto-apply, but respec/add/remove/edge changes are persisted as
+  pending proposals. `apply-revision` is the explicit review boundary and marks
+  successfully applied proposals out of the TUI's pending count.
+- 2026-08-19 — **Provider processes inherit executor death on Linux.** A real
+  `SIGKILL` drill proved the run lock and recovery correct but exposed the Codex
+  CLI continuing as an orphan. Real CLI children now run under a small
+  `PR_SET_PDEATHSIG` guard that forwards parent death to the whole provider
+  process group; a kernel-level test kills the supervisor and verifies both the
+  guard and provider descendant stop.
+- 2026-08-19 — **Stale and superseded are revision work queues.** They are not
+  completion states. A changed task reruns first; stale descendants then rerun
+  in strict dependency order using only freshly `DONE` upstream results. This
+  closes a pentest finding where semantic revisions were validly persisted but
+  the executor could never perform them.
+- 2026-08-19 — **The TUI is now the full harness console.** Static/watch modes
+  stay offline and log-derived; execution and orchestration modes own the same
+  run lock. It reloads atomic plan revisions, exposes pending review and bounded
+  control events, separates Claude/Codex/metered usage, and strips all terminal
+  control characters from untrusted display values.
+- 2026-08-19 — **Brain calls use the same durable accounting stream.** A valid
+  or invalid completed control call appends an `AttemptFinished` record with
+  usage, quota pool, notional cost, and decision artifact hash. It does not
+  affect DAG task projection, but it does appear in budgets and the TUI.
+
+- 2026-08-19 — **Bare `sleipnir` is the console, not an error.** The front door
+  is a conversation, the way bare `claude` is. Every batch subcommand still
+  exists; `argparse` simply no longer requires one.
+- 2026-08-19 — **The console is a router, never a second model.** It renders and
+  it decides *who* receives a message. Brain awake: straight to `claude` with
+  `--session-id` then `--resume`, so the ~30k-token spawn overhead buys a
+  continuing conversation instead of a stranger each turn. Brain asleep: a
+  cheap OpenRouter duty officer answers from the bounded manifest, and a plan
+  change becomes a `QUEUE:` line for the brain rather than an action — plan
+  mutation still goes only through `revisions.apply_revision`.
+- 2026-08-19 — **Wayland forced kernel-level input injection.** X11-style
+  synthesis is gone by design, so `xdotool` would reach XWayland windows only.
+  `ydotool` writes to `/dev/uinput`, which needs a udev rule; `sleipnir setup`
+  packages that install and prints every root command before running it, so no
+  future user hand-runs sudo from a README.
+- 2026-08-19 — **`grim` is present on this box and must not be chosen.** It is
+  wlroots-only and fails on KWin. Screenshot tool selection prefers
+  `spectacle` on KDE explicitly; a pinned test covers the mis-selection.
+- 2026-08-19 — **Capabilities are operator-lane only, and audited.** Worker
+  tasks keep the credential-stripped environment and confined workspace. Every
+  privileged call appends to `~/.sleipnir/capability-audit.jsonl`, and the
+  redactor drops secret-shaped keys at the boundary rather than trusting
+  callers — typed text is recorded as a length, never as content.
+- 2026-08-19 — **A credential is a one-shot byte buffer, never a string.**
+  `Secret` overrides every rendering hook (`__str__`, `__repr__`, `__format__`)
+  so one stray `print` or traceback cannot leak it, wipes on consume, and
+  raises on reuse because re-use means a caller stashed it. Python string
+  immutability means a transient plaintext copy still exists at the moment of
+  use; that ceiling is recorded in the module.
+- 2026-08-19 — **The console defaults to `bypassPermissions`.** Host control is
+  the product; a console that stops to confirm every click is an ordinary
+  headless Claude. `--ask-first` narrows it back for a cautious session.
+- 2026-08-19 — **GSAP's curves ported, GSAP not.** A terminal cannot run a web
+  animation library, but the easing maths is what carries the feel. `theme.py`
+  implements `power2.out`, `back.out` and `elastic.out` as pure functions of an
+  explicit frame number, so the splash and the border flicker are deterministic
+  and testable with no terminal attached.
 
 ## Open questions
 
-- **Codex usage pricing remains notional.** The adapter surface and JSONL usage
-  shape are now live-verified against CLI 0.148.0; mapping a subscription call
-  to a dollar-equivalent price still depends on operator-supplied model data.
+- **Codex usage pricing remains notional.** The adapter surface, account-default
+  selection and JSONL usage shape are live-verified against CLI 0.148.0; mapping
+  a subscription call to dollar-equivalent price still depends on
+  operator-supplied model data.
 - **`llm_judge` acceptance checks raise at executor construction**, deliberately.
   Revisit only if a plan needs them.
 - **`server_tool_use` is captured but not yet priced.** Web search and fetch
@@ -125,17 +235,27 @@ lookback. Both are preserved on the `parallel-build-local` branch.
 
 ## Next steps
 
-1. After the five-hour meter resets, run the prepared Phase 6 genuine prompt,
-   hard-kill one in-flight task, wait for the orphan provider process to exit,
-   then `resume`; verify attempt rotation, artifacts, status, and accounting.
-2. Finish the security/pentest review that the prior Claude session could not
-   complete after its 429, with special attention to hard-kill orphan processes
-   and concurrent executors.
-3. Price `server_tool_use` requests into the cost model.
-4. **Re-run semantic graphify extraction.** The graph is structurally accurate
-   (909 nodes, AST-derived, rebuilt post-merge) but the doc↔code rationale links
-   were dropped, because every markdown file was rewritten during the merge and
-   the semantic cache invalidated.
+1. **Verify the one unverified leg**: that `claude`, running under the console,
+   actually invokes the `sleipnir computer` / `browser` / `secret` commands.
+   Every capability is live-verified standalone, and the console→`claude` link
+   is live-verified, but the join could not be tested from inside a Claude Code
+   session — nesting a `bypassPermissions` spawn is blocked there. One message
+   into a real `sleipnir` console settles it.
+2. Wire the console's asleep path to a live run: `ConsoleState.brain_awake`
+   is honoured by the renderer and the handler, but nothing yet flips it from
+   the orchestrator, so the duty-officer path is reachable only by setting it.
+3. Continue the adversarial review of config values, workspace pre-creation and
+   hard-kill orphan process groups; the concurrent-executor and filesystem-read
+   findings are fixed.
+4. Price `server_tool_use` requests into the cost model.
+5. **Finish the Graphify refresh with a semantic pass.** The structural graph
+   was rebuilt on 2026-08-19 and is current at **1,225 nodes / 3,709 edges /
+   45 labelled communities**, all AST-derived. Five changed docs (`CLAUDE.md`,
+   `project.md`, `overview.md`, `README.md`, `DESIGN.md`) were deliberately left
+   unstamped rather than dispatched to extraction subagents, so a later full
+   build re-queues them. Until then the graph carries no doc-derived nodes,
+   which is why the health check reports 233 dangling and 314 collapsed edges —
+   prose endpoints the code half still references.
 
 ## Environment on this machine
 
@@ -169,3 +289,29 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   first local module invocation failed before dispatch. The meter then reported
   `five_hour=100.0%` with reset at 2026-08-19 03:39:59 UTC, so all further live
   dispatch was stopped per the usage guard.
+- Pentest fixed three real trust-boundary classes: duplicate concurrent
+  executors, symlink/path escapes that could move host-file content into agent
+  prompts or summaries, and wholesale secret inheritance by delegated CLI
+  subprocesses. Bandit reports no findings; `pip check` is clean.
+- Phase 7 began with a pure terminal renderer and CLI integration. Static mode
+  cannot spend; `--run` owns the executor under the same kernel lock; large DAGs
+  are height-bounded and subagent summaries never render.
+- The missing ongoing-brain seam is now implemented. A fake-backed end-to-end
+  test exhausts two worker attempts, accepts a Claude-style retarget revision,
+  fsyncs its audit, and completes on attempt three without repeating other work.
+- A three-attempt isolated live gate preserved two pre-dispatch failures, then
+  succeeded through the Codex subscription using `@cli-default`. The accepted
+  task wrote and hashed its required artifact; accounting reported 48,456
+  `codex_tokens`, zero Claude-window tokens, and zero metered dollars.
+- The real hard-kill drill left an open attempt, released the kernel lock,
+  rotated to attempt two on resume, produced the accepted artifact, and charged
+  65,093 tokens only to the Codex quota pool. Pentesting that path exposed and
+  fixed an orphan-provider lifetime gap with the Linux parent-death guard.
+- A live seeded terminal impasse invoked Claude Sonnet once with only the
+  bounded manifest/frontier. It produced a routing-only revision, raised the
+  retry allowance from one to two, and Codex completed the accepted artifact on
+  attempt two. Observed usage was 170,791 Claude tokens ($0.304761 notional) and
+  48,497 Codex tokens, with zero metered dollars. That run exposed and closed
+  missing control-call log accounting.
+- The full hermetic checkpoint is 277 tests passing; `compileall`, `pip check`,
+  `git diff --check`, and Bandit all pass.

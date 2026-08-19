@@ -124,7 +124,7 @@ class ClaudeAdapter(BaseAdapter):
                 stdout_path=workspace.stdout_path,
                 stderr_path=workspace.stderr_path,
                 cwd=workspace.dir,
-                env=request.env or None,
+                env=self._subprocess_env(request.env),
                 stdin_data=request.prompt,
                 timeout_s=request.timeout_s,
                 grace_s=request.grace_s,

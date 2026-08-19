@@ -30,6 +30,10 @@ Concretely, this means:
   `plan.json` via `projection.fold_results`. Do not add a status field, a cache,
   or a checkpoint file. The absence of derived state on disk is exactly what
   makes crash recovery a normal read instead of a repair routine.
+- **Terminal text is a trust boundary.** Plans, model ids, and brain reasons
+  can contain control bytes. Route every TUI value through `_clip`; its
+  printable-character filter prevents ANSI/newline injection. Static/watch TUI
+  modes must stay offline, while `--run`/`--orchestrate` own the run lock.
 - **`Task.spec_hash()` must keep excluding routing fields** — `tier`, `priority`,
   `timeout_s`, `retry`, `adapter_hint`, `group`. If tier entered the hash, every
   budget downshift would invalidate completed work and the governor would fight
@@ -157,8 +161,10 @@ Concretely, this means:
 
 ## Environment on this machine
 
-- `claude` and `codex` CLIs are both installed. `codex`'s flags are still
-  unverified against the adapter.
+- `claude` and `codex` CLIs are both installed. Codex CLI 0.148.0 flags,
+  account-default selection, JSONL usage, and artifact production are
+  live-verified. `@cli-default` means omit `--model`; do not replace it with a
+  hard-coded alias in source or the shipped example.
 - **`uv` is not installed.** The README says to use it; use `python3 -m venv`
   and `pip` instead. A `.venv` exists.
 - `OPENROUTER_API_KEY` comes from the user's shell environment. **Never write a
@@ -191,6 +197,70 @@ fetches or shares plans without addressing this first.
 The OpenRouter adapter materialises files from model output. That write path is
 confined to the attempt directory, and a block claiming a path like
 `../../.ssh/authorized_keys` is dropped. There is a test for it. Keep it.
+
+Every attempt workspace is agent-controlled. Never follow symlinks when reading
+summaries, declared outputs, repository inputs, or dependency artifacts; doing
+so can move a host file into a provider prompt or the orchestrator's bounded
+summary. Task outputs also may not collide with harness-owned workspace files.
+
+Agent CLI subprocesses receive a credential-stripped environment. The official
+Claude and Codex CLIs use their own credential stores; passing the operator's
+whole environment would unnecessarily expose OpenRouter, GitHub and CI secrets
+to delegated tool execution.
+On Linux, real CLI children must stay behind `process_guard.py`; its
+`PR_SET_PDEATHSIG` contract prevents a provider CLI from continuing to spend
+after an uncatchable executor `SIGKILL`. Keep both the normal process-group
+TERM/KILL path and the parent-death regression test.
+
+The sparse control brain may see only `Manifest` plus the constant-bounded
+frontier task drill-down in `orchestrator.py`. Never include artifact content,
+worker transcripts, or the full DAG in a control prompt. Revision payloads are
+untrusted model output: apply them only through `revisions.apply_revision`, and
+never accept model-supplied `superseded` or `staled` blast-radius lists.
+Semantic/edge/add/remove revisions require explicit operator review by default;
+only a routing-preserving retarget may auto-apply. Applied proposal files are
+retained with `.applied` suffix so the TUI counts only pending JSON proposals.
+`STALE` and `SUPERSEDED` are executable revision work, not terminal success:
+rerun the changed upstream task first, then stale descendants with freshly
+`DONE` dependencies. Never add either status to orchestration completion.
+Completed control calls—valid decision or invalid output—must append a bounded
+`sleipnir-control` terminal record to `results.jsonl`. Projection ignores the
+non-plan task id, while quota/notional accounting must include it.
+
+## The console and host control (Phase 8)
+
+- **Capabilities are an operator lane, never a worker lane.** `capabilities/`
+  deliberately breaks the sandbox the executor builds. Worker tasks keep the
+  credential-stripped environment and confined workspace; only the console, and
+  the brain acting on an operator instruction, may reach these. Never hand a
+  capability to a dispatched task.
+- **Every privileged call is audited, and the redactor runs at the boundary.**
+  `audit.record` strips secret-shaped keys itself rather than trusting callers.
+  Typed text is logged as a character count. Do not add a code path that logs
+  the content of keystrokes, a form fill, or a credential.
+- **A `Secret` is a `bytearray`, and every rendering hook is overridden.** One
+  `print`, one f-string, one traceback would otherwise put a password into a
+  transcript forever. It wipes on consume and raises on reuse — reuse means a
+  caller stashed the value, which is the failure the class exists to prevent.
+  Do not add a getter that returns the plaintext without wiping.
+- **The console never answers for the model.** It renders and it routes. If it
+  ever starts composing replies itself, the thing the user is talking to stops
+  being Claude and nobody will be able to tell.
+- **The duty officer sees the manifest and nothing else.** Its system prompt
+  forbids task output, and a plan change comes back as a `QUEUE:` line that is
+  shown to the operator and handed to the brain as *text*. It is never executed
+  and never mutates the plan; revisions still go through
+  `revisions.apply_revision` and its operator-review gate.
+- **`grim` must not be selected on KDE.** It is present on this machine and is
+  wlroots-only, so it fails on KWin. Screenshot selection prefers `spectacle`
+  explicitly; `test_grim_is_not_selected_on_kde` pins it.
+- **Capability tests may never touch the real desktop.** A suite that types
+  into whatever window has focus is a hazard. Every host call is intercepted at
+  the subprocess boundary, the same way provider spawns are.
+- **Terminal chrome is a pure function of an explicit frame number.** No hidden
+  clock, no global RNG. That is what makes the flicker and the splash testable
+  without a terminal, and `theme._fit` measures *visible* width so a coloured
+  line cannot silently break the border.
 
 ## Checkpoint discipline
 

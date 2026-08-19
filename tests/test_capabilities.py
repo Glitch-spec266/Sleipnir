@@ -1,0 +1,172 @@
+"""Capability tests are hermetic by construction.
+
+Nothing here may inject a real keystroke, move the real pointer, or open a real
+browser: a test suite that types into whatever window happens to be focused is
+a hazard, not a test.  Every host call is intercepted at the subprocess
+boundary — the same discipline the executor tests use for provider spawns.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from sleipnir.capabilities import audit, browser, computer, secrets
+
+
+@pytest.fixture
+def audit_log(tmp_path, monkeypatch):
+    path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_LOG", path)
+    return path
+
+
+@pytest.fixture
+def fake_ydotool(monkeypatch):
+    """Capture ydotool argv instead of running it."""
+    calls: list[list[str]] = []
+
+    def _run(argv, **kwargs):
+        calls.append(list(argv))
+
+        class Result:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+
+        return Result()
+
+    monkeypatch.setattr(computer.subprocess, "run", _run)
+    monkeypatch.setattr(computer, "ensure_daemon", lambda *a, **k: None)
+    return calls
+
+
+def _entries(path):
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+# --- audit ---------------------------------------------------------------
+
+
+def test_audit_never_writes_a_secret_value(audit_log):
+    audit.record("secret.test", {"password": "hunter2", "token": "sk-live-abc", "url": "x"})
+    body = audit_log.read_text()
+    assert "hunter2" not in body
+    assert "sk-live-abc" not in body
+    assert "redacted" in body
+    assert "x" in body  # non-sensitive detail is kept
+
+
+def test_typed_text_is_recorded_by_length_not_content(audit_log, fake_ydotool):
+    computer.type_text("my-api-key-value")
+    body = audit_log.read_text()
+    assert "my-api-key-value" not in body
+    assert '"chars": 16' in body
+
+
+# --- keyboard / mouse ----------------------------------------------------
+
+
+def test_chord_releases_modifiers_in_reverse_order(audit_log, fake_ydotool):
+    computer.key("ctrl", "shift", "t")
+    argv = fake_ydotool[0]
+    assert argv[:2] == ["ydotool", "key"]
+    # ctrl(29) shift(42) t(20) down, then released t, shift, ctrl.
+    assert argv[2:] == ["29:1", "42:1", "20:1", "20:0", "42:0", "29:0"]
+
+
+def test_unknown_key_is_refused_rather_than_silently_dropped(audit_log, fake_ydotool):
+    with pytest.raises(computer.CapabilityError, match="unknown key"):
+        computer.key("ctrl", "hyperspace")
+    assert fake_ydotool == []
+
+
+def test_unknown_mouse_button_is_refused(audit_log, fake_ydotool):
+    with pytest.raises(computer.CapabilityError, match="unknown mouse button"):
+        computer.click("elbow")
+
+
+def test_type_passes_a_double_dash_so_text_cannot_become_flags(audit_log, fake_ydotool):
+    computer.type_text("--help --socket-path=/tmp/evil")
+    argv = fake_ydotool[0]
+    assert "--" in argv
+    assert argv.index("--") < argv.index("--help --socket-path=/tmp/evil")
+
+
+def test_probe_reports_notes_instead_of_raising(monkeypatch):
+    monkeypatch.setattr(computer.shutil, "which", lambda name: None)
+    result = computer.probe()
+    assert result.ready is False
+    assert any("ydotool" in note for note in result.notes)
+
+
+def test_grim_is_not_selected_on_kde(monkeypatch):
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    monkeypatch.setattr(computer.shutil, "which", lambda name: f"/usr/bin/{name}" if name in ("grim", "spectacle") else None)
+    assert computer._screenshot_tool() == "spectacle"
+
+
+def test_grim_is_selected_when_it_is_the_only_option_off_kde(monkeypatch):
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "sway")
+    monkeypatch.setattr(computer.shutil, "which", lambda name: "/usr/bin/grim" if name == "grim" else None)
+    assert computer._screenshot_tool() == "grim"
+
+
+# --- secrets -------------------------------------------------------------
+
+
+def test_secret_never_renders_its_value():
+    secret = secrets.Secret("openrouter", bytearray(b"sk-or-v1-topsecret"))
+    for rendering in (repr(secret), str(secret), f"{secret}", f"{secret!r}", f"{secret!s}"):
+        assert "topsecret" not in rendering
+    assert "openrouter" in repr(secret)
+
+
+def test_secret_is_wiped_after_one_use():
+    secret = secrets.Secret("token", bytearray(b"abc123"))
+    assert secret.consume() == "abc123"
+    assert len(secret) == 0
+    assert bool(secret) is False
+    with pytest.raises(secrets.SecretConsumed):
+        secret.consume()
+
+
+def test_secret_context_manager_wipes_even_when_unused():
+    with secrets.Secret("pin", bytearray(b"0000")) as secret:
+        assert len(secret) == 4
+    assert len(secret) == 0
+
+
+def test_capture_records_only_the_label_and_length(audit_log, monkeypatch):
+    monkeypatch.setattr(secrets.getpass, "getpass", lambda *a, **k: "correct horse")
+    secret = secrets.capture("github password")
+    entry = _entries(audit_log)[0]
+    assert entry["action"] == "secret.captured"
+    assert entry["detail"] == {"label": "github password", "length": 13}
+    assert "correct horse" not in audit_log.read_text()
+    assert secret.consume() == "correct horse"
+
+
+def test_typing_a_secret_wipes_it_and_logs_nothing_sensitive(audit_log, fake_ydotool):
+    secret = secrets.Secret("aws key", bytearray(b"AKIAsecretvalue"))
+    secrets.type_into_focused_window(secret, submit=True)
+    assert len(secret) == 0
+    body = audit_log.read_text()
+    assert "AKIAsecretvalue" not in body
+    assert '"submitted": true' in body
+
+
+# --- browser -------------------------------------------------------------
+
+
+def test_browser_refuses_to_act_before_start():
+    with pytest.raises(computer.CapabilityError, match="not started"):
+        _ = browser.Browser().page
+
+
+def test_browser_profile_defaults_outside_the_repo():
+    # A logged-in browser profile in the working tree would be committed by
+    # accident sooner or later; keep it in the user's home.
+    assert "Sleipnir" not in str(browser.DEFAULT_PROFILE)
+    assert browser.DEFAULT_PROFILE.name == "browser-profile"

@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import os
 import signal
+import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -90,6 +91,9 @@ class ProcessRunner:
 
     def __init__(self, spawn: Spawner | None = None) -> None:
         self._spawn: Spawner = spawn or _default_spawn
+        # Test/injected spawners receive the adapter argv. Real children get a
+        # kernel parent-death guard before the provider CLI execs.
+        self._guard_parent_death = spawn is None
 
     async def run(
         self,
@@ -106,8 +110,17 @@ class ProcessRunner:
         started = time.monotonic()
         stdout_path.parent.mkdir(parents=True, exist_ok=True)
 
+        launch_argv = list(argv)
+        if self._guard_parent_death and sys.platform.startswith("linux"):
+            launch_argv = [
+                sys.executable,
+                str(Path(__file__).with_name("process_guard.py")),
+                "--",
+                *launch_argv,
+            ]
+
         proc = await self._spawn(
-            *argv,
+            *launch_argv,
             cwd=str(cwd) if cwd else None,
             env=dict(env) if env is not None else None,
             stdin=asyncio.subprocess.PIPE,
