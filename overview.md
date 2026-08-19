@@ -491,9 +491,12 @@ credential was supplied. Nothing is stored, logged, or returned.
 - **Two host-capability joins remain unverified.** Console→Claude→screenshot is
   live-proven. Browser and credential handoff work standalone but have not yet
   been invoked by Claude from inside the real console.
-- **The phase gate still needs its final live run.** Constant-size group verdicts,
-  failed-module-only escalation, finite retry grants and derived brain sleep are
-  implemented and hermetically covered; provider quota blocked the live pass.
+- **The phase gate is live-verified.** A seeded terminal module failure produced
+  one finite routing-only escalation; real Codex then completed and hashed the
+  accepted retry without waking or charging the Claude brain.
+- **`/project` is live-verified through two tiers.** A real PTY command planned
+  independent reason/code modules and completed both declared proof artifacts.
+  Only the ordinary Haiku-pass and Haiku-decline→Sonnet branches await quota.
 - **Playwright is optional and unpinned to a browser build.** `sleipnir setup`
   fetches Chromium; a machine that skips setup gets a clear
   `CapabilityError`, not a crash.

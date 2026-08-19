@@ -379,6 +379,15 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   shipped policy already made this choice: bulk code prefers Codex, then
   OpenRouter, then Claude. Free catalogue models remain eligible only after
   policy reaches the metered backend.
+- 2026-08-19 — **The phase gate is live, not only simulated.** A disposable
+  terminal failure produced a real failed-module verdict, revision 1 changed
+  only `mechanical → extract` and attempts `1 → 2`, and real Codex completed
+  the accepted retry with a hashed `SLEIPNIR_GATE_LIVE_OK` artifact. Accounting
+  recorded 48,566 Codex tokens and zero Claude-window or metered spend.
+- 2026-08-19 — **`/project` crosses the real console boundary.** A command typed
+  into the PTY planned exactly two independent `reason`/`code` tasks, routed
+  both through Codex, and completed hashed `ROUTED_REASON_OK` and
+  `ROUTED_CODE_OK` artifacts in one orchestration cycle (130,718 Codex tokens).
 
 ## Open questions
 
@@ -399,10 +408,9 @@ lookback. Both are preserved on the `parallel-build-local` branch.
    console → `claude` → host capability → image back into the model's context.
    `browser` and `secret` are still only verified standalone; the same path
    should carry them, but neither has been exercised from inside the console.
-2. **Live-verify the gate against a real provider run.** Its logic is covered by
-   24 unit tests plus an end-to-end CLI test proving the brain is never called,
-   but every phase here has ended with a live run, and this one has not had
-   one yet.
+2. ~~**Live-verify the gate against a real provider run.**~~ **Done, live,
+   2026-08-19.** The gate persisted one finite failed-module-only escalation,
+   real Codex completed attempt two, and the declared proof artifact passed.
 3. ~~Continue the adversarial review of config values, workspace pre-creation
    and hard-kill orphan process groups.~~ **Done, 2026-08-19.** Numeric/list
    config coercions now fail closed, workspace creation/writes reject symlink
@@ -411,14 +419,15 @@ lookback. Both are preserved on the `parallel-build-local` branch.
    Search request rates come from the frozen live catalogue snapshot; fetch
    counts remain visible but carry no separate fee under current Anthropic
    pricing. Provider totals take precedence over estimates.
-5. Live-verify both new console branches: one ordinary request that passes the
-   tool-free Haiku gate, one that declines to Sonnet, and one disposable
-   `/project` workspace that completes through at least two routed tiers.
+5. **Partially live-verified.** A disposable `/project` typed into the real PTY
+   completed through `reason` and `code` tiers with two accepted artifacts.
+   The ordinary Haiku-pass and Haiku-decline→Sonnet branches still require the
+   exhausted Claude window to reset.
 
 Live verification is currently paused by the provider, not by the harness: the
 read-only Anthropic meter reported the five-hour window at **100.0%**, resetting
-at **2026-08-19 23:29:59 UTC**. No paid/provider call was attempted after that
-reading.
+at **2026-08-19 23:29:59 UTC**. No Claude call was attempted after that reading;
+the gate and `/project` proofs used the separate Codex subscription pool.
 
 ## Environment on this machine
 
