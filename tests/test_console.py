@@ -134,6 +134,84 @@ def test_router_model_comes_from_operator_config():
     assert chat.router_model(FakeConfig()) == "some/cheap-model"
 
 
+def test_the_brain_is_asleep_exactly_when_a_run_owns_the_directory(tmp_path):
+    from sleipnir.runlog import RunLock
+
+    state = console.ConsoleState(run_dir=tmp_path)
+    console.refresh_brain_state(state)
+    assert state.brain_awake is True, "no run in flight means the brain is available"
+
+    with RunLock(tmp_path):
+        console.refresh_brain_state(state)
+        assert state.brain_awake is False, "an owned run means workers are building"
+
+    console.refresh_brain_state(state)
+    assert state.brain_awake is True, "the lock releases on exit, so the brain returns"
+
+
+def test_no_run_directory_leaves_the_brain_awake():
+    state = console.ConsoleState(run_dir=None)
+    console.refresh_brain_state(state)
+    assert state.brain_awake is True
+
+
+def test_the_run_digest_is_constant_size_and_carries_no_task_output(tmp_path):
+    """What the duty officer sees. If this ever grew with the plan, the cheap
+    stand-in would stop being cheap and the design would leak."""
+    import json
+    from datetime import UTC, datetime
+
+    from sleipnir.schema import (
+        ExpectedOutput,
+        OutputContract,
+        OutputKind,
+        Plan,
+        Task,
+        Tier,
+    )
+
+    def build(count: int) -> str:
+        tasks = [
+            Task(
+                id=f"t{index}",
+                description=f"build component number {index} exactly as specified",
+                tier=Tier.CODE,
+                outputs=OutputContract(
+                    outputs=[
+                        ExpectedOutput(
+                            name="out",
+                            kind=OutputKind.FILE,
+                            path=f"t{index}.txt",
+                            description="the produced file",
+                        )
+                    ]
+                ),
+            )
+            for index in range(count)
+        ]
+        plan = Plan(
+            plan_id="p",
+            goal="ship it",
+            created_at=datetime(2026, 8, 19, tzinfo=UTC),
+            tasks=tasks,
+        )
+        run = tmp_path / f"run{count}"
+        run.mkdir()
+        (run / "plan.json").write_text(plan.model_dump_json(), encoding="utf-8")
+        return console.run_digest(run)
+
+    small, large = build(3), build(300)
+    # A hundredfold more tasks may cost the digest the two extra digits in
+    # "300" and nothing else. Anything proportional means task detail leaked in.
+    assert len(large) - len(small) == 2, "the digest must not grow with the plan"
+    payload = json.loads(large)
+    assert set(payload) == {"goal", "revision", "quiescent", "groups"}
+    # Counts and ids only — never a summary, a path, or a byte a worker wrote.
+    assert set(payload["groups"][0]) == {
+        "group", "state", "total", "done", "failed", "running", "failed_task_ids",
+    }
+
+
 def test_router_model_refuses_rather_than_guessing():
     class EmptyConfig:
         backends: dict = {}
