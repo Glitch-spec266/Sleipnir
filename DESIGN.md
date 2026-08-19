@@ -515,6 +515,10 @@ reads the number as economic truth.
   the live process command line, debugging port, profile and session-leader
   identity before signaling its group. PID publication uses atomic replacement,
   so a symlink or recycled integer cannot become authority to kill a process.
+- **Credential prompts require a live local claimant.** The console accepts
+  only bounded, no-follow request files whose filename, embedded ID and live
+  same-user requester PID agree. Answers are private write-once status files;
+  neither arbitrary payloads nor stale requests can trigger credential entry.
 - **Revision invalidation must cause execution.** `SUPERSEDED` means the task's
   own contract changed; `STALE` means an upstream contract changed. The
   executor schedules both as work and requires freshly `DONE` dependencies,

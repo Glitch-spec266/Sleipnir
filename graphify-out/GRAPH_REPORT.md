@@ -1,16 +1,16 @@
 # Graph Report - Sleipnir  (2026-08-19)
 
 ## Corpus Check
-- 60 files · ~79,773 words
+- 60 files · ~80,162 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1560 nodes · 4509 edges · 63 communities (60 shown, 3 thin omitted)
+- 1568 nodes · 4524 edges · 57 communities (56 shown, 1 thin omitted)
 - Extraction: 84% EXTRACTED · 16% INFERRED · 0% AMBIGUOUS · INFERRED: 723 edges (avg confidence: 0.51)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `811220ce`
+- Built from commit: `74bb6269`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -18,36 +18,34 @@
 - make_task
 - cli.py
 - TaskStatus
-- apply_revision
+- RoutingDecision
 - test_pricing.py
-- executor.py
+- base.py
 - test_adapters.py
-- test_cli.py
-- DispatchOutcome
+- Adapter
+- DispatchRequest
 - Tier
 - test_process.py
-- run_is_active
+- ConsoleState
 - Sleipnir — Phase 1 design
-- projection.py
-- Path
+- Plan
+- test_budget.py
 - ValueError
-- schema.py
+- _canonical_json
 - theme.py
 - console.py
-- budget.py
-- Plan
+- scan_usage
 - Executor
 - test_capabilities.py
 - chat.py
 - test_console.py
 - clipboard.py
-- BudgetGovernor
-- Adapter
-- orchestrator.py
+- fold_results
+- schema.py
 - AttemptWorkspace
 - Browser
 - test_handoff.py
-- test_budget.py
+- fetch_window_utilization
 - Secret
 - current_window
 - TerminalInputDecoder
@@ -55,11 +53,10 @@
 - ProcessRunner
 - TierRouter
 - _manifest_for
-- SleipnirConfig
 - budget
 - OpenRouterAdapter
 - screenshot
-- TokenUsage
+- executor.py
 - browser.py
 - Sleipnir — Overview
 - WindowUtilization
@@ -74,10 +71,7 @@
 - parse_usage_line
 - Sleipnir — Project State
 - handoff.py
-- test_outputs_cannot_overwrite_harness_owned_files
 - sleipnir
-- test_spec_hash_ignores_routing_fields
-- test_total_input_counts_cache_creation_tokens
 
 ## God Nodes (most connected - your core abstractions)
 1. `make_task()` - 110 edges
@@ -106,95 +100,91 @@
 ## Import Cycles
 - None detected.
 
-## Communities (63 total, 3 thin omitted)
+## Communities (57 total, 1 thin omitted)
 
 ### Community 0 - "make_task"
-Cohesion: 0.08
-Nodes (89): RuntimeError, An attempt path existed before the harness claimed this attempt., WorkspaceCollisionError, ConcurrentExecutionError, ExecutorConfig, RuntimeError, An unfinished attempt still belongs to a live executor process., RuntimeError (+81 more)
+Cohesion: 0.07
+Nodes (101): RuntimeError, An attempt path existed before the harness claimed this attempt., WorkspaceCollisionError, ExecutorConfig, apply_revision(), datetime, Validated, auditable plan revision application. The orchestrator may propose…, Append-only attempt log. The single source of truth for run state. (+93 more)
 
 ### Community 1 - "cli.py"
-Cohesion: 0.10
-Nodes (53): ArgumentParser, Namespace, DownshiftDecision, render_decisions(), build_adapters(), build_parser(), CliError, cmd_apply_revision() (+45 more)
+Cohesion: 0.05
+Nodes (83): ArgumentParser, Namespace, render_decisions(), build_adapters(), build_parser(), CliError, cmd_apply_revision(), cmd_browser() (+75 more)
 
 ### Community 2 - "TaskStatus"
 Cohesion: 0.10
 Nodes (53): escalation_changes(), evaluate_gate(), GateVerdict, GroupState, GroupVerdict, StrEnum, The phase gate: what the brain is allowed to know when it wakes up. The…, Every group passed. The phase may be merged and the next one begun. (+45 more)
 
-### Community 3 - "apply_revision"
-Cohesion: 0.21
-Nodes (22): apply_revision(), persist_revision(), datetime, Path, RuntimeError, Validated, auditable plan revision application. The orchestrator may propose…, Append the audit first, then atomically replace the derived plan view., Latest revision that made each completed descendant stale. (+14 more)
+### Community 3 - "RoutingDecision"
+Cohesion: 0.13
+Nodes (12): datetime, Record a dispatch the governor refused. A denial is written to the log as a…, Compose the two-axis cost record. For subscription dispatches ``amount_usd`` is…, Phase 2 placeholder: a fixed tier -> (adapter, model) table from config. Phase…, StaticRouter, RoutingExplanation, CostEstimate, Dollars *and* window quota. Both are scarce; they are not interchangeable. (+4 more)
 
 ### Community 4 - "test_pricing.py"
-Cohesion: 0.07
-Nodes (50): CatalogUnavailableError, _first_int(), _float(), ModelCatalog, _nonnegative_float(), parse_models(), _per_mtok(), Any (+42 more)
+Cohesion: 0.08
+Nodes (47): _first_int(), _float(), ModelCatalog, _nonnegative_float(), parse_models(), _per_mtok(), Any, ClientFactory (+39 more)
 
-### Community 5 - "executor.py"
+### Community 5 - "base.py"
 Cohesion: 0.09
-Nodes (24): ABC, AdapterError, BaseAdapter, DispatchPreview, DispatchRequest, RuntimeError, The adapter interface. An adapter's job is narrow on purpose: take a fully-…, One dispatch backend. Auth is never implemented here. The `claude` and `codex`… (+16 more)
+Nodes (20): ABC, AdapterError, BaseAdapter, DispatchPreview, RuntimeError, The adapter interface. An adapter's job is narrow on purpose: take a fully-…, One dispatch backend. Auth is never implemented here. The `claude` and `codex`…, Describe the dispatch without performing it. No network, no spawn. (+12 more)
 
 ### Community 6 - "test_adapters.py"
-Cohesion: 0.08
-Nodes (64): Deterministic within a run, unique across runs. The run_id is load-bearing, not…, StreamReader, fake_spawner(), FakeProcess, FakeStdin, Any, Test doubles. The fake lives at the *spawn* boundary rather than replacing…, Build a Spawner that yields FakeProcess objects. ``calls`` captures argv and… (+56 more)
+Cohesion: 0.07
+Nodes (69): Combine what the provider said with what actually landed on disk. The…, AttemptStatus, FailureKind, StrEnum, Outcome of a single attempt. Deliberately small — *why* lives in FailureKind., Why an attempt did not fully succeed. Separated from AttemptStatus so retry…, StreamReader, fake_spawner() (+61 more)
 
-### Community 7 - "test_cli.py"
-Cohesion: 0.12
-Nodes (42): extract_plan_json(), Pull a JSON object out of a model response. Tries the whole response first,…, invoke(), PlanningAdapter, fixture, parametrize, Path, CLI: the five commands, end to end, with no network and no spend. (+34 more)
+### Community 7 - "Adapter"
+Cohesion: 0.13
+Nodes (44): extract_plan_json(), Pull a JSON object out of a model response. Tries the whole response first,…, Adapter, Dispatch backends. Auth is always delegated to the official tool., invoke(), PlanningAdapter, fixture, parametrize (+36 more)
 
-### Community 8 - "DispatchOutcome"
-Cohesion: 0.18
-Nodes (10): DispatchOutcome, What the adapter observed. Raw facts only, no derived accounting., ClaudeAdapter, Any, Path, Spawner, Map the CLI's own status vocabulary onto FailureKind., Sum `modelUsage` across every model the dispatch actually used. A dispatch can… (+2 more)
+### Community 8 - "DispatchRequest"
+Cohesion: 0.15
+Nodes (12): DispatchRequest, Run the request to completion, a timeout, or a cancellation. Implementations…, Everything an adapter needs. Fully resolved — adapters never route., ClaudeAdapter, Any, Path, Spawner, Map the CLI's own status vocabulary onto FailureKind. (+4 more)
 
 ### Community 9 - "Tier"
-Cohesion: 0.17
-Nodes (32): Capability classes. A plan declares a tier; the router resolves a model. Fixed…, Tier, config(), model(), Router: tier -> model, filters, preference order, and explainability., The measured ~30k fixed cost of a `claude -p` spawn is why mechanical work…, The operator knows their own plan better than a price table does., Missing catalogue metadata is uncertainty, not evidence of insufficiency. (+24 more)
+Cohesion: 0.09
+Nodes (57): ConfigError, ModelOption, _opt_float(), _opt_int(), _parse_backends(), _parse_models(), _parse_tiers(), Any (+49 more)
 
 ### Community 10 - "test_process.py"
 Cohesion: 0.25
 Nodes (16): skipif, Path, ProcessRunner: streaming, timeout, tree kill, cancellation., start_new_session is what makes killpg reach the CLI's children., Pumps must run concurrently with wait(); draining after exit would hang the…, run(), test_cancellation_kills_the_process_and_propagates(), test_large_output_does_not_deadlock() (+8 more)
 
-### Community 11 - "run_is_active"
-Cohesion: 0.29
-Nodes (5): The brain is asleep exactly when a run owns the directory. Derived, never…, refresh_brain_state(), Path, Whether another file description currently owns the run lock., run_is_active()
+### Community 11 - "ConsoleState"
+Cohesion: 0.15
+Nodes (15): _claude_dirs(), ConsoleState, Message, _project_argv(), Path, Everything the renderer needs, and nothing it does not. Notably absent: any…, The brain is asleep exactly when a run owns the directory. Derived, never…, A constant-size picture of the run, for the duty officer. This is the whole… (+7 more)
 
 ### Community 12 - "Sleipnir — Phase 1 design"
 Cohesion: 0.05
 Nodes (38): Dollars and window quota are different resources, Files, Folding a percentage back into tokens, Module layout, Not built, on purpose, Other decisions worth overruling, Phase 2 — executor, Phase 3 — router (+30 more)
 
-### Community 13 - "projection.py"
-Cohesion: 0.15
-Nodes (28): _alerts(), build_manifest(), _clip(), _evidence(), fold_results(), _fold_task(), _frontier(), _group_rollups() (+20 more)
+### Community 13 - "Plan"
+Cohesion: 0.06
+Nodes (49): BudgetGovernor, DownshiftDecision, Projection, Estimates consumption and downshifts eligible tasks to stay inside it., The meter's own reading, cached briefly. None if unavailable. Disabled by…, Cost of everything still to run, at the tiers currently assigned., (window tokens, metered dollars) one attempt of ``task`` would cost. Fixed…, Assign a tier to every remaining task, downshifting until it fits. Downshifts… (+41 more)
 
-### Community 14 - "Path"
-Cohesion: 0.17
-Nodes (25): config(), governor(), plan_of(), Path, Records recur across resumed sessions; 59% of the real corpus was duplicated.…, A trivial task on a subscription backend is not cheap: the spawn alone costs…, The governor must never stop or reroute a run on a number it could not verify., Moving a task off longctx is a correctness failure, not a saving. (+17 more)
+### Community 14 - "test_budget.py"
+Cohesion: 0.25
+Nodes (22): config(), governor(), plan_of(), Path, Budget governor: usage parsing, window detection, projection, downshift. The…, A trivial task on a subscription backend is not cheap: the spawn alone costs…, The governor must never stop or reroute a run on a number it could not verify., Moving a task off longctx is a correctness failure, not a saving. (+14 more)
 
 ### Community 15 - "ValueError"
-Cohesion: 0.14
-Nodes (8): field_validator, Self, ClientFactory, model_validator, _find_cycle(), model_validator, Return one concrete cycle as a readable path, or None. Iterative (deep DAGs…, ValueError
+Cohesion: 0.16
+Nodes (7): field_validator, Self, model_validator, _find_cycle(), model_validator, Return one concrete cycle as a readable path, or None. Iterative (deep DAGs…, ValueError
 
-### Community 16 - "schema.py"
-Cohesion: 0.12
-Nodes (33): AcceptanceCheck, assert_checks_supported(), _check_command(), _check_files(), _check_json_schema(), _dispatch_check(), Any, RuntimeError (+25 more)
+### Community 16 - "_canonical_json"
+Cohesion: 0.40
+Nodes (4): _canonical_json(), Any, Stable digest of the task's *meaning*. Completed results are keyed by (task_id,…, Stable JSON encoding for hashing: sorted keys, no incidental whitespace.
 
 ### Community 17 - "theme.py"
-Cohesion: 0.11
-Nodes (24): _clip(), Model and provider text is untrusted; strip anything non-printable. Same trust…, render(), _wrap(), ease_back_out(), ease_power2_out(), fg(), _fit() (+16 more)
+Cohesion: 0.13
+Nodes (20): ease_back_out(), ease_power2_out(), fg(), _fit(), flicker_level(), frame(), logo_lines(), paint() (+12 more)
 
 ### Community 18 - "console.py"
-Cohesion: 0.11
-Nodes (30): apply_key(), _claude_dirs(), _clean_paste(), ConsoleState, Message, _paint(), paste_system_clipboard(), play_splash() (+22 more)
+Cohesion: 0.15
+Nodes (21): apply_key(), _clean_paste(), _clip(), _paint(), paste_system_clipboard(), play_splash(), poll_secret_request(), The Sleipnir console: the window you actually talk to. What this is,… (+13 more)
 
-### Community 19 - "budget.py"
-Cohesion: 0.16
-Nodes (15): fetch_window_utilization(), _parse_bucket(), Any, datetime, Path, Budget governor: what the 5-hour window has cost, and what the plan will. Two…, # NOTE: `iterations` is deliberately ignored. It repeats the same counts, Read every project transcript and return deduplicated usage records. (+7 more)
-
-### Community 20 - "Plan"
-Cohesion: 0.17
-Nodes (10): build_control_task(), control_instructions(), control_plan_context(), Constant-bounded full specs for urgent frontier tasks only., Manifest, Plan, The orchestrator's entire view of the world on re-invocation. Deliberately…, Exact bytes handed to the orchestrator. Size math measures this. (+2 more)
+### Community 19 - "scan_usage"
+Cohesion: 0.18
+Nodes (13): _parse_bucket(), datetime, Path, Read every project transcript and return deduplicated usage records., scan_usage(), UsageScan, _warn(), Records recur across resumed sessions; 59% of the real corpus was duplicated.… (+5 more)
 
 ### Community 21 - "Executor"
-Cohesion: 0.10
-Nodes (17): Executor, _pid_is_alive(), datetime, Everything the run would dispatch, spending nothing. Walks the DAG in…, Execute while holding exclusive ownership of the run directory., Close attempts whose executor died before writing a terminal record. The start…, Cancel in-flight attempts and wait for each to record its own end. Each attempt…, Which tier this attempt runs at, and why if it moved. Retry escalation outranks… (+9 more)
+Cohesion: 0.14
+Nodes (12): ConcurrentExecutionError, Executor, _pid_is_alive(), RuntimeError, Everything the run would dispatch, spending nothing. Walks the DAG in…, Execute while holding exclusive ownership of the run directory., Close attempts whose executor died before writing a terminal record. The start…, Cancel in-flight attempts and wait for each to record its own end. Each attempt… (+4 more)
 
 ### Community 22 - "test_capabilities.py"
 Cohesion: 0.07
@@ -212,33 +202,29 @@ Nodes (8): parametrize, The console owns the terminal, so its failure modes are 
 Cohesion: 0.26
 Nodes (11): available(), ClipboardError, ClipboardPayload, offered_types(), Path, RuntimeError, Read text or images from the operator's Wayland clipboard. Keyboard-driven…, The desktop clipboard is unavailable or has no supported payload. (+3 more)
 
-### Community 26 - "BudgetGovernor"
-Cohesion: 0.14
-Nodes (11): BudgetGovernor, Projection, Estimates consumption and downshifts eligible tasks to stay inside it., The meter's own reading, cached briefly. None if unavailable. Disabled by…, Cost of everything still to run, at the tiers currently assigned., Assign a tier to every remaining task, downshifting until it fits. Downshifts…, The costliest task that can still move one rung down the ladder., Refuse only when the window is provably gone. Denial is a blunt instrument —… (+3 more)
+### Community 27 - "fold_results"
+Cohesion: 0.21
+Nodes (16): fold_results(), Recompute every task's status from the append-only result log. Records are…, finished(), make_chain(), t0000 -> t0001 -> ... Simple shape for status-folding tests., Replaying the log must not double-count cost — recovery depends on it., routing(), test_completed_task_is_superseded_when_spec_changes() (+8 more)
 
-### Community 27 - "Adapter"
-Cohesion: 0.13
-Nodes (30): Put sparse-brain spend on the same durable accounting stream., _record_control_result(), cost_from_outcome(), Compose the shared dollar/quota axes for worker and control calls., Combine what the provider said with what actually landed on disk. The…, Adapter, AttemptStatus, BillingMode (+22 more)
-
-### Community 28 - "orchestrator.py"
-Cohesion: 0.23
-Nodes (11): ControlDecision, ControlError, _extract_decision(), BaseModel, Path, RuntimeError, Sparse Claude control cycles over the bounded manifest. Workers execute…, The control model did not produce a safe, usable decision. (+3 more)
+### Community 28 - "schema.py"
+Cohesion: 0.10
+Nodes (30): clip_summary(), Attempt workspace layout and output collection. One directory per attempt,…, Enforce the schema's hard summary cap at the write site. The schema *rejects*…, build_control_task(), control_instructions(), control_plan_context(), ControlDecision, ControlError (+22 more)
 
 ### Community 29 - "AttemptWorkspace"
 Cohesion: 0.05
-Nodes (47): ArtifactDirResolver, AttemptWorkspace, contained_regular_file(), Any, Path, Ensure an already-claimed workspace remains a real local directory., Atomically claim a new attempt directory; never reuse old contents., Write one harness-owned top-level file without following symlinks. The… (+39 more)
+Nodes (52): AcceptanceCheck, ArtifactDirResolver, AttemptWorkspace, contained_regular_file(), Any, Path, Ensure an already-claimed workspace remains a real local directory., Atomically claim a new attempt directory; never reuse old contents. (+44 more)
 
 ### Community 30 - "Browser"
 Cohesion: 0.15
 Nodes (9): Browser, Any, An open browser the agent can drive. Deliberately a thin wrapper: it exposes…, Attach to the shared browser, starting it only if nobody has. Attaching rather…, Detach. Deliberately does **not** close the browser. Closing it here is what…, Really end the shared browser, discarding its live tabs. The profile on disk…, CapabilityError, RuntimeError (+1 more)
 
 ### Community 31 - "test_handoff.py"
-Cohesion: 0.07
+Cohesion: 0.06
 Nodes (13): Sleipnir — a budget-aware agentic orchestrator. Phases 1–5 provide the schema,…, fixture, The credential handoff, and the three live bugs that produced it. Every test…, A full-screen redraw loop that does not switch buffers appends every frame to…, Drawing only one row of the horse emblem renders as debris., requests_dir(), test_the_banner_is_all_or_nothing(), test_the_console_uses_the_alternate_screen() (+5 more)
 
-### Community 32 - "test_budget.py"
-Cohesion: 0.23
-Nodes (15): allow_utilization_reads, Read the CLI's OAuth access token, or None. Returns None for every failure…, read_oauth_token(), _creds(), Budget governor: usage parsing, window detection, projection, downshift. The…, Skip the round trip rather than send a token that will 401., The usage endpoint is itself rate-limited — observed returning 429. A governor…, test_a_changed_response_shape_degrades_to_none() (+7 more)
+### Community 32 - "fetch_window_utilization"
+Cohesion: 0.19
+Nodes (16): allow_utilization_reads, fetch_window_utilization(), Read the CLI's OAuth access token, or None. Returns None for every failure…, Ask the meter. Returns None on any failure, never raises, never logs., read_oauth_token(), _creds(), Skip the round trip rather than send a token that will 401., The usage endpoint is itself rate-limited — observed returning 429. A governor… (+8 more)
 
 ### Community 33 - "Secret"
 Cohesion: 0.10
@@ -261,32 +247,28 @@ Cohesion: 0.25
 Nodes (7): ProcessRunner, Spawner, Runs one child process to completion, a timeout, or a cancellation., test_chat_rejects_an_unbounded_response_without_loading_it(), test_chat_timeout_terminates_the_process_group(), test_chat_turn_uses_guarded_process_runner_and_stdin(), test_project_stage_uses_guarded_process_runner()
 
 ### Community 38 - "TierRouter"
-Cohesion: 0.12
-Nodes (17): Backend, What a tier requires and which backends it prefers, in order., TierPolicy, CatalogSnapshot, ModelInfo, One comparable number for ranking. Tasks are input-heavy, so a plain average…, CandidateEval, _movement() (+9 more)
+Cohesion: 0.15
+Nodes (14): Backend, What a tier requires and which backends it prefers, in order., TierPolicy, CatalogSnapshot, ModelInfo, One comparable number for ranking. Tasks are input-heavy, so a plain average…, CandidateEval, _movement() (+6 more)
 
 ### Community 39 - "_manifest_for"
-Cohesion: 0.18
-Nodes (11): _manifest_for(), Manifest for a layered plan with every layer but the last two completed.…, This is the whole design in one assertion. A 600-task run must not cost the…, The orchestrator must never infer completeness from silence., Paths may cross into the manifest. Bytes may not., test_manifest_caps_are_enforced_not_merely_documented(), test_manifest_carries_no_artifact_contents(), test_manifest_reports_when_it_elided_content() (+3 more)
-
-### Community 40 - "SleipnirConfig"
-Cohesion: 0.18
-Nodes (25): ConfigError, ModelOption, _opt_float(), _opt_int(), _parse_backends(), _parse_models(), _parse_tiers(), Any (+17 more)
+Cohesion: 0.14
+Nodes (14): _manifest_for(), parametrize, Manifest for a layered plan with every layer but the last two completed.…, This is the whole design in one assertion. A 600-task run must not cost the…, The orchestrator must never infer completeness from silence., Paths may cross into the manifest. Bytes may not., test_manifest_caps_are_enforced_not_merely_documented(), test_manifest_carries_no_artifact_contents() (+6 more)
 
 ### Community 41 - "budget"
 Cohesion: 0.22
 Nodes (9): no_credential_reads(), no_real_utilization_reads(), fixture, Test-suite guardrails. The budget governor reads real window utilisation from…, Never call the usage endpoint from a test. Returns ``None``, which is the same…, Belt and braces: the token must not be read from disk either. A test that needs…, budget(), test_budget_headroom_is_none_when_limit_unknown() (+1 more)
 
 ### Community 42 - "OpenRouterAdapter"
-Cohesion: 0.12
-Nodes (16): AsyncClient, Response, _HttpFailure, materialize_file_blocks(), OpenRouterAdapter, Any, Exception, Path (+8 more)
+Cohesion: 0.11
+Nodes (17): AsyncClient, Response, _HttpFailure, materialize_file_blocks(), OpenRouterAdapter, Any, ClientFactory, Exception (+9 more)
 
 ### Community 43 - "screenshot"
 Cohesion: 0.22
 Nodes (9): CompletedProcess, Probe, Path, Capture the full screen to ``path``. The agent reads the resulting image…, Run a shell command as the operator, with the operator's environment. This is…, What this machine can actually do, for ``sleipnir doctor``., run(), screenshot() (+1 more)
 
-### Community 44 - "TokenUsage"
-Cohesion: 0.12
-Nodes (11): CodexAdapter, CodexInvocation, _first_int(), Any, Path, Spawner, Walk every event for the last recognisable usage block. Deliberately structure-…, How to call the CLI. Data, not dispatch logic. (+3 more)
+### Community 44 - "executor.py"
+Cohesion: 0.13
+Nodes (18): DispatchOutcome, What the adapter observed. Raw facts only, no derived accounting., CodexAdapter, _first_int(), Any, Path, Spawner, Walk every event for the last recognisable usage block. Deliberately structure-… (+10 more)
 
 ### Community 45 - "browser.py"
 Cohesion: 0.21
@@ -301,8 +283,8 @@ Cohesion: 0.25
 Nodes (7): What the meter itself reports. Percentages, never tokens., Token limit consistent with ``used_tokens`` being this percentage., WindowUtilization, The reading is a percentage; everything downstream works in tokens. Solving…, Near zero the division explodes and would imply a wildly wrong limit., test_implied_limit_refuses_when_utilisation_is_too_small_to_divide_by(), test_implied_limit_solves_for_the_limit_matching_local_accounting()
 
 ### Community 48 - "test_schema.py"
-Cohesion: 0.12
-Nodes (21): make_chain(), make_layered(), _plan(), Phase 1 schema tests. The load-bearing test is…, t0000 -> t0001 -> ... Simple shape for status-folding tests., A wide layered DAG: every task in layer k depends on three in layer k-1. This…, Replaying the log must not double-count cost — recovery depends on it., test_attempt_directories_never_collide() (+13 more)
+Cohesion: 0.11
+Nodes (19): make_layered(), _plan(), Phase 1 schema tests. The load-bearing test is…, A wide layered DAG: every task in layer k depends on three in layer k-1. This…, Re-tiering a task must NOT invalidate its completed work., The trap found in the real ~/.claude/projects record: input_tokens=2 while…, test_attempt_directories_never_collide(), test_downshift_must_be_explained() (+11 more)
 
 ### Community 49 - "InputContract"
 Cohesion: 0.15
@@ -317,8 +299,8 @@ Cohesion: 0.29
 Nodes (6): PriceSnapshot, Token and server-tool prices as fetched at dispatch time. Never populated from…, Cost of ``usage`` under this snapshot. Missing cache prices fall back to the…, test_cache_write_ttls_are_priced_separately(), test_missing_cache_prices_fall_back_without_undercounting(), test_server_tool_requests_are_priced_separately_from_tokens()
 
 ### Community 52 - "Task"
-Cohesion: 0.11
-Nodes (13): (window tokens, metered dollars) one attempt of ``task`` would cost. Fixed…, The tier to dispatch ``task`` at, plus why if it moved., Governor, Protocol, Budget control. Implemented by BudgetGovernor (Phase 4)., Tier -> concrete model. Implemented by TierRouter. ``downshift_reason`` is how…, Router, _canonical_json() (+5 more)
+Cohesion: 0.15
+Nodes (11): Budget governor: what the 5-hour window has cost, and what the plan will. Two…, # NOTE: `iterations` is deliberately ignored. It repeats the same counts, Governor, Protocol, Budget control. Implemented by BudgetGovernor (Phase 4)., Tier -> concrete model. Implemented by TierRouter. ``downshift_reason`` is how…, Router, How much context this task plausibly needs. Driven by what the task *declared*… (+3 more)
 
 ### Community 53 - "RetryPolicy"
 Cohesion: 0.33
@@ -333,35 +315,31 @@ Cohesion: 0.14
 Nodes (13): Signals, _default_spawn(), ProcessResult, _pump(), Any, Path, Protocol, Async subprocess execution with timeout, streaming capture, and tree kill.… (+5 more)
 
 ### Community 56 - "parse_usage_line"
-Cohesion: 0.12
-Nodes (21): _int(), parse_usage_line(), Tokens charged against the 5-hour window. ``cache_read_weight`` exists because…, Extract one usage record, or None if this line does not carry usage. Tolerant…, window_tokens(), assistant_line(), Older records carry no cache_creation table. Dropping those tokens would under-…, A parser that raises on an unfamiliar line makes the budget unavailable exactly… (+13 more)
+Cohesion: 0.11
+Nodes (23): _int(), parse_usage_line(), Any, One deduplicated, priced-elsewhere assistant turn., Tokens charged against the 5-hour window. ``cache_read_weight`` exists because…, Extract one usage record, or None if this line does not carry usage. Tolerant…, UsageRecord, window_tokens() (+15 more)
 
 ### Community 57 - "Sleipnir — Project State"
 Cohesion: 0.15
 Nodes (12): Current phase/stage, Decisions log, Environment on this machine, Goal, Guarded fast lane and `/project` (2026-08-19), Next steps, Open questions, Phase 6 progress (2026-08-18) (+4 more)
 
 ### Community 58 - "handoff.py"
-Cohesion: 0.21
-Nodes (12): answer(), await_answer(), pending(), Path, Asking the operator for a credential from a process that has no terminal. The…, Tell the waiting process what happened. Status only — never the value., A pending ask. Carries a label; never a value., File a request for the console to fulfil. (+4 more)
-
-### Community 59 - "test_outputs_cannot_overwrite_harness_owned_files"
-Cohesion: 0.50
-Nodes (4): parametrize, test_manifest_never_exceeds_the_ceiling(), test_outputs_cannot_overwrite_harness_owned_files(), test_repository_input_paths_cannot_escape_the_run_root()
+Cohesion: 0.18
+Nodes (17): answer(), await_answer(), HandoffError, pending(), Path, RuntimeError, Asking the operator for a credential from a process that has no terminal. The…, Block until the console answers, and return its *status* only. Returns one of… (+9 more)
 
 ## Knowledge Gaps
 - **67 isolated node(s):** `sleipnir`, `The one invariant`, `Rules that will bite you if ignored`, `The router (Phase 3)`, `Money and resources` (+62 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **3 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **1 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Tier` connect `Tier` to `make_task`, `cli.py`, `TaskStatus`, `apply_revision`, `executor.py`, `test_adapters.py`, `Path`, `schema.py`, `budget.py`, `Plan`, `Executor`, `chat.py`, `BudgetGovernor`, `Adapter`, `orchestrator.py`, `AttemptWorkspace`, `TierRouter`, `SleipnirConfig`, `Task`, `RetryPolicy`, `test_spec_hash_ignores_routing_fields`?**
-  _High betweenness centrality (0.082) - this node is a cross-community bridge._
-- **Why does `Plan` connect `Plan` to `make_task`, `cli.py`, `TaskStatus`, `apply_revision`, `executor.py`, `test_adapters.py`, `projection.py`, `Path`, `ValueError`, `schema.py`, `console.py`, `budget.py`, `Executor`, `BudgetGovernor`, `orchestrator.py`, `AttemptWorkspace`, `test_schema.py`, `InputContract`, `Task`?**
+- **Why does `Tier` connect `Tier` to `make_task`, `cli.py`, `TaskStatus`, `RoutingDecision`, `base.py`, `TierRouter`, `test_adapters.py`, `DispatchRequest`, `executor.py`, `Plan`, `test_budget.py`, `test_schema.py`, `Task`, `Executor`, `RetryPolicy`, `chat.py`, `fold_results`, `schema.py`?**
+  _High betweenness centrality (0.075) - this node is a cross-community bridge._
+- **Why does `Plan` connect `Plan` to `make_task`, `cli.py`, `TaskStatus`, `RoutingDecision`, `ConsoleState`, `executor.py`, `test_budget.py`, `ValueError`, `test_schema.py`, `InputContract`, `console.py`, `Task`, `Executor`, `fold_results`, `schema.py`?**
   _High betweenness centrality (0.048) - this node is a cross-community bridge._
-- **Why does `Task` connect `Task` to `make_task`, `cli.py`, `TaskStatus`, `executor.py`, `TierRouter`, `projection.py`, `ValueError`, `schema.py`, `test_schema.py`, `budget.py`, `Plan`, `Executor`, `process.py`, `BudgetGovernor`, `Adapter`, `orchestrator.py`, `AttemptWorkspace`?**
-  _High betweenness centrality (0.047) - this node is a cross-community bridge._
+- **Why does `Task` connect `Task` to `make_task`, `cli.py`, `TaskStatus`, `RoutingDecision`, `base.py`, `TierRouter`, `DispatchRequest`, `executor.py`, `Plan`, `ValueError`, `_canonical_json`, `test_schema.py`, `Executor`, `process.py`, `schema.py`, `AttemptWorkspace`?**
+  _High betweenness centrality (0.039) - this node is a cross-community bridge._
 - **Are the 5 inferred relationships involving `make_task()` (e.g. with `ExpectedOutput` and `InputContract`) actually correct?**
   _`make_task()` has 5 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 73 inferred relationships involving `Tier` (e.g. with `DispatchPreview` and `DispatchRequest`) actually correct?**

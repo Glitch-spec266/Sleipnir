@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–9 are complete with **406 tests passing**.
+Phases 1–9 are complete with **409 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -363,6 +363,10 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   verifies that the PID is a session leader whose live `/proc` command line
   carries Sleipnir's exact debugging port and profile. PID publication is
   private and atomic; stale/symlinked claims cannot redirect writes or kills.
+- 2026-08-19 — **A credential prompt needs a live claimant.** Handoff requests
+  are private bounded regular files whose ID matches the filename and whose
+  requester PID is alive under the same user. Forged/dead requests and symlink
+  payloads are discarded; answer status is a closed vocabulary written once.
 
 ## Open questions
 
