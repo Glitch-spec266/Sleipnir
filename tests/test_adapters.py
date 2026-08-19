@@ -19,7 +19,11 @@ from test_schema import make_task
 
 from sleipnir.adapters.base import DispatchRequest
 from sleipnir.adapters.claude import ClaudeAdapter
-from sleipnir.adapters.codex import CodexAdapter, CodexInvocation
+from sleipnir.adapters.codex import (
+    CODEX_CLI_DEFAULT_MODEL,
+    CodexAdapter,
+    CodexInvocation,
+)
 from sleipnir.adapters.openrouter import (
     API_KEY_ENV,
     OpenRouterAdapter,
@@ -138,6 +142,22 @@ def test_claude_prompt_goes_over_stdin_not_argv(tmp_path: Path):
     secret_prompt = "prompt with sensitive context"
     run(adapter.dispatch(request_for(tmp_path, prompt=secret_prompt)))
     assert secret_prompt not in " ".join(calls[0]["argv"])
+
+
+def test_claude_subprocess_does_not_inherit_unrelated_credentials(tmp_path: Path):
+    adapter, calls = claude_adapter()
+    env = {
+        "PATH": "/usr/bin",
+        "OPENROUTER_API_KEY": "or-secret",
+        "GITHUB_TOKEN": "gh-secret",
+        "SSH_AUTH_SOCK": "/tmp/agent.sock",
+    }
+    run(adapter.dispatch(request_for(tmp_path, env=env)))
+    child_env = calls[0]["kwargs"]["env"]
+    assert child_env["PATH"] == "/usr/bin"
+    assert "OPENROUTER_API_KEY" not in child_env
+    assert "GITHUB_TOKEN" not in child_env
+    assert "SSH_AUTH_SOCK" not in child_env
 
 
 def test_claude_argv_uses_verified_flags(tmp_path: Path):
@@ -286,6 +306,27 @@ def test_codex_invocation_is_configurable(tmp_path: Path):
     assert calls[0]["argv"][:4] == ["/opt/codex", "exec", "-m", "gpt-x"]
 
 
+def test_codex_cli_default_omits_stale_model_override(tmp_path: Path):
+    calls: list = []
+    adapter = CodexAdapter(spawn=fake_spawner(calls=calls, stdout=b"{}"))
+    run(adapter.dispatch(request_for(tmp_path, model=CODEX_CLI_DEFAULT_MODEL)))
+    argv = calls[0]["argv"]
+    assert "--model" not in argv
+    assert CODEX_CLI_DEFAULT_MODEL not in argv
+
+
+def test_codex_subprocess_does_not_inherit_unrelated_credentials(tmp_path: Path):
+    calls: list = []
+    adapter = CodexAdapter(spawn=fake_spawner(calls=calls, stdout=b"{}"))
+    run(adapter.dispatch(request_for(tmp_path, env={
+        "PATH": "/usr/bin",
+        "OPENROUTER_API_KEY": "or-secret",
+        "GITHUB_TOKEN": "gh-secret",
+    })))
+    child_env = calls[0]["kwargs"]["env"]
+    assert child_env == {"PATH": "/usr/bin"}
+
+
 def test_codex_finds_usage_at_an_unknown_nesting_depth(tmp_path: Path):
     events = [
         {"type": "start"},
@@ -342,6 +383,17 @@ def test_codex_preview_records_verified_cli_surface(tmp_path: Path):
     adapter = CodexAdapter()
     preview = adapter.preview(request_for(tmp_path))
     assert any("verified" in note for note in preview.notes)
+
+
+def test_codex_default_invocation_is_writable_noninteractive_and_sandboxed(tmp_path: Path):
+    calls: list = []
+    adapter = CodexAdapter(spawn=fake_spawner(calls=calls, stdout=b"{}"))
+    run(adapter.dispatch(request_for(tmp_path)))
+    argv = calls[0]["argv"]
+    assert "--approve-for-me" in argv
+    assert "--sandbox" not in argv, "0.148.0 rejects --sandbox with --approve-for-me"
+    assert "--skip-git-repo-check" in argv
+    assert "--dangerously-bypass-approvals-and-sandbox" not in argv
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +461,17 @@ def test_openrouter_warns_when_no_file_blocks_are_emitted(tmp_path: Path):
     adapter = openrouter(lambda request: httpx.Response(200, content=body))
     outcome = run(adapter.dispatch(request_for(tmp_path)))
     assert "no file: blocks" in outcome.provider_meta["warning"]
+
+
+def test_openrouter_refuses_an_unbounded_provider_stream(tmp_path: Path):
+    body = sse({"choices": [{"delta": {"content": "x" * 500}}]}, "[DONE]")
+    adapter = openrouter(
+        lambda request: httpx.Response(200, content=body), max_response_bytes=128
+    )
+    outcome = run(adapter.dispatch(request_for(tmp_path)))
+    assert outcome.status is AttemptStatus.FAILED
+    assert outcome.failure_kind is FailureKind.PROVIDER_ERROR
+    assert "exceeded 128 bytes" in outcome.stderr_tail
 
 
 def test_openrouter_length_finish_is_truncated(tmp_path: Path):

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from test_schema import make_task
+from test_schema import finished, make_task
 
 from sleipnir.adapters.base import (
     BaseAdapter,
@@ -136,7 +137,14 @@ class ScriptedAdapter(BaseAdapter):
         )
 
 
-def build(tmp_path: Path, plan: Plan, adapter: ScriptedAdapter, **config_kwargs):
+def build(
+    tmp_path: Path,
+    plan: Plan,
+    adapter: ScriptedAdapter,
+    *,
+    staled_at: dict[str, int] | None = None,
+    **config_kwargs,
+):
     log = ResultLog(tmp_path / "results.jsonl")
     executor = Executor(
         plan,
@@ -144,6 +152,7 @@ def build(tmp_path: Path, plan: Plan, adapter: ScriptedAdapter, **config_kwargs)
         router=ROUTER,
         log=log,
         config=ExecutorConfig(run_root=tmp_path, env={}, **config_kwargs),
+        staled_at=staled_at,
     )
     return executor, log
 
@@ -199,6 +208,40 @@ def test_higher_priority_dispatches_first(tmp_path: Path):
     executor, _ = build(tmp_path, plan, adapter, concurrency=1)
     run(executor.run())
     assert adapter.dispatched[0][0] == "high"
+
+
+def test_semantic_revision_reruns_superseded_then_stale_descendants(tmp_path: Path):
+    original = plan_of(
+        make_task("a"),
+        make_task("b", deps=["a"]),
+        make_task("c", deps=["b"]),
+    )
+    changed_a = original.by_id["a"].model_copy(
+        update={"description": "A materially revised upstream contract."}
+    )
+    revised = original.model_copy(
+        update={
+            "revision": 1,
+            "tasks": [changed_a, original.by_id["b"], original.by_id["c"]],
+        }
+    )
+    adapter = ScriptedAdapter()
+    executor, log = build(
+        tmp_path,
+        revised,
+        adapter,
+        concurrency=3,
+        staled_at={"b": 1, "c": 1},
+    )
+    for task_id in ("a", "b", "c"):
+        record = finished(task_id, attempt=1, spec_hash=original.by_id[task_id].spec_hash())
+        record.plan_revision = 0
+        log.append(record)
+
+    report = run(executor.run())
+
+    assert adapter.dispatched == [("a", 2), ("b", 2), ("c", 2)]
+    assert all(state.status is TaskStatus.DONE for state in report.final_states.values())
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +341,47 @@ def test_summary_comes_from_the_subagents_file_and_is_clipped(tmp_path: Path):
     assert len(record.summary) <= AttemptFinished.SUMMARY_MAX_CHARS
 
 
+def test_summary_symlink_cannot_read_a_host_file(tmp_path: Path):
+    secret = tmp_path / "host-secret.txt"
+    secret.write_text("DO-NOT-EXFILTRATE")
+    plan = plan_of(make_task("a"))
+
+    class SymlinkingAdapter(ScriptedAdapter):
+        async def dispatch(self, request):
+            outcome = await super().dispatch(request)
+            request.workspace.summary_path.unlink()
+            request.workspace.summary_path.symlink_to(secret)
+            outcome.summary_text = "safe provider summary"
+            return outcome
+
+    executor, log = build(tmp_path / "run", plan, SymlinkingAdapter())
+    run(executor.run())
+    record = [r for r in log.read() if isinstance(r, AttemptFinished)][-1]
+    assert record.summary == "safe provider summary"
+    assert "DO-NOT-EXFILTRATE" not in record.model_dump_json()
+
+
+def test_declared_output_symlink_cannot_read_a_host_file(tmp_path: Path):
+    secret = tmp_path / "host-secret.txt"
+    secret.write_text("DO-NOT-EXFILTRATE")
+    plan = plan_of(make_task("a"))
+
+    class SymlinkingAdapter(ScriptedAdapter):
+        async def dispatch(self, request):
+            outcome = await super().dispatch(request)
+            output = request.workspace.dir / "out.py"
+            output.unlink()
+            output.symlink_to(secret)
+            return outcome
+
+    executor, log = build(tmp_path / "run", plan, SymlinkingAdapter())
+    run(executor.run())
+    record = [r for r in log.read() if isinstance(r, AttemptFinished)][-1]
+    assert record.status is AttemptStatus.FAILED
+    assert record.missing_outputs == ["result"]
+    assert all(artifact.path != str(secret) for artifact in record.artifacts)
+
+
 def test_metered_and_subscription_costs_are_tallied_separately(tmp_path: Path):
     plan = plan_of(make_task("a"))
     metered = ScriptedAdapter(billing_mode=BillingMode.METERED, cost=0.25)
@@ -318,6 +402,22 @@ def test_metered_and_subscription_costs_are_tallied_separately(tmp_path: Path):
     assert report2.notional_usd == pytest.approx(0.25)
     assert report2.window_tokens == 150
     assert "notional=$0.2500" in report2.render()
+
+
+def test_codex_subscription_usage_does_not_consume_the_claude_window(tmp_path: Path):
+    plan = plan_of(make_task("a"))
+    adapter = ScriptedAdapter(billing_mode=BillingMode.SUBSCRIPTION, cost=0.25)
+    executor = Executor(
+        plan,
+        adapters={Adapter.CODEX: adapter},
+        router=StaticRouter({tier: (Adapter.CODEX, "codex-worker") for tier in Tier}),
+        log=ResultLog(tmp_path / "results.jsonl"),
+        config=ExecutorConfig(run_root=tmp_path, env={}),
+    )
+    report = run(executor.run())
+    assert report.window_tokens == 0
+    assert report.codex_tokens == 150
+    assert "codex_tokens=150" in report.render()
 
 
 def test_reported_cost_marks_the_estimate_as_authoritative(tmp_path: Path):
@@ -355,6 +455,22 @@ def test_attempts_do_not_share_a_directory(tmp_path: Path):
     run(executor.run())
     attempts = sorted((tmp_path / "artifacts" / "task-a").iterdir())
     assert [p.name for p in attempts] == ["attempt-01", "attempt-02"]
+
+
+def test_preexisting_attempt_workspace_is_never_reused_as_provider_output(tmp_path: Path):
+    from sleipnir.artifacts import WorkspaceCollisionError
+
+    poisoned = tmp_path / "artifacts" / "task-a" / "attempt-01"
+    poisoned.mkdir(parents=True)
+    (poisoned / "out.py").write_text("attacker-controlled")
+    (poisoned / "summary.md").write_text("pretend this succeeded")
+    adapter = ScriptedAdapter(write_outputs=False)
+    executor, log = build(tmp_path, plan_of(make_task("a")), adapter)
+
+    with pytest.raises(WorkspaceCollisionError, match="pre-existing"):
+        run(executor.run())
+    assert adapter.dispatched == []
+    assert log.read() == []
 
 
 def test_completed_work_is_not_redispatched_on_resume(tmp_path: Path):
@@ -439,6 +555,54 @@ def test_resume_refuses_to_steal_an_attempt_from_a_live_executor(tmp_path: Path)
     )
     with pytest.raises(ConcurrentExecutionError, match="live executor"):
         run(resumed.run())
+
+
+def test_run_refuses_when_another_executor_owns_the_run_directory(tmp_path: Path):
+    """Two executors must not race between readiness and AttemptStarted."""
+    plan = plan_of(make_task("a"))
+    executor, _ = build(tmp_path, plan, ScriptedAdapter())
+    lock_path = tmp_path / "run.lock"
+    lock_path.touch()
+    with lock_path.open("r+") as owner:
+        owner.write("pid=4242\n")
+        owner.flush()
+        fcntl.flock(owner.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(ConcurrentExecutionError, match=r"already active.*pid=4242"):
+            run(executor.run())
+
+    assert not (tmp_path / "results.jsonl").exists()
+
+
+def test_run_lock_activity_probe_distinguishes_owned_from_stale_file(tmp_path: Path):
+    from sleipnir.runlog import RunLock, run_is_active
+
+    assert run_is_active(tmp_path) is False
+    with RunLock(tmp_path):
+        assert run_is_active(tmp_path) is True
+    assert run_is_active(tmp_path) is False
+
+
+def test_executor_refuses_a_plan_changed_before_lock_acquisition(tmp_path: Path):
+    loaded = plan_of(make_task("a"))
+    changed = plan_of(make_task("different"))
+    (tmp_path / "plan.json").write_text(changed.model_dump_json())
+    executor, _ = build(tmp_path, loaded, ScriptedAdapter())
+    with pytest.raises(ConcurrentExecutionError, match="plan changed"):
+        run(executor.run())
+
+
+def test_result_log_refuses_a_precreated_symlink(tmp_path: Path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("must stay unchanged")
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    (run_root / "results.jsonl").symlink_to(outside)
+    executor, _ = build(run_root, plan_of(make_task("a")), ScriptedAdapter())
+    from sleipnir.runlog import TornRecordError
+
+    with pytest.raises(TornRecordError, match="symlinked result log"):
+        run(executor.run())
+    assert outside.read_text() == "must stay unchanged"
 
 
 def test_downstream_receives_the_upstream_summary(tmp_path: Path):

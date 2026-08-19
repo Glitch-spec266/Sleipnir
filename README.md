@@ -10,7 +10,7 @@ never re-enters the orchestrator's context.** The plan lives on disk. The
 orchestrator is re-invoked fresh each cycle with only a compact, size-bounded
 manifest.
 
-## Status: Phases 1–5 complete — final gate in progress
+## Status: Phases 1–7 complete
 
 | Phase | Scope | State |
 |---|---|---|
@@ -19,7 +19,8 @@ manifest.
 | 3 | tier router | complete |
 | 4 | budget governor | complete |
 | 5 | CLI | complete |
-| 6 | end-to-end resume gate, review, pentest | in progress |
+| 6 | end-to-end resume gate, review, pentest | complete |
+| 7 | dependency-free live TUI + sparse-control console | complete |
 
 Read [`DESIGN.md`](DESIGN.md) for the tradeoffs, the manifest size math, and the
 open decisions.
@@ -44,8 +45,11 @@ src/sleipnir/config.py       TOML backend + per-tier policy
 src/sleipnir/router.py       tier -> model, with full routing rationale
 src/sleipnir/budget.py       5-hour window accounting and downshift
 src/sleipnir/planner.py      prompt -> validated task DAG
-src/sleipnir/cli.py          plan / run / status / resume / explain
-tests/                       221 tests, including the executable form of the
+src/sleipnir/revisions.py    typed, audited mid-run plan changes
+src/sleipnir/orchestrator.py sparse bounded-context brain decisions
+src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
+src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate
+tests/                       277 tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -69,13 +73,52 @@ growth.
 
 ## Development
 
-Python 3.12+. Runtime dependency: `pydantic`. No agent frameworks.
+Python 3.12+. Runtime dependencies: `pydantic` and `httpx`. No agent frameworks.
 
 ```sh
 uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python "pydantic>=2.7" "pytest>=8"
+uv pip install --python .venv/bin/python "pydantic>=2.7" "httpx>=0.27" "pytest>=8"
 .venv/bin/python -m pytest -q
 ```
+
+## Terminal dashboard
+
+`sleipnir tui` prints a read-only snapshot and cannot dispatch anything.
+`sleipnir tui --watch` follows a run, and `sleipnir tui --run` executes or
+resumes it under the run-directory lock while displaying live DAG, route and
+budget state. The dashboard adds no runtime dependency and never displays
+subagent summaries or artifact content.
+`sleipnir tui --orchestrate` adds the bounded sparse-brain loop to that same
+console; plan revisions reload live and review-required proposals are surfaced.
+Read-only/watch modes are catalogue-free and offline; their usage line derives
+metered dollars, Claude-window tokens, and Codex tokens directly from the log.
+All untrusted display values are stripped of terminal control characters.
+
+## Sparse brain control
+
+`sleipnir orchestrate` runs the DAG normally and spends no extra Claude call
+when workers succeed. At a terminal impasse it invokes the configured
+reason-tier brain with only the bounded manifest and up to four urgent task
+specs (24k characters total). The brain may stop, defer, or propose a typed
+revision; Sleipnir validates the full DAG and computes the revision blast radius
+locally before persisting anything.
+
+Semantic task/edge proposals require explicit operator review through
+`sleipnir apply-revision`; only routing-only retargets auto-apply by default.
+Applied proposal files remain as audit artifacts but no longer inflate the
+TUI's pending-review badge.
+When a semantic revision is approved, superseded tasks and stale descendants
+are rerun in dependency order rather than being mistaken for completed work.
+
+The shipped example policy keeps Claude first for `reason`, puts the Codex
+subscription first for bulk `code`, and uses OpenRouter first for cheap
+`mechanical`/`extract` work. This reserves Claude's tighter window for planning
+and control while distributing worker usage across the other two backends.
+Codex subscription usage is tracked in its own quota pool. The example's
+`@cli-default` sentinel lets the authenticated CLI choose its currently
+supported account default; operators can still pin a concrete model id.
+Sparse brain calls append their own durable usage/cost record, so the TUI and
+budget history include Claude control spend as well as worker spend.
 
 ## Security note
 

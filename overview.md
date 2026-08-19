@@ -1,6 +1,6 @@
 # Sleipnir — Overview
 
-_Last updated: 2026-08-18 · Status: Phase 6 local gate in progress; live gate paused at quota._
+_Last updated: 2026-08-18 · Status: Phase 6 security gate and Phase 7 TUI in progress._
 
 ## What this is
 
@@ -77,6 +77,18 @@ different scarce resources and they do not convert into each other, which is why
 `CostEstimate` carries both `amount_usd` and `window_tokens` rather than one
 "cost" number.
 
+### Phase 8 modules (the console and the desk)
+
+| File | What it does |
+|---|---|
+| `theme.py` | Green phosphor palette, flickering border, the logo, and GSAP's easing curves ported as pure functions of a frame number. |
+| `console.py` | Full-screen renderer + raw-mode input loop. Owns the terminal, never composes a reply. |
+| `chat.py` | Where a message goes: `claude` with session continuity when the brain is awake, a cheap duty officer reading the bounded manifest when it is asleep. |
+| `capabilities/computer.py` | Keyboard, mouse, screen, and an operator shell. Wayland-correct via `ydotool`. |
+| `capabilities/browser.py` | Playwright Chromium with a persistent, logged-in profile. |
+| `capabilities/secrets.py` | One-shot credentials that cannot be printed and wipe on use. |
+| `capabilities/audit.py` | Append-only, fsynced record of every privileged action, redacted at the boundary. |
+
 ## File structure & modularity
 
 ```
@@ -95,13 +107,16 @@ Sleipnir/
 │   ├── router.py         # picks which model actually runs each task
 │   ├── budget.py         # what has been spent, and the only part allowed to refuse
 │   ├── planner.py        # turns your prompt into a task DAG
+│   ├── revisions.py      # validates/applies/audits mid-run plan changes
+│   ├── orchestrator.py   # sparse bounded-manifest Claude control cycles
+│   ├── tui.py            # bounded, dependency-free live terminal dashboard
 │   ├── cli.py            # the `sleipnir` command
 │   └── adapters/
 │       ├── base.py       # the one interface every provider must implement
 │       ├── claude.py     # `claude -p`      (verified against real output)
 │       ├── codex.py      # `codex exec`     (verified against CLI 0.148.0)
 │       └── openrouter.py # plain HTTP
-├── tests/                # 221 tests, including the manifest size bound
+├── tests/                # 277 tests, including the manifest size bound
 ├── DESIGN.md             # the reasoning, tradeoffs and open decisions
 ├── project.md            # living state — current phase, decisions, next steps
 └── overview.md           # this file
@@ -138,6 +153,17 @@ Each major module and its job, in plain language:
   asks the meter directly for the true window percentage.
 - **`planner.py`** — turns one prompt into a task DAG.
 - **`cli.py`** — the `sleipnir` command: `run`, `resume`, `status`, `explain`.
+- **`tui.py`** — a pure renderer over the plan and folded log. It never stores
+  status or reads task output content. `sleipnir tui` is a zero-spend snapshot;
+  `sleipnir tui --watch` follows another run; `sleipnir tui --run` owns and
+  executes/resumes the run.
+- **`revisions.py`** — applies typed task/edge changes to a copy, validates the
+  whole resulting DAG, computes superseded and stale completed work, fsyncs the
+  audit, and atomically replaces the plan view.
+- **`orchestrator.py`** — wakes the expensive reason-tier brain only after
+  automatic execution reaches an impasse. Its prompt is the capped manifest
+  plus a constant-bounded drill-down of urgent task specs; no artifact content
+  or worker transcript can enter.
 
 ### Files created while running (not in the repo)
 
@@ -173,10 +199,26 @@ not trust.
 7. Finished work is folded back into a fresh, capped **manifest**, and the cycle
    repeats.
 
+With `sleipnir orchestrate`, successful workers complete without another Claude
+call. Only a terminal failure/partial/budget decision wakes the control model.
+It returns `continue`, `stop`, or a typed revision. Invalid changes, cycles, and
+semantic edits disguised as cheap retargets are rejected locally before the
+plan changes.
+
 If the executor is hard-killed after its fsynced start record but before its
 finish record, the next run closes that orphan as `INTERRUPTED` and retries in a
 new attempt directory. It first probes the recorded executor PID and refuses to
 steal work from a process that is still alive.
+
+Before any recovery or scheduling begins, the executor also takes a kernel-backed
+exclusive `run.lock`. This closes the small but expensive race where two fresh
+processes could both see a READY task before either wrote its start record. The
+kernel releases the lock automatically after a crash.
+
+Every file crossing into a prompt or summary is treated as untrusted. Paths
+must stay under their declared root, symlinks are not followed, task outputs
+cannot collide with harness-owned logs/state, and delegated CLI subprocesses do
+not inherit unrelated API keys or CI tokens from the operator's shell.
 
 ### How the router chooses a model
 
@@ -211,11 +253,12 @@ usually succeeds.
 
 ### How the budget governor decides
 
-Two resources, and they do not convert. A `claude -p` call spends **5-hour
-window quota** and almost no dollars; an OpenRouter call spends **dollars** and
-no window. So a nearly-full window must never block an OpenRouter call, and a
-blown dollar budget must never be "fixed" by choosing a cheaper model — a
-cheaper model still costs money, and only refusing actually stops the spend.
+The quota pools do not convert. A `claude -p` call spends **Claude 5-hour
+window quota**, a subscription-backed `codex exec` call spends **Codex quota**,
+and an OpenRouter call spends **dollars**. Codex tokens are reported separately
+and never charged to the Claude projection. A nearly-full Claude window must
+not block Codex or OpenRouter work, and a blown dollar budget must not be
+"fixed" by choosing a cheaper metered model—only refusing stops that spend.
 
 Claude's authenticated `GET /api/oauth/usage` endpoint reports the five-hour
 window as a percentage, not a token limit. The governor reads that percentage
@@ -275,10 +318,55 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-Last verified run: **221 passed** on Python 3.14.6.
+Last verified run: **319 passed** on Python 3.14.6. `pip check`, `compileall`,
+`git diff --check`, and Bandit are also clean.
 
-The CLI exposes `plan`, `run`, `resume`, `status`, and `explain` through both
-the `sleipnir` and `orch` console-script names.
+Host control needs a third runtime dependency and one privileged install:
+
+```sh
+.venv/bin/pip install playwright
+.venv/bin/sleipnir setup     # prints every root command before running it
+.venv/bin/sleipnir doctor    # reports what this machine can actually do
+```
+
+`setup` installs `ydotool`, writes a udev rule granting the user `/dev/uinput`,
+adds the user to the `input` group, and fetches the Chromium build Playwright
+drives. It exists so nobody hand-runs sudo out of a README. A new login session
+is needed afterwards for the group change to apply.
+
+### The console
+
+Bare `sleipnir` — no subcommand — opens the interactive console: a boot
+animation, then a green frame that flickers while you type. What you type is
+**not** answered by Sleipnir. It is handed to the real `claude` CLI over stdin,
+with `--session-id` on the first turn and `--resume` on every turn after, so the
+conversation continues instead of restarting. On the first turn only, Sleipnir
+prepends a capability brief listing the host commands the model can now call.
+
+The batch subcommands are all still there: `plan`, `run`, `resume`, `status`,
+`explain`, `tui`, `orchestrate`, `apply-revision`, plus the new `setup`,
+`doctor`, `computer`, `browser` and `secret`. The TUI's `--orchestrate` mode
+owns the same sparse-control loop while rendering live plan revisions and
+bounded control events.
+
+The console runs Claude in `bypassPermissions` by default, because a tool that
+stops to confirm every click is not a tool that can drive a desktop. That is the
+most consequential fact about a session, so it is stated in the footer for as
+long as it is true — `FULL HOST CONTROL` — rather than behind a launch prompt
+that gets dismissed once. `sleipnir console --ask-first` narrows it back to
+`acceptEdits`, which confirms each action and confines the model to the repo.
+
+### Host control, in one paragraph
+
+`sleipnir computer` types, clicks, moves the pointer and captures the screen.
+Under Wayland none of that can be done the X11 way, so input is injected into
+`/dev/uinput` through `ydotool` — the events are indistinguishable from a
+physical keyboard, which is why every call is written to
+`~/.sleipnir/capability-audit.jsonl`. `sleipnir browser` drives a real Chromium
+with a persistent profile, so logins survive between runs. `sleipnir secret
+prompt "<label>"` asks *you* for a credential inside Sleipnir and injects it
+straight into the focused window; the model that called it learns only that a
+credential was supplied. Nothing is stored, logged, or returned.
 
 ## How to add code / extend it
 
@@ -295,21 +383,40 @@ the `sleipnir` and `orch` console-script names.
   `schema.py`. A manifest validates itself against its own caps at construction,
   so an over-budget manifest cannot be built. If you widen a cap, expect
   `test_manifest_size_is_constant_in_task_count` to have an opinion.
+- **To add a host capability:** put it in `capabilities/`, route it through
+  `audit.record`, and expose it as a `sleipnir <noun> <verb>` subcommand in
+  `cli.py` — then add the line to `console.CAPABILITY_BRIEF`. The brief is how
+  the model learns the capability exists; a command nobody told it about will
+  never be called. Never hand a capability to a dispatched worker task.
+- **To change the console's look:** everything visual lives in `theme.py` and is
+  a pure function of an explicit frame number. Add easing curves there rather
+  than reaching for an animation library — a terminal cannot run one, and the
+  determinism is what makes the splash testable with no terminal attached.
+- **To pad or truncate a coloured line:** use `theme._fit`, never `len()` and
+  `ljust`. Colour escapes are ~20 invisible bytes per line; measuring them as
+  columns silently collapses the border.
 
 **Rules to respect:**
 
 - Never add a field anywhere in `Manifest` that can carry file contents. Paths
   only. This is the invariant the whole project rests on.
-- Never add a runtime dependency casually. There are two.
+- Never add a runtime dependency casually. There are two required (`pydantic`,
+  `httpx`) and one optional (`playwright`, under the `host` extra).
 - Never put an API key in the repo. `OPENROUTER_API_KEY` comes from the
   environment.
+- Never log the content of a keystroke, a form fill, or a credential. The audit
+  redactor runs at the boundary and records lengths; keep it that way.
+- Never add a `Secret` accessor that returns plaintext without wiping the
+  buffer, and never remove one of its rendering overrides. A single stray
+  f-string is all it takes to put a password in a transcript permanently.
 
 ## Known limitations / TODO
 
 
-- **The full hard-kill live gate remains.** Codex flags and JSONL usage were
-  verified against CLI 0.148.0, and synthetic crash recovery is tested, but the
-  provider-backed killed-and-resumed run is paused until the usage window resets.
+- **Sparse control is provider-verified.** A bounded Claude control call
+  retargeted a seeded terminal failure without changing task meaning; the
+  persisted revision then delegated the accepted retry to Codex. Completed
+  valid and invalid brain calls now land on the append-only accounting stream.
 - **Window-token accounting is roughly 10× too pessimistic.** Cache reads are
   ~94% of measured window usage and are currently counted as equal to input
   tokens, though they are priced far lower. Kept deliberately pessimistic until
@@ -322,3 +429,24 @@ the `sleipnir` and `orch` console-script names.
   rankings. A real per-task estimate should come from the planner in Phase 4.
 - **`code`-tier work starts on a free model.** Cheapest possible first attempt,
   but it leans hard on the acceptance checks to catch a weak result.
+- **One console leg is unverified.** Every capability works standalone
+  (live-verified: pointer injection, Spectacle capture, Chromium navigation and
+  screenshot, operator shell), and the console→`claude` link works
+  (live-verified: two-turn session continuity). What has not been tested is the
+  *join* — Claude actually calling `sleipnir computer ...` from inside a
+  session. Nesting a `bypassPermissions` spawn is blocked inside Claude Code,
+  so it needs one message typed into a real `sleipnir` console.
+- **The console's asleep path is built but not wired.** The OpenRouter duty
+  officer, its manifest-only prompt and its `QUEUE:` parsing are implemented and
+  tested, but nothing flips `ConsoleState.brain_awake` from the orchestrator
+  yet, so the path is reachable only by setting the flag by hand.
+- **The phase-gate loop is not built.** `orchestrate` fans workers out and wakes
+  the brain at an impasse. It does not yet merge modules at a phase gate,
+  re-spawn only the failed module loops at a stronger tier, and advance to the
+  next phase.
+- **Playwright is optional and unpinned to a browser build.** `sleipnir setup`
+  fetches Chromium; a machine that skips setup gets a clear
+  `CapabilityError`, not a crash.
+- **Desktop control is Linux-only.** `ydotool` and `/dev/uinput` are kernel
+  facilities with no macOS or Windows equivalent; `probe()` reports what is
+  missing rather than pretending.

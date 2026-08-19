@@ -86,6 +86,7 @@ def fold_results(
     records: list[AttemptStarted | AttemptFinished],
     *,
     staled: set[str] | None = None,
+    staled_at: dict[str, int] | None = None,
 ) -> dict[str, TaskState]:
     """Recompute every task's status from the append-only result log.
 
@@ -96,6 +97,7 @@ def fold_results(
     discarded by the reader.
     """
     staled = staled or set()
+    staled_at = staled_at or {}
     current_hashes = plan.spec_hashes()
 
     started: dict[str, dict[int, AttemptStarted]] = defaultdict(dict)
@@ -117,6 +119,7 @@ def fold_results(
             finished.get(task.id, {}),
             current_hashes[task.id],
             task.id in staled,
+            staled_at.get(task.id),
         )
 
     _propagate_dependencies(plan, states)
@@ -129,6 +132,7 @@ def _fold_task(
     finished: dict[int, AttemptFinished],
     current_hash: str,
     is_staled: bool,
+    staled_revision: int | None,
 ) -> TaskState:
     state = TaskState(task_id=task.id, status=TaskStatus.READY)
     state.attempts = len(finished)
@@ -160,7 +164,10 @@ def _fold_task(
 
     match latest.status:
         case AttemptStatus.SUCCEEDED:
-            state.status = TaskStatus.STALE if is_staled else TaskStatus.DONE
+            stale = is_staled or (
+                staled_revision is not None and latest.plan_revision < staled_revision
+            )
+            state.status = TaskStatus.STALE if stale else TaskStatus.DONE
         case AttemptStatus.CANCELLED:
             state.status = TaskStatus.CANCELLED
         case AttemptStatus.PARTIAL | AttemptStatus.FAILED:
@@ -206,6 +213,7 @@ def build_manifest(
     generated_at: datetime,
     caps: ManifestCaps = DEFAULT_CAPS,
     staled: set[str] | None = None,
+    staled_at: dict[str, int] | None = None,
     downshift_active: bool = False,
 ) -> Manifest:
     """Project plan + results into the bounded orchestrator view.
@@ -214,7 +222,7 @@ def build_manifest(
     is reported in ``truncation_note`` — the orchestrator is told its view is
     partial rather than being allowed to infer completeness from silence.
     """
-    states = fold_results(plan, records, staled=staled)
+    states = fold_results(plan, records, staled=staled, staled_at=staled_at)
     elided: list[str] = []
 
     totals = _totals(states, records)

@@ -30,15 +30,15 @@ from sleipnir.adapters.base import (
 from sleipnir.artifacts import (
     INPUT_MANIFEST_FILENAME,
     AttemptWorkspace,
+    WorkspaceCollisionError,
     clip_summary,
 )
 from sleipnir.checks import assert_checks_supported, run_checks
 from sleipnir.context import resolve_inputs
 from sleipnir.process import ProcessRunner
 from sleipnir.projection import TaskState, fold_results
-from sleipnir.runlog import ResultLog
+from sleipnir.runlog import ResultLog, RunLock, RunLockError
 from sleipnir.schema import (
-    SATISFIED_STATUSES,
     Adapter,
     AttemptFinished,
     AttemptStarted,
@@ -142,6 +142,13 @@ class ExecutorConfig:
     grace_s: float = 5.0
     env: Mapping[str, str] | None = None
     dry_run: bool = False
+    acquire_lock: bool = True
+
+    def __post_init__(self) -> None:
+        if self.concurrency < 1:
+            raise ValueError("concurrency must be at least 1")
+        if self.grace_s < 0:
+            raise ValueError("grace_s cannot be negative")
 
     def resolved_env(self) -> Mapping[str, str]:
         return self.env if self.env is not None else os.environ
@@ -161,6 +168,7 @@ class RunReport:
     #: "cost=$0.0000" after real work is actively misleading.
     notional_usd: float = 0.0
     window_tokens: int = 0
+    codex_tokens: int = 0
     previews: list[DispatchPreview] = field(default_factory=list)
     final_states: dict[str, TaskState] = field(default_factory=dict)
 
@@ -170,7 +178,24 @@ class RunReport:
             f"failed={self.failed} cancelled={self.cancelled} "
             f"metered=${self.cost_usd:.4f} notional=${self.notional_usd:.4f} "
             f"window_tokens={self.window_tokens}"
+            f" codex_tokens={self.codex_tokens}"
         )
+
+
+def cost_from_outcome(
+    outcome: DispatchOutcome, routing: RoutingDecision
+) -> CostEstimate:
+    """Compose the shared dollar/quota axes for worker and control calls."""
+    metered = outcome.billing_mode is BillingMode.METERED
+    codex_subscription = not metered and routing.adapter is Adapter.CODEX
+    return CostEstimate(
+        billing_mode=outcome.billing_mode,
+        amount_usd=float(outcome.reported_cost_usd or 0.0),
+        window_tokens=0 if metered or codex_subscription else outcome.usage.total_tokens,
+        quota_pool=None if metered else routing.adapter.value,
+        pricing=None,
+        is_estimate=outcome.reported_cost_usd is None,
+    )
 
 
 class Executor:
@@ -185,6 +210,7 @@ class Executor:
         runner: ProcessRunner | None = None,
         run_id: str | None = None,
         governor: Governor | None = None,
+        staled_at: Mapping[str, int] | None = None,
     ) -> None:
         assert_checks_supported(plan.tasks)
         self.plan = plan
@@ -201,11 +227,12 @@ class Executor:
             f"run-{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:6]}"
         )
         self._report = RunReport()
+        self.staled_at = dict(staled_at or {})
 
     # -- state ---------------------------------------------------------------
 
     def _states(self) -> dict[str, TaskState]:
-        return fold_results(self.plan, self.log.read())
+        return fold_results(self.plan, self.log.read(), staled_at=self.staled_at)
 
     def _summaries(self, states: Mapping[str, TaskState]) -> dict[str, str]:
         return {tid: state.summary for tid, state in states.items() if state.summary}
@@ -230,12 +257,16 @@ class Executor:
         return AttemptWorkspace(self.config.run_root, task_id, best).dir
 
     def _ready(self, states: Mapping[str, TaskState], skip: set[str]) -> list[Task]:
+        # STALE and SUPERSEDED are revision work queues, not terminal states.
+        # Require dependencies to be freshly DONE so a stale descendant cannot
+        # race ahead using another stale descendant's pre-revision artifact.
         ready = [
             task
             for task in self.plan.tasks
             if task.id not in skip
-            and states[task.id].status is TaskStatus.READY
-            and all(states[dep].status in SATISFIED_STATUSES for dep in task.depends_on)
+            and states[task.id].status
+            in (TaskStatus.READY, TaskStatus.STALE, TaskStatus.SUPERSEDED)
+            and all(states[dep].status is TaskStatus.DONE for dep in task.depends_on)
         ]
         ready.sort(key=lambda task: (-task.priority, task.id))
         return ready
@@ -253,7 +284,7 @@ class Executor:
         states = self._states()
         for task_id in self.plan.topological_order():
             task = self.plan.by_id[task_id]
-            if states[task_id].status in (TaskStatus.DONE, TaskStatus.STALE):
+            if states[task_id].status is TaskStatus.DONE:
                 continue
             attempt = states[task_id].attempts + 1
             routing = self.router.resolve(task, attempt=attempt, tier=task.tier)
@@ -293,7 +324,7 @@ class Executor:
             artifact_dir_for=self._artifact_dir_for,
         )
         if not dry_run:
-            workspace.prepare()
+            workspace.prepare_fresh()
             workspace.write_json(INPUT_MANIFEST_FILENAME, resolved.manifest())
 
         return DispatchRequest(
@@ -317,6 +348,28 @@ class Executor:
             self._report.final_states = self._states()
             return self._report
 
+        if not self.config.acquire_lock:
+            return await self._run_locked()
+        try:
+            with RunLock(self.config.run_root):
+                return await self._run_locked()
+        except RunLockError as exc:
+            raise ConcurrentExecutionError(str(exc)) from exc
+
+    async def _run_locked(self) -> RunReport:
+        """Execute while holding exclusive ownership of the run directory."""
+        plan_path = self.config.run_root / "plan.json"
+        if plan_path.exists():
+            try:
+                current = Plan.model_validate_json(plan_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise ConcurrentExecutionError(
+                    f"plan became unreadable before execution lock was acquired: {exc}"
+                ) from exc
+            if current != self.plan:
+                raise ConcurrentExecutionError(
+                    "plan changed between CLI load and executor lock; rerun against the new revision"
+                )
         self._recover_open_attempts()
 
         running: dict[str, asyncio.Task[None]] = {}
@@ -585,7 +638,7 @@ class Executor:
             or outcome.response_text
             or outcome.stderr_tail
         )
-        cost = self._cost(outcome)
+        cost = self._cost(outcome, routing)
 
         record = AttemptFinished(
             run_id=self.run_id,
@@ -645,7 +698,7 @@ class Executor:
         return AttemptStatus.SUCCEEDED, None
 
     @staticmethod
-    def _cost(outcome: DispatchOutcome) -> CostEstimate:
+    def _cost(outcome: DispatchOutcome, routing: RoutingDecision) -> CostEstimate:
         """Compose the two-axis cost record.
 
         For subscription dispatches ``amount_usd`` is the provider's *notional*
@@ -653,14 +706,7 @@ class Executor:
         spend. The governor filters by ``billing_mode`` before summing, so
         keeping the figure is strictly more informative than zeroing it.
         """
-        metered = outcome.billing_mode is BillingMode.METERED
-        return CostEstimate(
-            billing_mode=outcome.billing_mode,
-            amount_usd=float(outcome.reported_cost_usd or 0.0),
-            window_tokens=0 if metered else outcome.usage.total_tokens,
-            pricing=None,
-            is_estimate=outcome.reported_cost_usd is None,
-        )
+        return cost_from_outcome(outcome, routing)
 
     def _tally(self, record: AttemptFinished) -> None:
         match record.status:
@@ -677,6 +723,8 @@ class Executor:
         else:
             self._report.notional_usd += record.cost.amount_usd
         self._report.window_tokens += record.cost.window_tokens
+        if record.cost.quota_pool == Adapter.CODEX.value:
+            self._report.codex_tokens += record.usage.total_tokens
 
 
 __all__ = [
@@ -686,5 +734,6 @@ __all__ = [
     "ExecutorConfig",
     "Router",
     "RunReport",
+    "cost_from_outcome",
     "StaticRouter",
 ]
