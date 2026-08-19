@@ -50,6 +50,7 @@ def claude_argv(
     resume: bool,
     executable: str = "claude",
     permission_mode: str = "acceptEdits",
+    model: str | None = None,
     add_dirs: tuple[Path, ...] = (),
 ) -> list[str]:
     """Build the headless invocation.
@@ -58,10 +59,17 @@ def claude_argv(
     against the same id.  Without that the console would be a series of
     strangers, each paying the ~30k-token spawn overhead to learn what the last
     one already knew.
+
+    ``model`` is an alias the CLI understands, supplied by the operator — never
+    a model id chosen in source.  Omitting it lets the authenticated account
+    pick, which in practice means its most capable and slowest default on every
+    trivial message.
     """
     argv = [executable, "-p", "--output-format", "json"]
     argv += ["--resume", session_id] if resume else ["--session-id", session_id]
     argv += ["--permission-mode", permission_mode]
+    if model:
+        argv += ["--model", model]
     for directory in add_dirs:
         argv += ["--add-dir", str(directory)]
     return argv

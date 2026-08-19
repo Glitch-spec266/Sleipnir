@@ -113,6 +113,14 @@ class ConsoleState:
     #: Instructions the duty officer took while the brain slept. Text only —
     #: handed to the brain on its next turn, never executed here.
     queued_for_brain: list[str] = field(default_factory=list)
+    #: Alias passed to `claude --model`. A console message is usually small and
+    #: conversational; letting the account default answer it means the slowest,
+    #: most expensive model handles "how's it going?" and every turn pays a full
+    #: spawn for the privilege. The operator can raise it per session.
+    model: str | None = "sonnet"
+    #: Set while a credential is being typed: the buffer is not echoed and is
+    #: never added to the transcript.
+    secret_request: object | None = None
 
     def add(self, role: str, text: str) -> None:
         self.messages.append(Message(role=role, text=text))
@@ -169,10 +177,15 @@ def render(state: ConsoleState, *, width: int, height: int, colour: bool = True)
     body_height = max(6, height - 6)
     lines: list[str] = []
 
+    # The banner is all-or-nothing. Drawing the top row of a five-row wordmark
+    # renders as broken debris, which is what shipped: `art[:1]` looked like a
+    # tidy truncation and is not one.
     art = theme.logo_lines(width)
-    if height > 22:
-        for line in art[:1]:
-            lines.append(theme.paint(line, theme.NORMAL + 1, colour=colour))
+    if height >= len(art) + 12:
+        lines.extend(theme.paint(line, theme.NORMAL + 1, colour=colour) for line in art)
+        lines.append("")
+    elif height > 12:
+        lines.append(theme.paint(theme.COMPACT_LOGO[0], theme.NORMAL + 1, colour=colour))
         lines.append("")
 
     rendered: list[str] = []
@@ -191,7 +204,13 @@ def render(state: ConsoleState, *, width: int, height: int, colour: bool = True)
 
     lines.append(theme.paint("─" * inner, theme.DIM, colour=colour))
     caret = "…" if state.busy else "▌" if state.frame % 8 < 4 else " "
-    prompt = f"› {_clip(state.input_buffer)}{caret}"
+    if state.secret_request is not None:
+        # Masked. The buffer is never echoed, never wrapped into the transcript,
+        # and never leaves this process.
+        label = _clip(str(getattr(state.secret_request, "label", "credential")))
+        prompt = f"🔒 {label}: {'•' * len(state.input_buffer)}{caret}"
+    else:
+        prompt = f"› {_clip(state.input_buffer)}{caret}"
     lines.append(theme.paint(prompt[-inner:], theme.BRIGHT, colour=colour))
 
     where = "brain awake" if state.brain_awake else "brain asleep · routed"
@@ -231,12 +250,12 @@ def raw_terminal():
     saved = termios.tcgetattr(stream)
     try:
         tty.setcbreak(stream.fileno())
-        sys.stdout.write(theme.HIDE_CURSOR)
+        sys.stdout.write(theme.ENTER_FULLSCREEN + theme.HIDE_CURSOR)
         sys.stdout.flush()
         yield True
     finally:
         termios.tcsetattr(stream, termios.TCSADRAIN, saved)
-        sys.stdout.write(theme.SHOW_CURSOR + theme.RESET + "\n")
+        sys.stdout.write(theme.SHOW_CURSOR + theme.RESET + theme.EXIT_FULLSCREEN)
         sys.stdout.flush()
 
 
@@ -386,6 +405,7 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
                 state.session_id,
                 resume=not first_turn[0],
                 permission_mode=state.permission_mode,
+                model=state.model,
                 add_dirs=(state.run_dir,) if state.run_dir else (),
             )
             first_turn[0] = False
@@ -397,6 +417,52 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
     finally:
         state.busy = False
         state.status = "ready"
+
+
+def submit_secret(state: ConsoleState, typed: str) -> str:
+    """Fulfil a pending credential request from the console's own input.
+
+    The plaintext lives in a byte buffer for the duration of one injection and
+    is wiped. Nothing about it is added to the transcript — only the fact that
+    it happened.
+    """
+    from sleipnir.capabilities import handoff, secrets
+
+    request = state.secret_request
+    state.secret_request = None
+    if request is None:  # pragma: no cover - defensive
+        return "cancelled"
+    if not typed:
+        handoff.answer(request, "cancelled")
+        state.add("sleipnir", f"Credential request for {request.label!r} cancelled.")
+        return "cancelled"
+    secret = secrets.Secret(label=request.label, _buffer=bytearray(typed.encode("utf-8")))
+    try:
+        secrets.type_into_focused_window(secret, submit=request.submit)
+        handoff.answer(request, "supplied")
+        state.add("sleipnir", f"Credential for {request.label!r} typed into the focused window.")
+        return "supplied"
+    except Exception as error:  # noqa: BLE001 - never leak a value through a traceback
+        secret.wipe()
+        handoff.answer(request, "failed")
+        state.add("error", f"could not deliver the credential: {type(error).__name__}")
+        return "failed"
+
+
+def poll_secret_request(state: ConsoleState) -> None:
+    """Notice a tool subprocess asking for a credential."""
+    from sleipnir.capabilities import handoff
+
+    if state.secret_request is not None or state.busy:
+        return
+    request = handoff.pending()
+    if request is not None:
+        state.secret_request = request
+        state.add(
+            "sleipnir",
+            f"A credential is needed: {request.label}. Type it below — it is masked, "
+            "never stored, and never shown to the model that asked.",
+        )
 
 
 async def run_console(state: ConsoleState | None = None, *, splash: bool = True) -> int:
@@ -434,12 +500,24 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
                 width, height = shutil.get_terminal_size((90, 26))
                 _paint(render(state, width=width, height=height, colour=colour))
                 state.frame += 1
+                if state.frame % 8 == 0:
+                    poll_secret_request(state)
                 try:
                     char = await asyncio.wait_for(keys.get(), timeout=FRAME_INTERVAL_S)
                 except TimeoutError:
                     continue  # no key this frame; the border still flickers
                 if char == INTERRUPT:
                     return 0
+                if state.secret_request is not None:
+                    # While a credential is being typed the buffer is a secret,
+                    # not a message: it must not reach the transcript or a model.
+                    if char in ENTER:
+                        typed = state.input_buffer
+                        state.input_buffer = ""
+                        submit_secret(state, typed)
+                    else:
+                        apply_key(state, char)
+                    continue
                 submitted = apply_key(state, char)
                 if submitted and not state.busy:
                     state.add("you", submitted)
