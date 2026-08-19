@@ -27,6 +27,13 @@ RESET = "\x1b[0m"
 HIDE_CURSOR = "\x1b[?25l"
 SHOW_CURSOR = "\x1b[?25h"
 CLEAR = "\x1b[2J\x1b[H"
+#: Switch to the terminal's alternate screen, and back. Without this a
+#: full-screen redraw loop appends every frame to the user's scrollback: after a
+#: few minutes at 12fps the history holds hundreds of stacked copies of the UI,
+#: which on exit reads as though the program opened itself over and over. The
+#: alternate buffer also restores the shell exactly as it was.
+ENTER_FULLSCREEN = "\x1b[?1049h"
+EXIT_FULLSCREEN = "\x1b[?1049l"
 
 # Phosphor greens, dimmest to brightest.  The flicker walks this ramp rather
 # than fading to black, so a dip reads as a failing tube and not as a dropout.

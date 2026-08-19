@@ -1,6 +1,6 @@
 # Sleipnir — Overview
 
-_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 349 tests passing._
+_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 360 tests passing._
 
 ## What this is
 
@@ -88,6 +88,7 @@ different scarce resources and they do not convert into each other, which is why
 | `capabilities/browser.py` | Playwright Chromium with a persistent, logged-in profile. |
 | `capabilities/secrets.py` | One-shot credentials that cannot be printed and wipe on use. |
 | `capabilities/audit.py` | Append-only, fsynced record of every privileged action, redacted at the boundary. |
+| `capabilities/handoff.py` | Credential requests from TTY-less tool subprocesses, answered by the console. |
 | `gate.py` | The phase gate: folds a run into a constant-size verdict, and escalates failed modules one tier without waking the brain. |
 
 ## File structure & modularity
@@ -121,13 +122,14 @@ Sleipnir/
 │   │   ├── computer.py   # keyboard, mouse, screen, operator shell
 │   │   ├── browser.py    # Playwright Chromium, persistent logged-in profile
 │   │   ├── secrets.py    # one-shot credentials that wipe on use
-│   │   └── audit.py      # append-only record of every privileged action
+│   │   ├── audit.py      # append-only record of every privileged action
+│   │   └── handoff.py    # credential asks from processes with no terminal
 │   └── adapters/
 │       ├── base.py       # the one interface every provider must implement
 │       ├── claude.py     # `claude -p`      (verified against real output)
 │       ├── codex.py      # `codex exec`     (verified against CLI 0.148.0)
 │       └── openrouter.py # plain HTTP
-├── tests/                # 349 tests, including the manifest and verdict size bounds
+├── tests/                # 360 tests, including the manifest and verdict size bounds
 ├── DESIGN.md             # the reasoning, tradeoffs and open decisions
 ├── project.md            # living state — current phase, decisions, next steps
 └── overview.md           # this file
@@ -329,7 +331,7 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-Last verified run: **349 passed** on Python 3.14.6. `pip check`, `compileall`,
+Last verified run: **360 passed** on Python 3.14.6. `pip check`, `compileall`,
 `git diff --check`, and Bandit are also clean.
 
 Host control needs a third runtime dependency and one privileged install:
@@ -397,8 +399,10 @@ Under Wayland none of that can be done the X11 way, so input is injected into
 physical keyboard, which is why every call is written to
 `~/.sleipnir/capability-audit.jsonl`. `sleipnir browser` drives a real Chromium
 with a persistent profile, so logins survive between runs. `sleipnir secret
-prompt "<label>"` asks *you* for a credential inside Sleipnir and injects it
-straight into the focused window; the model that called it learns only that a
+prompt "<label>"` asks *you* for a credential inside the console — a tool
+subprocess has no terminal of its own, so it files a labelled request and waits
+while the console prompts you in its own frame — and injects it straight into
+the focused window; the model that called it learns only that a
 credential was supplied. Nothing is stored, logged, or returned.
 
 ## How to add code / extend it
