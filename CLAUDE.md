@@ -357,6 +357,9 @@ non-plan task id, while quota/notional accounting must include it.
   no-follow append, while clipboard destinations and browser profiles must be
   real directories. Validate before creation so rejecting a symlink does not
   mutate whatever it targets.
+- **Bare `/project` never uses the current source directory as a run.** Allocate
+  a fresh sibling under the console's `runs/` base and carry discovered config;
+  preserve an exact path only when `--run-root` was explicitly supplied.
 
 ## Checkpoint discipline
 

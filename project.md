@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–9 are complete with **412 tests passing**.
+Phases 1–9 are complete with **414 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -371,6 +371,14 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   audit append refuses file/directory symlinks, clipboard images refuse a
   redirected destination, and Chromium refuses a symlinked profile before
   Playwright launches. Rejected paths cause no external mutation.
+- 2026-08-19 — **A project gets a run directory, not the source directory.** A
+  bare console allocates a fresh timestamped workspace under `./runs` for each
+  `/project`; discovered config follows it. Only an explicit `--run-root` uses
+  an exact path, which is created before the child starts.
+- 2026-08-19 — **Code starts on Codex subscription, not a free model.** The
+  shipped policy already made this choice: bulk code prefers Codex, then
+  OpenRouter, then Claude. Free catalogue models remain eligible only after
+  policy reaches the metered backend.
 
 ## Open questions
 
@@ -380,8 +388,6 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   operator-supplied model data.
 - **`llm_judge` acceptance checks raise at executor construction**, deliberately.
   Revisit only if a plan needs them.
-- **Should `code`-tier work start on a free model?** Cheapest, and it falls back
-  when acceptance checks fail — but it leans hard on those checks.
 
 ## Next steps
 

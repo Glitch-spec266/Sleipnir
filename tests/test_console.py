@@ -317,7 +317,7 @@ def test_project_command_bypasses_chat_and_starts_the_workflow(monkeypatch):
     assert goals == ["build a widget"]
 
 
-def test_project_workflow_runs_the_real_plan_then_orchestrate_stages(monkeypatch):
+def test_project_workflow_runs_the_real_plan_then_orchestrate_stages(monkeypatch, tmp_path):
     stages = []
 
     async def fake_stage(state, *command):
@@ -325,11 +325,39 @@ def test_project_workflow_runs_the_real_plan_then_orchestrate_stages(monkeypatch
         return "ok"
 
     monkeypatch.setattr(console, "_run_project_stage", fake_stage)
-    state = console.ConsoleState()
+    state = console.ConsoleState(project_base=tmp_path)
     asyncio.run(console._run_project(state, "build a widget"))
 
     assert stages == [("plan", "build a widget"), ("orchestrate",)]
     assert state.messages[-1].text.startswith("Project workflow finished.")
+    assert state.run_dir is not None
+    assert state.run_dir.parent == tmp_path / "runs"
+    assert "build-a-widget" in state.run_dir.name
+
+
+def test_each_bare_console_project_gets_a_fresh_sibling_workspace(monkeypatch, tmp_path):
+    async def fake_stage(state, *command):
+        return "ok"
+
+    monkeypatch.setattr(console, "_run_project_stage", fake_stage)
+    state = console.ConsoleState(project_base=tmp_path)
+    asyncio.run(console._run_project(state, "first project"))
+    first = state.run_dir
+    asyncio.run(console._run_project(state, "second project"))
+    second = state.run_dir
+    assert first is not None and second is not None and first != second
+    assert first.parent == second.parent == tmp_path / "runs"
+
+
+def test_explicit_console_run_root_is_used_exactly(tmp_path):
+    run_root = tmp_path / "not-created-yet"
+    state = console.ConsoleState(
+        run_dir=run_root,
+        project_base=tmp_path.parent,
+        run_root_explicit=True,
+    )
+    assert console._allocate_project_run(state, "do not nest me") == run_root
+    assert run_root.is_dir()
 
 
 def test_project_child_inherits_console_workspace_and_config(tmp_path):
