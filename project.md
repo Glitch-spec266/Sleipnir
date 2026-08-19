@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–9 are complete with **399 tests passing**.
+Phases 1–9 are complete with **403 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -355,6 +355,10 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   the provider group `SIGTERM`, waits one second, then sends `SIGKILL` itself.
   Cleanup therefore still finishes when the executor is gone and a descendant
   ignores termination.
+- 2026-08-19 — **The console does not get a weaker process boundary.** Ordinary
+  Claude turns and `/project` stages now use the same streaming ProcessRunner
+  as workers: private disk-backed output, bounded response loading, process
+  groups, cancellation cleanup and Linux parent-death escalation.
 
 ## Open questions
 

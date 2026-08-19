@@ -22,10 +22,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from sleipnir.schema import Tier
+from sleipnir.process import ProcessRunner
+
+MAX_CHAT_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
 class ChatError(RuntimeError):
@@ -86,6 +90,7 @@ async def ask_claude(
     *,
     resume: bool,
     timeout_s: float = 900.0,
+    runner: ProcessRunner | None = None,
     **argv_kwargs: object,
 ) -> Reply:
     """Send one turn to Claude Code and wait for the whole reply.
@@ -94,24 +99,32 @@ async def ask_claude(
     ``/proc``, and a pasted file would blow past ``ARG_MAX``.
     """
     argv = claude_argv(session_id, resume=resume, **argv_kwargs)  # type: ignore[arg-type]
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(prompt.encode("utf-8")), timeout=timeout_s
+    process_runner = runner or ProcessRunner()
+    with tempfile.TemporaryDirectory(prefix="sleipnir-chat-") as temporary:
+        directory = Path(temporary)
+        stdout_path = directory / "stdout.json"
+        stderr_path = directory / "stderr.log"
+        result = await process_runner.run(
+            argv,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            stdin_data=prompt,
+            timeout_s=timeout_s,
         )
-    except TimeoutError as error:
-        process.kill()
-        await process.wait()
-        raise ChatError(f"claude did not reply within {timeout_s:.0f}s") from error
-
-    if process.returncode != 0:
-        detail = stderr.decode("utf-8", "replace").strip()[:400]
-        raise ChatError(f"claude exited {process.returncode}: {detail}")
+        if result.timed_out:
+            raise ChatError(f"claude did not reply within {timeout_s:.0f}s")
+        if result.exit_code != 0:
+            detail = result.stderr_tail.strip()[:400]
+            raise ChatError(f"claude exited {result.exit_code}: {detail}")
+        try:
+            size = stdout_path.stat().st_size
+        except OSError as error:
+            raise ChatError("claude produced no response envelope") from error
+        if size > MAX_CHAT_RESPONSE_BYTES:
+            raise ChatError(
+                f"claude response exceeded {MAX_CHAT_RESPONSE_BYTES // (1024 * 1024)} MiB"
+            )
+        stdout = stdout_path.read_bytes()
 
     try:
         payload = json.loads(stdout.decode("utf-8", "replace"))

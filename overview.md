@@ -1,6 +1,6 @@
 # Sleipnir — Overview
 
-_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 399 tests passing._
+_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 403 tests passing._
 
 ## What this is
 
@@ -131,7 +131,7 @@ Sleipnir/
 │       ├── claude.py     # `claude -p`      (verified against real output)
 │       ├── codex.py      # `codex exec`     (verified against CLI 0.148.0)
 │       └── openrouter.py # plain HTTP
-├── tests/                # 399 tests, including the manifest and verdict size bounds
+├── tests/                # 403 tests, including the manifest and verdict size bounds
 ├── DESIGN.md             # the reasoning, tradeoffs and open decisions
 ├── project.md            # living state — current phase, decisions, next steps
 └── overview.md           # this file
@@ -333,7 +333,7 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-Last verified run: **399 passed** on Python 3.14.6. `pip check`, `compileall`,
+Last verified run: **403 passed** on Python 3.14.6. `pip check`, `compileall`,
 and `git diff --check` are also clean.
 
 Host control needs a third runtime dependency and one privileged install:
@@ -475,35 +475,25 @@ credential was supplied. Nothing is stored, logged, or returned.
   retargeted a seeded terminal failure without changing task meaning; the
   persisted revision then delegated the accepted retry to Codex. Completed
   valid and invalid brain calls now land on the append-only accounting stream.
-- **Window-token accounting is roughly 10× too pessimistic.** Cache reads are
-  ~94% of measured window usage and are currently counted as equal to input
-  tokens, though they are priced far lower. Kept deliberately pessimistic until
-  Phase 3 measures what the window really counts.
+- **Local window-token accounting remains deliberately pessimistic.** Cache
+  reads are counted 1:1 by default, but the authenticated utilization percentage
+  self-calibrates the implied limit whenever the provider meter is available.
 - **`llm_judge` acceptance checks are unimplemented** and raise on purpose.
 - **Server-tool accounting is provider-aware.** Search/fetch request counts are
   durable usage fields. Frozen catalogue search rates feed fallback estimates;
   provider totals win when present, avoiding double charges. Anthropic web
   fetch currently has no separate request fee, though fetched tokens still bill.
-- **The router assumes every task produces about 8,000 tokens of output.** Output
+- **The router assumes every task produces about 2,000 tokens of output.** Output
   is priced several times higher than input, so this flat guess moves the
   rankings. A real per-task estimate should come from the planner in Phase 4.
 - **`code`-tier work starts on a free model.** Cheapest possible first attempt,
   but it leans hard on the acceptance checks to catch a weak result.
-- **One console leg is unverified.** Every capability works standalone
-  (live-verified: pointer injection, Spectacle capture, Chromium navigation and
-  screenshot, operator shell), and the console→`claude` link works
-  (live-verified: two-turn session continuity). What has not been tested is the
-  *join* — Claude actually calling `sleipnir computer ...` from inside a
-  session. Nesting a `bypassPermissions` spawn is blocked inside Claude Code,
-  so it needs one message typed into a real `sleipnir` console.
-- **The console's asleep path is built but not wired.** The OpenRouter duty
-  officer, its manifest-only prompt and its `QUEUE:` parsing are implemented and
-  tested, but nothing flips `ConsoleState.brain_awake` from the orchestrator
-  yet, so the path is reachable only by setting the flag by hand.
-- **The phase gate is not yet live-verified.** `orchestrate` fans workers out and wakes
-  the brain at an impasse. It does not yet merge modules at a phase gate,
-  re-spawn only the failed module loops at a stronger tier, and advance to the
-  next phase.
+- **Two host-capability joins remain unverified.** Console→Claude→screenshot is
+  live-proven. Browser and credential handoff work standalone but have not yet
+  been invoked by Claude from inside the real console.
+- **The phase gate still needs its final live run.** Constant-size group verdicts,
+  failed-module-only escalation, finite retry grants and derived brain sleep are
+  implemented and hermetically covered; provider quota blocked the live pass.
 - **Playwright is optional and unpinned to a browser build.** `sleipnir setup`
   fetches Chromium; a machine that skips setup gets a clear
   `CapabilityError`, not a crash.
