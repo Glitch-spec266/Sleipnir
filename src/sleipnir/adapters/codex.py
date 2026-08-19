@@ -51,6 +51,12 @@ _REASONING_KEYS = (
     "reasoningTokens",
 )
 
+#: Configuration sentinel for subscription-backed Codex CLI runs that should
+#: use the operator's installed CLI/account default.  It is deliberately not a
+#: model alias: aliases age out, while the authenticated CLI can negotiate a
+#: supported default without Sleipnir needing to know account entitlements.
+CODEX_CLI_DEFAULT_MODEL = "@cli-default"
+
 
 @dataclass(slots=True)
 class CodexInvocation:
@@ -60,11 +66,18 @@ class CodexInvocation:
     subcommand: tuple[str, ...] = ("exec",)
     model_flag: str = "--model"
     json_flag: str | None = "--json"
-    extra_args: list[str] = field(default_factory=list)
+    extra_args: list[str] = field(
+        default_factory=lambda: [
+            "--approve-for-me",
+            "--skip-git-repo-check",
+        ]
+    )
     prompt_via: Literal["stdin", "argv"] = "stdin"
 
     def argv(self, model: str, prompt: str) -> list[str]:
-        argv = [self.executable, *self.subcommand, self.model_flag, model]
+        argv = [self.executable, *self.subcommand]
+        if model != CODEX_CLI_DEFAULT_MODEL:
+            argv.extend((self.model_flag, model))
         if self.json_flag:
             argv.append(self.json_flag)
         argv.extend(self.extra_args)
@@ -101,7 +114,7 @@ class CodexAdapter(BaseAdapter):
                 stdout_path=workspace.stdout_path,
                 stderr_path=workspace.stderr_path,
                 cwd=workspace.dir,
-                env=request.env or None,
+                env=self._subprocess_env(request.env),
                 stdin_data=stdin_data,
                 timeout_s=request.timeout_s,
                 grace_s=request.grace_s,
@@ -250,4 +263,4 @@ def _first_int(node: dict[str, Any], keys: tuple[str, ...]) -> int:
     return 0
 
 
-__all__ = ["CodexAdapter", "CodexInvocation"]
+__all__ = ["CODEX_CLI_DEFAULT_MODEL", "CodexAdapter", "CodexInvocation"]

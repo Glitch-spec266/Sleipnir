@@ -24,7 +24,7 @@ from sleipnir.budget import (
 )
 from sleipnir.config import SleipnirConfig
 from sleipnir.router import TierRouter
-from sleipnir.schema import Plan, Tier, TokenUsage
+from sleipnir.schema import Adapter, Plan, Tier, TokenUsage
 
 NOW = datetime(2026, 8, 17, 23, 0, tzinfo=UTC)
 
@@ -219,6 +219,21 @@ def test_metered_projection_is_in_dollars_not_window_tokens(tmp_path: Path):
     tokens, usd = gov.estimate_task(make_task("a", tier=Tier.MECHANICAL), Tier.MECHANICAL)
     assert tokens == 0
     assert usd > 0.0
+
+
+def test_codex_subscription_projection_does_not_spend_claude_window(tmp_path: Path):
+    cfg = config()
+    backend = cfg.backends["sub"]
+    cfg.backends["sub"] = type(backend)(
+        name=backend.name,
+        adapter=Adapter.CODEX,
+        billing=backend.billing,
+        models=backend.models,
+        dispatch_overhead_tokens=backend.dispatch_overhead_tokens,
+    )
+    gov = governor(tmp_path, cfg=cfg)
+    tokens, usd = gov.estimate_task(make_task("a", tier=Tier.CODE), Tier.CODE)
+    assert tokens == 0 and usd == 0.0
 
 
 def test_no_limit_means_no_downshift(tmp_path: Path):

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import os
+import fcntl
 from pathlib import Path
+from types import TracebackType
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -22,6 +24,79 @@ _ADAPTER: TypeAdapter[AttemptStarted | AttemptFinished] = TypeAdapter(ResultReco
 class TornRecordError(RuntimeError):
     """Raised when a non-final line fails to parse — that is real corruption,
     not the torn trailing write a crash leaves behind."""
+
+
+class RunLockError(RuntimeError):
+    """Raised when another process already owns a run directory."""
+
+
+class RunLock:
+    """Kernel-backed exclusive ownership of a run directory.
+
+    The result log alone cannot prevent two executors from observing the same
+    READY task before either writes its start record.  ``flock`` closes that
+    race, is released automatically on process death, and therefore needs no
+    unsafe stale-lock cleanup protocol.
+    """
+
+    def __init__(self, run_root: Path) -> None:
+        self.path = run_root / "run.lock"
+        self._handle: object | None = None
+
+    def __enter__(self) -> "RunLock":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            handle.seek(0)
+            owner = handle.read().strip() or "unknown owner"
+            handle.close()
+            raise RunLockError(
+                f"run directory {self.path.parent} is already active ({owner})"
+            ) from exc
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"pid={os.getpid()}\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+        self._handle = handle
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        handle = self._handle
+        self._handle = None
+        if handle is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[union-attr]
+            handle.close()  # type: ignore[union-attr]
+
+
+def run_is_active(run_root: Path) -> bool:
+    """Whether another file description currently owns the run lock."""
+    path = run_root / "run.lock"
+    if not path.exists():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            finally:
+                # Unlock is harmless after a failed non-blocking acquisition.
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+    except OSError:
+        # An unreadable lock is safer to present as active than as resumable.
+        return True
+    return False
 
 
 class ResultLog:
@@ -42,6 +117,8 @@ class ResultLog:
         milliseconds against a multi-second model call.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.is_symlink():
+            raise TornRecordError(f"refusing to append through symlinked result log: {self.path}")
         line = record.model_dump_json() + "\n"
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(line)
@@ -58,6 +135,8 @@ class ResultLog:
         """
         if not self.path.exists():
             return []
+        if self.path.is_symlink():
+            raise TornRecordError(f"refusing to read through symlinked result log: {self.path}")
 
         # The executor folds the whole log on every readiness check, so an
         # uncached read makes a run O(n^2) in file I/O. Append-only means
@@ -101,4 +180,4 @@ class ResultLog:
         return {key: rec for key, rec in started.items() if key not in finished}
 
 
-__all__ = ["ResultLog", "TornRecordError"]
+__all__ = ["ResultLog", "RunLock", "RunLockError", "TornRecordError", "run_is_active"]

@@ -7,6 +7,7 @@ names and no prices; it ships the policy language you express them in.
 
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -107,18 +108,43 @@ class SleipnirConfig:
                 f"{source}: no [tiers.*] policy for: {', '.join(sorted(missing))}"
             )
 
+        try:
+            concurrency = int(raw.get("concurrency", 3))
+            catalog_ttl_s = float(raw.get("catalog_ttl_s", 6 * 60 * 60))
+            reserve_fraction = float(raw.get("reserve_fraction", 0.10))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ConfigError(f"{source}: concurrency, catalogue TTL and reserve must be numeric") from exc
+        if concurrency < 1:
+            raise ConfigError(f"{source}: concurrency must be at least 1")
+        if not math.isfinite(catalog_ttl_s) or catalog_ttl_s <= 0:
+            raise ConfigError(f"{source}: catalog_ttl_s must be finite and greater than zero")
+        if not math.isfinite(reserve_fraction) or not 0 <= reserve_fraction < 1:
+            raise ConfigError(f"{source}: reserve_fraction must be between 0 (inclusive) and 1")
+        window_limit = _opt_int(raw.get("window_tokens_limit"))
+        metered_budget = _opt_float(raw.get("metered_budget_usd"))
+        if raw.get("window_tokens_limit") is not None and window_limit is None:
+            raise ConfigError(f"{source}: window_tokens_limit must be numeric")
+        if raw.get("metered_budget_usd") is not None and metered_budget is None:
+            raise ConfigError(f"{source}: metered_budget_usd must be numeric")
+        if window_limit is not None and window_limit <= 0:
+            raise ConfigError(f"{source}: window_tokens_limit must be greater than zero")
+        if metered_budget is not None and (
+            not math.isfinite(metered_budget) or metered_budget < 0
+        ):
+            raise ConfigError(f"{source}: metered_budget_usd must be finite and non-negative")
+
         return cls(
             backends=backends,
             tiers=tiers,
-            concurrency=int(raw.get("concurrency", 3)),
-            catalog_ttl_s=float(raw.get("catalog_ttl_s", 6 * 60 * 60)),
+            concurrency=concurrency,
+            catalog_ttl_s=catalog_ttl_s,
             catalog_url=raw.get("catalog_url"),
             catalog_cache_path=(
                 Path(raw["catalog_cache_path"]) if raw.get("catalog_cache_path") else None
             ),
-            reserve_fraction=float(raw.get("reserve_fraction", 0.10)),
-            window_tokens_limit=_opt_int(raw.get("window_tokens_limit")),
-            metered_budget_usd=_opt_float(raw.get("metered_budget_usd")),
+            reserve_fraction=reserve_fraction,
+            window_tokens_limit=window_limit,
+            metered_budget_usd=metered_budget,
         )
 
     @staticmethod
@@ -158,12 +184,18 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
                 f"{source}: backend {name!r} has unknown billing {entry.get('billing')!r}"
             ) from exc
 
+        try:
+            overhead = int(entry.get("dispatch_overhead_tokens", 0))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ConfigError(f"{source}: backend {name!r} dispatch overhead must be numeric") from exc
+        if overhead < 0:
+            raise ConfigError(f"{source}: backend {name!r} dispatch overhead cannot be negative")
         backends[name] = Backend(
             name=name,
             adapter=adapter,
             billing=billing,
             models=_parse_models(entry.get("models"), name, source),
-            dispatch_overhead_tokens=int(entry.get("dispatch_overhead_tokens", 0)),
+            dispatch_overhead_tokens=overhead,
         )
     return backends
 
@@ -178,11 +210,23 @@ def _parse_models(raw: Any, backend: str, source: str) -> tuple[ModelOption, ...
         if isinstance(item, str):
             options.append(ModelOption(id=item))
         elif isinstance(item, dict) and isinstance(item.get("id"), str):
+            context = _opt_int(item.get("context"))
+            price = _opt_float(item.get("price_per_mtok"))
+            if item.get("context") is not None and (context is None or context <= 0):
+                raise ConfigError(
+                    f"{source}: backend {backend!r} model {item['id']!r} context must be positive"
+                )
+            if item.get("price_per_mtok") is not None and (
+                price is None or not math.isfinite(price) or price < 0
+            ):
+                raise ConfigError(
+                    f"{source}: backend {backend!r} model {item['id']!r} price must be finite and non-negative"
+                )
             options.append(
                 ModelOption(
                     id=item["id"],
-                    context=_opt_int(item.get("context")),
-                    price_per_mtok=_opt_float(item.get("price_per_mtok")),
+                    context=context,
+                    price_per_mtok=price,
                 )
             )
         else:
@@ -221,14 +265,28 @@ def _parse_tiers(
         if not prefer:
             raise ConfigError(f"{source}: [tiers.{key}] must name at least one backend")
 
+        try:
+            min_context = int(entry.get("min_context", 0))
+            output_ratio = float(entry.get("output_ratio", 0.25))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ConfigError(f"{source}: [tiers.{key}] numeric policy fields are invalid") from exc
+        max_price = _opt_float(entry.get("max_price_per_mtok"))
+        if min_context < 0:
+            raise ConfigError(f"{source}: [tiers.{key}] min_context cannot be negative")
+        if not math.isfinite(output_ratio) or not 0 <= output_ratio <= 1:
+            raise ConfigError(f"{source}: [tiers.{key}] output_ratio must be between 0 and 1")
+        if entry.get("max_price_per_mtok") is not None and (
+            max_price is None or not math.isfinite(max_price) or max_price < 0
+        ):
+            raise ConfigError(f"{source}: [tiers.{key}] max price must be finite and non-negative")
         tiers[tier] = TierPolicy(
             prefer=prefer,
-            min_context=int(entry.get("min_context", 0)),
-            max_price_per_mtok=_opt_float(entry.get("max_price_per_mtok")),
+            min_context=min_context,
+            max_price_per_mtok=max_price,
             require_parameters=tuple(entry.get("require_parameters", ()) or ()),
             allow=tuple(entry.get("allow", ()) or ()),
             deny=tuple(entry.get("deny", ()) or ()),
-            output_ratio=float(entry.get("output_ratio", 0.25)),
+            output_ratio=output_ratio,
         )
     return tiers
 

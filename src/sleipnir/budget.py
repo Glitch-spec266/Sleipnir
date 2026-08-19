@@ -33,6 +33,7 @@ from sleipnir.router import TierRouter, required_context_tokens
 from sleipnir.schema import (
     CHARS_PER_TOKEN,
     DOWNSHIFT_LADDER,
+    Adapter,
     BudgetSnapshot,
     Plan,
     Task,
@@ -570,6 +571,11 @@ class BudgetGovernor:
                 input_tokens * info.input_per_mtok + output_tokens * info.output_per_mtok
             ) / 1_000_000 + info.request_cost_usd
             return 0, usd
+        if backend is not None and backend.adapter is Adapter.CODEX:
+            # Codex has its own subscription quota. This governor controls the
+            # Claude five-hour window and metered dollars; charging Codex work
+            # to Claude would defeat the purpose of distributing usage.
+            return 0, 0.0
         return input_tokens + output_tokens, 0.0
 
     def _backend_for(self, model: str, decision) -> Any:

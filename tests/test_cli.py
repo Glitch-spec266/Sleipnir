@@ -15,7 +15,15 @@ from sleipnir import cli
 from sleipnir.adapters.base import DispatchOutcome, DispatchRequest
 from sleipnir.planner import PlanningError, assemble_plan, extract_plan_json
 from sleipnir.pricing import ModelCatalog
-from sleipnir.schema import Adapter, AttemptStatus, BillingMode
+from sleipnir.schema import (
+    Adapter,
+    AttemptFinished,
+    AttemptStatus,
+    BillingMode,
+    RetryPolicy,
+    Task,
+    TokenUsage,
+)
 
 GOOD_TASKS = {
     "tasks": [
@@ -114,6 +122,8 @@ def test_plan_refuses_to_clobber_an_existing_plan(workspace: Path, monkeypatch):
     invoke(workspace, "plan", "Build it")
     assert invoke(workspace, "plan", "Build it again") == 2
     assert invoke(workspace, "plan", "Build it again", "--force") == 0
+    attempts = workspace / "artifacts" / "task-sleipnir-plan"
+    assert sorted(path.name for path in attempts.iterdir()) == ["attempt-01", "attempt-02"]
 
 
 def test_plan_rejects_an_invalid_dag(workspace: Path, monkeypatch, capsys):
@@ -222,6 +232,177 @@ def test_status_before_any_run_shows_pending_work(workspace: Path, monkeypatch, 
     assert "ready" in out or "blocked" in out
 
 
+def test_tui_renders_a_safe_static_dashboard(workspace: Path, monkeypatch, capsys):
+    seed_plan(workspace, monkeypatch)
+    async def no_catalog(*args, **kwargs):
+        raise AssertionError("static TUI must not load the network catalogue")
+    monkeypatch.setattr(cli, "load_catalog", no_catalog)
+    capsys.readouterr()
+    assert invoke(workspace, "tui") == 0
+    out = capsys.readouterr().out
+    assert "SLEIPNIR" in out and "schema" in out and "api" in out
+
+
+def test_tui_can_own_and_execute_the_run(workspace: Path, monkeypatch, capsys):
+    seed_plan(workspace, monkeypatch)
+    worker = ScriptedAdapter()
+    monkeypatch.setattr(cli, "build_adapters", lambda config: {
+        Adapter.CLAUDE: worker, Adapter.OPENROUTER: worker
+    })
+    capsys.readouterr()
+    assert invoke(workspace, "tui", "--run", "--refresh", "0.001") == 0
+    assert [task_id for task_id, _ in worker.dispatched] == ["schema", "api"]
+    assert "SLEIPNIR" in capsys.readouterr().out
+
+
+def test_tui_can_own_sparse_orchestration_without_an_extra_brain_call(
+    workspace: Path, monkeypatch, capsys
+):
+    seed_plan(workspace, monkeypatch)
+    worker = ScriptedAdapter()
+    monkeypatch.setattr(cli, "build_adapters", lambda config: {
+        Adapter.CLAUDE: worker, Adapter.OPENROUTER: worker
+    })
+    capsys.readouterr()
+    assert invoke(workspace, "tui", "--orchestrate", "--refresh", "0.001") == 0
+    assert [task_id for task_id, _ in worker.dispatched] == ["schema", "api"]
+    out = capsys.readouterr().out
+    assert "SLEIPNIR" in out and "orchestration complete" in out
+
+
+def test_orchestrate_completes_without_spending_a_brain_call_when_workers_succeed(
+    workspace: Path, monkeypatch, capsys
+):
+    seed_plan(workspace, monkeypatch)
+    worker = ScriptedAdapter()
+    monkeypatch.setattr(cli, "build_adapters", lambda config: {
+        Adapter.CLAUDE: worker, Adapter.OPENROUTER: worker
+    })
+    capsys.readouterr()
+    assert invoke(workspace, "orchestrate") == 0
+    assert [task_id for task_id, _ in worker.dispatched] == ["schema", "api"]
+    assert "orchestration complete" in capsys.readouterr().out
+
+
+def test_orchestrate_applies_brain_revision_and_resumes_failed_work(
+    workspace: Path, monkeypatch, capsys
+):
+    seed_plan(workspace, monkeypatch)
+    plan = cli.load_plan(workspace)
+    replacement = plan.by_id["schema"].model_copy(
+        update={"retry": RetryPolicy(max_attempts=3)}
+    )
+
+    class BrainAndWorkers(ScriptedAdapter):
+        name = Adapter.CLAUDE
+
+        def __init__(self):
+            super().__init__(fail_first=2)
+            self.control_calls = 0
+
+        async def dispatch(self, request):
+            if request.task.id == "sleipnir-control":
+                self.control_calls += 1
+                request.workspace.prepare()
+                request.workspace.write_text("decision.json", json.dumps({
+                    "action": "revise",
+                    "reason": "Allow one additional routed attempt for the failed schema task.",
+                    "changes": [{
+                        "op": "retarget_task",
+                        "task_id": "schema",
+                        "detail": "Increase retry allowance without changing task meaning.",
+                        "task": replacement.model_dump(mode="json"),
+                        "dependency_id": None,
+                    }],
+                }))
+                return DispatchOutcome(
+                    status=AttemptStatus.SUCCEEDED,
+                    billing_mode=BillingMode.SUBSCRIPTION,
+                    usage=TokenUsage(input_tokens=80, output_tokens=20),
+                    reported_cost_usd=0.25,
+                )
+            return await super().dispatch(request)
+
+    harness = BrainAndWorkers()
+    monkeypatch.setattr(cli, "build_adapters", lambda config: {
+        Adapter.CLAUDE: harness, Adapter.OPENROUTER: harness
+    })
+    capsys.readouterr()
+    assert invoke(workspace, "orchestrate") == 0
+    assert harness.control_calls == 1
+    assert [item for item in harness.dispatched if item[0] == "schema"] == [
+        ("schema", 1), ("schema", 2), ("schema", 3)
+    ]
+    assert cli.load_plan(workspace).revision == 1
+    assert (workspace / "revisions.jsonl").exists()
+    control_records = [
+        record
+        for record in cli.result_log(workspace).read()
+        if isinstance(record, AttemptFinished)
+        and record.task_id == "sleipnir-control"
+    ]
+    assert len(control_records) == 1
+    assert control_records[0].cost.window_tokens == 100
+    assert control_records[0].cost.quota_pool == "claude"
+    assert control_records[0].artifacts[0].name == "decision"
+
+
+def test_apply_revision_requires_explicit_operator_command_for_semantic_change(
+    workspace: Path, monkeypatch, capsys
+):
+    seed_plan(workspace, monkeypatch)
+    plan = cli.load_plan(workspace)
+    replacement = plan.by_id["schema"].model_copy(
+        update={"description": "Implement a materially corrected schema contract."}
+    )
+    proposal = workspace / "reviewed.json"
+    proposal.write_text(json.dumps({
+        "action": "revise",
+        "reason": "The operator reviewed and approved this corrected schema contract.",
+        "changes": [{
+            "op": "respec_task",
+            "task_id": "schema",
+            "detail": "Correct the semantic contract.",
+            "task": replacement.model_dump(mode="json"),
+            "dependency_id": None,
+        }],
+    }))
+    capsys.readouterr()
+    assert invoke(workspace, "apply-revision", str(proposal)) == 0
+    revised = cli.load_plan(workspace)
+    assert revised.revision == 1
+    assert revised.by_id["schema"].description == replacement.description
+
+
+def test_apply_revision_clears_pending_proposal_badge_source(
+    workspace: Path, monkeypatch, capsys
+):
+    seed_plan(workspace, monkeypatch)
+    plan = cli.load_plan(workspace)
+    replacement = plan.by_id["schema"].model_copy(
+        update={"retry": plan.by_id["schema"].retry.model_copy(update={"max_attempts": 4})}
+    )
+    proposals = workspace / "proposals"
+    proposals.mkdir()
+    proposal = proposals / "revision-1-reviewed.json"
+    proposal.write_text(json.dumps({
+        "action": "revise",
+        "reason": "Operator reviewed the routing-only retry change.",
+        "changes": [{
+            "op": "retarget_task",
+            "task_id": "schema",
+            "detail": "Permit one more provider retry.",
+            "task": replacement.model_dump(mode="json"),
+            "dependency_id": None,
+        }],
+    }))
+    capsys.readouterr()
+    assert invoke(workspace, "apply-revision", str(proposal)) == 0
+    assert not proposal.exists()
+    assert proposal.with_suffix(".json.applied").exists()
+    assert list(proposals.glob("*.json")) == []
+
+
 def test_explain_shows_contract_and_attempts(workspace: Path, monkeypatch, capsys):
     seed_plan(workspace, monkeypatch)
     worker = ScriptedAdapter()
@@ -251,6 +432,12 @@ def test_missing_config_is_a_clean_error(tmp_path: Path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert cli.main(["--run-root", str(tmp_path), "status"]) == 2
     assert "no sleipnir.toml found" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("args", [("run", "--concurrency", "0"), ("tui", "--refresh", "nan")])
+def test_cli_rejects_values_that_would_stall_or_spin(workspace: Path, args):
+    with pytest.raises(SystemExit):
+        invoke(workspace, *args)
 
 
 def test_missing_plan_is_a_clean_error(workspace: Path, capsys):
