@@ -345,6 +345,10 @@ non-plan task id, while quota/notional accounting must include it.
   `/project` stages to raw `create_subprocess_exec`: cancellation, timeouts and
   executor death must terminate the whole provider group, and response capture
   belongs in bounded private files rather than unbounded `communicate()` memory.
+- **Never signal a PID merely because a file names it.** Detached browser state
+  can be stale or tampered with. Verify the live `/proc` argv, expected profile,
+  debug port and session leadership before killing the process group; publish
+  replacement PID state atomically without following symlinks.
 
 ## Checkpoint discipline
 
