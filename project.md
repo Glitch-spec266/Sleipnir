@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–9 are complete with **417 tests passing**.
+Phases 1–9 are complete with **419 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -406,6 +406,10 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   submitted a disposable password field, and the page exposed only
   `SUBMITTED_LENGTH_25` before clearing it. The requester learned only
   `credential supplied`; the dummy value appears in no Sleipnir state or log.
+- 2026-08-19 — **Invalid browser commands are side-effect free.** Argument
+  arity is checked before Playwright attaches, and `browser close` signals the
+  verified detached process directly. Closing an absent browser no longer
+  launches Chromium merely to shut it down.
 
 ## Open questions
 
