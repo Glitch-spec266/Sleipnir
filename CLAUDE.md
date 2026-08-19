@@ -308,11 +308,23 @@ non-plan task id, while quota/notional accounting must include it.
 - **A credential answer carries a status, never a value.** `await_answer`
   returns `supplied`/`cancelled`/`failed`. A caller that could read the
   plaintext is a caller that could log it.
-- **Pin a model for interactive turns.** With no `--model` the account default
-  answers every trivial message at full spawn cost. The console defaults to
-  `sonnet`; the alias is operator data, never a model id chosen in source.
-- **Draw the whole wordmark or none of it.** `logo_lines` is all-or-nothing;
-  slicing rows of ASCII art renders as debris.
+- **Capability checks must be physically tool-free.** The console invokes the
+  Haiku assessment with `--tools ""`; prompt instructions alone do not force a
+  model to admit uncertainty before acting. Only the exact one-turn affirmative
+  verdict opens Haiku's action lane. Everything malformed fails closed to
+  Sonnet, and a post-action failure is never replayed automatically.
+- **`/project` is the complex-work boundary.** Ordinary messages use guarded
+  chat. `/project <goal>` runs the real `plan` then `orchestrate` pipeline; do
+  not replace it with a second planner or a prose complexity heuristic. Its
+  child process group must die when the console task is cancelled.
+- **Clipboard payloads are MIME, not strings.** Agent copy/paste injects the
+  requested Ctrl+Shift+C/V chords and lets the focused application preserve
+  text or image ownership. Console text uses bracketed paste; image data is
+  read with `wl-paste` into a private attachment because a PTY cannot carry
+  pixels. Audit metadata only—never clipboard text or bytes.
+- **Draw the whole emblem or none of it.** `logo_lines` is all-or-nothing;
+  slicing rows of terminal art renders as debris. The mark stays letter-free
+  and keeps four leg pairs; the border title is where the name belongs.
 
 ## Checkpoint discipline
 

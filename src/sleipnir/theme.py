@@ -34,6 +34,11 @@ CLEAR = "\x1b[2J\x1b[H"
 #: alternate buffer also restores the shell exactly as it was.
 ENTER_FULLSCREEN = "\x1b[?1049h"
 EXIT_FULLSCREEN = "\x1b[?1049l"
+#: Ask the terminal to wrap pasted text in CSI 200/201 markers. Without this,
+#: multiline paste is indistinguishable from pressing Enter and can submit a
+#: partial prompt; with it, the console receives one atomic paste event.
+ENABLE_BRACKETED_PASTE = "\x1b[?2004h"
+DISABLE_BRACKETED_PASTE = "\x1b[?2004l"
 
 # Phosphor greens, dimmest to brightest.  The flicker walks this ramp rather
 # than fading to black, so a dip reads as a failing tube and not as a dropout.
@@ -131,20 +136,23 @@ def flicker_level(frame: int, *, seed: int = 0, base: int = NORMAL) -> int:
 # Logo
 # ---------------------------------------------------------------------------
 
-# Sleipnir: Odin's eight-legged horse.  The eight legs under the wordmark are
-# the whole point of the name, so they are the one thing that must survive at a
-# narrow terminal width.
+# Sleipnir: Odin's eight-legged horse. This is an emblem rather than a rendered
+# product name: the frame already carries the name, while the mark itself should
+# remain recognisable without letters. Four pairs below the body make all eight
+# legs explicit, including in the compact form.
 LOGO = (
-    r" ___  _    ___ ___ ___ _  _ ___ ___ ",
-    r"/ __|| |  | __|_ _| _ \ \| |_ _| _ \ ",
-    r"\__ \| |__| _| | ||  _/ .` || ||   / ",
-    r"|___/|____|___|___|_| |_|\_|___|_|_\ ",
-    r"   ⌁ ⌁ ⌁ ⌁ ⌁ ⌁ ⌁ ⌁   eight legs, one rider",
+    "                 ╭╮",
+    "        ╭────────╯╰──╮",
+    "   ╭────╯             ╰╮",
+    "≋≋╯    ╭────────╮   ◉  ╰╮",
+    " ╰─────╯        ╰───────╯",
+    "    ││   ││   ││   ││",
+    "    ╱╲   ╱╲   ╱╲   ╱╲",
 )
 
 LOGO_WIDTH = max(len(line) for line in LOGO)
 
-COMPACT_LOGO = ("SLEIPNIR", "⌁⌁⌁⌁⌁⌁⌁⌁")
+COMPACT_LOGO = ("♞  ││ ││ ││ ││", "   ╱╲ ╱╲ ╱╲ ╱╲")
 
 
 def logo_lines(width: int) -> tuple[str, ...]:
@@ -240,7 +248,7 @@ def splash_frame(index: int, *, width: int, height: int, colour: bool = True) ->
     """One frame of the boot animation.
 
     Three overlapping tracks, the way a GSAP timeline would stagger them:
-    the logo eases in on ``back.out`` (overshoot, then settle), the eight legs
+    the emblem eases in on ``back.out`` (overshoot, then settle), the eight legs
     strike one at a time on ``power2.out``, and the tagline fades last.
     """
     progress = index / max(1, SPLASH_FRAMES - 1)
@@ -257,7 +265,7 @@ def splash_frame(index: int, *, width: int, height: int, colour: bool = True) ->
     visible_columns = int(reveal * (art_width + 2))
 
     for row, line in enumerate(art):
-        # Rows light up staggered, so the wordmark assembles rather than wipes.
+        # Rows light up staggered, so the emblem assembles rather than wipes.
         # The pad is computed from the *full* width so the logo does not slide
         # sideways as it reveals — it emerges in place.
         row_progress = min(1.0, max(0.0, progress * 1.4 - row * 0.06))
@@ -292,7 +300,9 @@ def splash_frame(index: int, *, width: int, height: int, colour: bool = True) ->
 __all__ = [
     "BRIGHT",
     "CLEAR",
+    "DISABLE_BRACKETED_PASTE",
     "DIM",
+    "ENABLE_BRACKETED_PASTE",
     "HIDE_CURSOR",
     "LOGO",
     "NORMAL",

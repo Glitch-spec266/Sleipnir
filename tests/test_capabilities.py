@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from sleipnir.capabilities import audit, browser, computer, secrets
+from sleipnir.capabilities import audit, browser, clipboard, computer, secrets
 
 
 @pytest.fixture
@@ -76,6 +76,18 @@ def test_chord_releases_modifiers_in_reverse_order(audit_log, fake_ydotool):
     assert argv[2:] == ["29:1", "42:1", "20:1", "20:0", "42:0", "29:0"]
 
 
+def test_copy_and_paste_use_linux_terminal_chords_without_touching_payload(
+    audit_log, fake_ydotool
+):
+    computer.copy()
+    computer.paste()
+    assert fake_ydotool[0][2:] == ["29:1", "42:1", "46:1", "46:0", "42:0", "29:0"]
+    assert fake_ydotool[1][2:] == ["29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]
+    body = audit_log.read_text()
+    assert "desktop.clipboard_copy" in body
+    assert "desktop.clipboard_paste" in body
+
+
 def test_unknown_key_is_refused_rather_than_silently_dropped(audit_log, fake_ydotool):
     with pytest.raises(computer.CapabilityError, match="unknown key"):
         computer.key("ctrl", "hyperspace")
@@ -99,6 +111,42 @@ def test_probe_reports_notes_instead_of_raising(monkeypatch):
     result = computer.probe()
     assert result.ready is False
     assert any("ydotool" in note for note in result.notes)
+
+
+# --- clipboard -----------------------------------------------------------
+
+
+def test_wayland_clipboard_reads_text_without_logging_it(audit_log, monkeypatch):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        stdout = b"text/plain;charset=utf-8\n" if "--list-types" in argv else b"private text"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": b""})()
+
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: "/usr/bin/wl-paste")
+    monkeypatch.setattr(clipboard.subprocess, "run", fake_run)
+    payload = clipboard.read()
+
+    assert payload.kind == "text"
+    assert payload.text == "private text"
+    assert "--no-newline" in calls[1]
+    assert "private text" not in audit_log.read_text()
+
+
+def test_wayland_clipboard_materialises_an_image_privately(audit_log, tmp_path, monkeypatch):
+    def fake_run(argv, **kwargs):
+        stdout = b"image/png\ntext/plain\n" if "--list-types" in argv else b"\x89PNGpixels"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": b""})()
+
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: "/usr/bin/wl-paste")
+    monkeypatch.setattr(clipboard.subprocess, "run", fake_run)
+    payload = clipboard.read(destination_dir=tmp_path)
+
+    assert payload.kind == "image"
+    assert payload.mime_type == "image/png"
+    assert payload.path is not None and payload.path.read_bytes() == b"\x89PNGpixels"
+    assert payload.path.stat().st_mode & 0o777 == 0o600
 
 
 def test_grim_is_not_selected_on_kde(monkeypatch):

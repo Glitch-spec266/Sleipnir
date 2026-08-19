@@ -7,11 +7,13 @@ and untrusted reply text must not be able to move the cursor.
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import pytest
 
 from sleipnir import chat, console
+from sleipnir.capabilities import clipboard
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -77,6 +79,66 @@ def test_non_printable_keys_are_ignored_rather_than_inserted():
     assert state.input_buffer == ""
 
 
+def test_bracketed_multiline_paste_is_one_atomic_event_even_when_split():
+    decoder = console.TerminalInputDecoder()
+    assert decoder.feed(b"\x1b[20") == []
+    assert decoder.feed(b"0~first\nsecond\x1b[20") == []
+    events = decoder.feed(b"1~")
+    assert events == [console.PastedText("first\nsecond")]
+
+
+def test_terminal_escape_keys_are_discarded_not_inserted_as_text():
+    decoder = console.TerminalInputDecoder()
+    assert decoder.feed(b"\x1b[") == []
+    assert decoder.feed(b"A") == []  # up arrow
+    assert decoder.feed("é".encode()) == ["é"]
+
+
+def test_clipboard_text_is_inserted_without_submitting(monkeypatch):
+    monkeypatch.setattr(
+        clipboard,
+        "read",
+        lambda: clipboard.ClipboardPayload(
+            kind="text", mime_type="text/plain", text="line one\nline two"
+        ),
+    )
+    state = console.ConsoleState()
+    assert console.paste_system_clipboard(state) == "text"
+    assert state.input_buffer == "line one\nline two"
+    assert state.messages == []
+
+
+def test_clipboard_image_becomes_an_allowed_attachment(tmp_path, monkeypatch):
+    image = tmp_path / "clipboard.png"
+    image.write_bytes(b"pixels")
+    monkeypatch.setattr(
+        clipboard,
+        "read",
+        lambda: clipboard.ClipboardPayload(
+            kind="image", mime_type="image/png", path=image
+        ),
+    )
+    state = console.ConsoleState()
+    assert console.paste_system_clipboard(state) == "image"
+    assert str(image) in state.input_buffer
+    assert tmp_path in state.attachment_dirs
+
+
+def test_clipboard_image_is_refused_in_a_secret_field(tmp_path, monkeypatch):
+    image = tmp_path / "clipboard.png"
+    monkeypatch.setattr(
+        clipboard,
+        "read",
+        lambda: clipboard.ClipboardPayload(
+            kind="image", mime_type="image/png", path=image
+        ),
+    )
+    state = console.ConsoleState(secret_request=object())
+    assert console.paste_system_clipboard(state, allow_images=False) == "failed"
+    assert state.input_buffer == ""
+    assert state.messages[-1].role == "error"
+
+
 # --- routing -------------------------------------------------------------
 
 
@@ -100,6 +162,150 @@ def test_claude_argv_opens_a_session_then_resumes_it():
 def test_no_model_is_pinned_in_the_console_invocation():
     # Same rule as the router: model choice is data, never source.
     assert "--model" not in chat.claude_argv("s", resume=False)
+
+
+def test_console_model_alias_is_passed_to_the_cli():
+    argv = chat.claude_argv("s", resume=False, model="operator-fast")
+    assert argv[argv.index("--model") + 1] == "operator-fast"
+
+
+def test_capability_check_can_be_physically_denied_all_tools():
+    argv = chat.claude_argv("s", resume=False, model="fast", tools=())
+    assert argv[argv.index("--tools") + 1] == ""
+
+
+def test_only_an_exact_one_turn_capability_verdict_opens_the_fast_lane():
+    assert chat.fast_lane_capable(
+        chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1)
+    )
+    assert not chat.fast_lane_capable(
+        chat.Reply(text=f"Sure. {chat.CAPABLE}", speaker="claude", turns=1)
+    )
+    assert not chat.fast_lane_capable(
+        chat.Reply(text=chat.CAPABLE, speaker="claude", turns=2)
+    )
+    assert not chat.fast_lane_capable(
+        chat.Reply(text=chat.CAPABLE, speaker="claude", turns=None)
+    )
+
+
+def test_capable_request_is_checked_without_tools_then_run_on_fast_model(monkeypatch):
+    calls = []
+    replies = iter(
+        [
+            chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1),
+            chat.Reply(text="done", speaker="claude", turns=2),
+        ]
+    )
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((prompt, kwargs))
+        return next(replies)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(model="strong", fast_model="fast")
+    first_turn = [True]
+    asyncio.run(console._handle(state, "take a screenshot", first_turn=first_turn))
+
+    assert [kwargs["model"] for _, kwargs in calls] == ["fast", "fast"]
+    assert calls[0][1]["tools"] == ()
+    assert "tools" not in calls[1][1]
+    assert state.messages[-1].text == "done"
+    assert first_turn == [False]
+
+
+@pytest.mark.parametrize("verdict", [f"{chat.DECLINE_PREFIX} too risky", "maybe"])
+def test_decline_or_malformed_check_routes_to_strong_model(monkeypatch, verdict):
+    calls = []
+    replies = iter(
+        [
+            chat.Reply(text=verdict, speaker="claude", turns=1),
+            chat.Reply(text="handled safely", speaker="claude", turns=2),
+        ]
+    )
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append(kwargs)
+        return next(replies)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(model="strong", fast_model="fast")
+    asyncio.run(console._handle(state, "do the thing", first_turn=[True]))
+
+    assert [call["model"] for call in calls] == ["fast", "strong"]
+    assert calls[0]["tools"] == ()
+    assert state.messages[-1].text == "handled safely"
+
+
+def test_failed_fast_action_is_not_replayed_on_strong_model(monkeypatch):
+    calls = []
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append(kwargs["model"])
+        if len(calls) == 1:
+            return chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1)
+        raise chat.ChatError("fast action failed after it may have changed the host")
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(model="strong", fast_model="fast")
+    asyncio.run(console._handle(state, "type hello", first_turn=[True]))
+
+    assert calls == ["fast", "fast"]
+    assert state.messages[-1].role == "error"
+    assert "fast action failed" in state.messages[-1].text
+
+
+def test_project_command_has_an_explicit_boundary():
+    assert console.project_goal("/project build a widget") == "build a widget"
+    assert console.project_goal("/project") == ""
+    assert console.project_goal("/projector build a widget") is None
+    assert console.project_goal("tell me about /project") is None
+
+
+def test_project_command_bypasses_chat_and_starts_the_workflow(monkeypatch):
+    goals = []
+
+    async def fake_project(state, goal):
+        goals.append(goal)
+
+    async def forbidden_chat(*args, **kwargs):
+        raise AssertionError("/project must not enter ordinary chat")
+
+    monkeypatch.setattr(console, "_run_project", fake_project)
+    monkeypatch.setattr(chat, "ask_claude", forbidden_chat)
+    state = console.ConsoleState()
+    asyncio.run(console._handle(state, "/project build a widget", first_turn=[True]))
+    assert goals == ["build a widget"]
+
+
+def test_project_workflow_runs_the_real_plan_then_orchestrate_stages(monkeypatch):
+    stages = []
+
+    async def fake_stage(state, *command):
+        stages.append(command)
+        return "ok"
+
+    monkeypatch.setattr(console, "_run_project_stage", fake_stage)
+    state = console.ConsoleState()
+    asyncio.run(console._run_project(state, "build a widget"))
+
+    assert stages == [("plan", "build a widget"), ("orchestrate",)]
+    assert state.messages[-1].text.startswith("Project workflow finished.")
+
+
+def test_project_child_inherits_console_workspace_and_config(tmp_path):
+    config = tmp_path / "sleipnir.toml"
+    state = console.ConsoleState(
+        run_dir=tmp_path,
+        config_path=config,
+        cache_read_weight=0.5,
+    )
+    argv = console._project_argv(state, "orchestrate")
+
+    assert argv[-1] == "orchestrate"
+    assert argv[argv.index("--run-root") + 1] == str(tmp_path)
+    assert argv[argv.index("--config") + 1] == str(config)
+    assert argv[argv.index("--cache-read-weight") + 1] == "0.5"
 
 
 def test_queue_instruction_is_parsed_from_a_duty_officer_reply():
