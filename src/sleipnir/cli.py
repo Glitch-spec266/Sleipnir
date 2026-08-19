@@ -25,7 +25,7 @@ from sleipnir.adapters.base import BaseAdapter
 from sleipnir.artifacts import AttemptWorkspace
 from sleipnir.budget import BudgetGovernor, render_decisions
 from sleipnir.config import ConfigError, SleipnirConfig
-from sleipnir.executor import Executor, ExecutorConfig
+from sleipnir.executor import ConcurrentExecutionError, Executor, ExecutorConfig
 from sleipnir.pricing import (
     DEFAULT_MODELS_URL,
     CatalogSnapshot,
@@ -225,6 +225,8 @@ async def cmd_run(args: argparse.Namespace) -> int:
         print("\ninterrupted; every in-flight attempt was recorded", file=sys.stderr)
         return 130
     except RoutingError as exc:
+        raise CliError(str(exc)) from exc
+    except ConcurrentExecutionError as exc:
         raise CliError(str(exc)) from exc
 
     print(report.render())

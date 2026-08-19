@@ -368,7 +368,7 @@ pricing into the adapter layer. So: adapters report, the executor decides.
 ```
 adapters/base.py       DispatchRequest / DispatchOutcome / DispatchPreview
 adapters/claude.py     `claude -p` headless      (verified against real output)
-adapters/codex.py      `codex exec`              (UNVERIFIED — see below)
+adapters/codex.py      `codex exec`              (verified against real output)
 adapters/openrouter.py plain HTTP via httpx      (MockTransport-tested)
 process.py             async subprocess: streaming, timeout, process-group kill
 context.py             InputContract -> the exact prompt a subagent receives
@@ -462,13 +462,13 @@ reads the number as economic truth.
 
 ## Other decisions worth overruling
 
-- **`codex` is not installed here, so its CLI surface is unverified.** Rather
-  than hardcode remembered flags, the whole invocation is a `CodexInvocation`
-  dataclass and the usage parser recurses looking for any recognisable usage
-  block instead of indexing a known path. When it finds none it says so
-  explicitly (`usage_found: False`) rather than reporting zeros, because a
-  zeroed usage record tells the governor the call was free. Verify the flags on
-  your machine before trusting a real run.
+- **`codex` was verified against CLI 0.148.0 on 2026-08-18.** `exec`,
+  `--model`, `--json`, and stdin prompt delivery match `CodexInvocation`. A
+  live JSONL smoke call also established that `cached_input_tokens` is a subset
+  of `input_tokens`; the adapter normalizes those into disjoint `TokenUsage`
+  channels so the governor does not double-count cache reads. The parser still
+  recurses rather than depending on an event envelope, and explicitly reports
+  missing usage rather than pretending an unmeasured call was free.
 - **OpenRouter models have no filesystem**, so they cannot write the files an
   `OutputContract` demands. The adapter appends a `file:<path>` fenced-block
   protocol to the prompt and materialises what comes back, confined to the
@@ -574,7 +574,7 @@ into a 2-task DAG, `--dry-run --explain` showed the routing without spending,
 - **The OpenRouter catalogue shape is unverified.** This environment's egress
   policy denies CONNECT to openrouter.ai, so the parser was written defensively
   rather than confirmed. Verify on a machine with network access.
-- **`codex` remains unverified** for the same reason as Phase 2 — not installed.
+- **`codex` is verified** against CLI 0.148.0, including its JSONL usage shape.
 - **`cache_read_weight` defaults to 1.0**, which over-estimates window
   consumption roughly tenfold. Still awaiting a decision on what the 5-hour
   window actually meters.
