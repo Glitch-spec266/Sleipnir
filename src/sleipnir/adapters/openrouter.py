@@ -372,6 +372,7 @@ class OpenRouterAdapter(BaseAdapter):
         usage = payload.get("usage") or {}
         prompt_details = usage.get("prompt_tokens_details") or {}
         completion_details = usage.get("completion_tokens_details") or {}
+        server_tools = usage.get("server_tool_use") or {}
         cached = int(prompt_details.get("cached_tokens") or 0)
         prompt_tokens = int(usage.get("prompt_tokens") or 0)
         output_tokens = int(usage.get("completion_tokens") or 0)
@@ -385,6 +386,8 @@ class OpenRouterAdapter(BaseAdapter):
             thinking_tokens=min(
                 int(completion_details.get("reasoning_tokens") or 0), output_tokens
             ),
+            web_search_requests=int(server_tools.get("web_search_requests") or 0),
+            web_fetch_requests=int(server_tools.get("web_fetch_requests") or 0),
         )
 
     # -- dry run ------------------------------------------------------------

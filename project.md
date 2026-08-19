@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–9 are complete with **380 tests passing**.
+Phases 1–9 are complete with **399 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -338,6 +338,23 @@ lookback. Both are preserved on the `parallel-build-local` branch.
 - 2026-08-19 — **The mark is a horse, not typography.** The border already says
   SLEIPNIR. The animated art is now the eight-legged emblem itself, including a
   compact form that keeps all four leg pairs at narrow widths.
+- 2026-08-19 — **Server tools are usage, not tokens.** Claude, OpenRouter and
+  transcript parsing retain web-search/fetch counts alongside token usage. A
+  route freezes the catalogue's per-search price for fallback estimates, while
+  a provider-reported total remains authoritative and is never charged twice.
+  Current Anthropic documentation prices search at $0.01 per successful request
+  and web fetch at no extra request fee; fetched content still costs tokens.
+- 2026-08-19 — **Configuration does not coerce policy.** Integer fields reject
+  booleans, fractions and non-finite values; list-valued policy fields reject
+  strings masquerading as lists; catalogue locations are typed before any run.
+- 2026-08-19 — **Harness writes distrust their own workspace after dispatch.**
+  Workspace roots and parents are checked before creation, harness files use
+  no-follow writes in an already-claimed directory, and an agent-created
+  `outcome.json` symlink cannot overwrite a host file.
+- 2026-08-19 — **Parent death includes hard escalation.** The Linux guard sends
+  the provider group `SIGTERM`, waits one second, then sends `SIGKILL` itself.
+  Cleanup therefore still finishes when the executor is gone and a descendant
+  ignores termination.
 
 ## Open questions
 
@@ -347,8 +364,6 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   operator-supplied model data.
 - **`llm_judge` acceptance checks raise at executor construction**, deliberately.
   Revisit only if a plan needs them.
-- **`server_tool_use` is captured but not yet priced.** Web search and fetch
-  bill per request ($0.01 in the catalogue); no run has exercised them yet.
 - **Should `code`-tier work start on a free model?** Cheapest, and it falls back
   when acceptance checks fail — but it leans hard on those checks.
 
@@ -366,13 +381,22 @@ lookback. Both are preserved on the `parallel-build-local` branch.
    24 unit tests plus an end-to-end CLI test proving the brain is never called,
    but every phase here has ended with a live run, and this one has not had
    one yet.
-3. Continue the adversarial review of config values, workspace pre-creation and
-   hard-kill orphan process groups; the concurrent-executor and filesystem-read
-   findings are fixed.
-4. Price `server_tool_use` requests into the cost model.
+3. ~~Continue the adversarial review of config values, workspace pre-creation
+   and hard-kill orphan process groups.~~ **Done, 2026-08-19.** Numeric/list
+   config coercions now fail closed, workspace creation/writes reject symlink
+   pivots, and the parent-death guard hard-kills SIGTERM-resistant descendants.
+4. ~~Price `server_tool_use` requests into the cost model.~~ **Done, 2026-08-19.**
+   Search request rates come from the frozen live catalogue snapshot; fetch
+   counts remain visible but carry no separate fee under current Anthropic
+   pricing. Provider totals take precedence over estimates.
 5. Live-verify both new console branches: one ordinary request that passes the
    tool-free Haiku gate, one that declines to Sonnet, and one disposable
    `/project` workspace that completes through at least two routed tiers.
+
+Live verification is currently paused by the provider, not by the harness: the
+read-only Anthropic meter reported the five-hour window at **100.0%**, resetting
+at **2026-08-19 23:29:59 UTC**. No paid/provider call was attempted after that
+reading.
 
 ## Environment on this machine
 

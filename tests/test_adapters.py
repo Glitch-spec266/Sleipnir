@@ -115,6 +115,32 @@ def test_claude_reads_model_usage_not_last_message_usage(tmp_path: Path):
     assert outcome.usage.total_input_tokens == 907 + 30149
 
 
+def test_claude_retains_server_tool_counts_when_model_usage_omits_them(tmp_path: Path):
+    payload = dict(CLAUDE_PAYLOAD)
+    payload["usage"] = {
+        **CLAUDE_PAYLOAD["usage"],
+        "server_tool_use": {"web_search_requests": 2, "web_fetch_requests": 3},
+    }
+    adapter, _ = claude_adapter(payload)
+    outcome = run(adapter.dispatch(request_for(tmp_path)))
+    assert outcome.usage.web_search_requests == 2
+    assert outcome.usage.web_fetch_requests == 3
+
+
+def test_openrouter_retains_server_tool_counts():
+    usage = OpenRouterAdapter._usage_of(
+        {
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "server_tool_use": {"web_search_requests": 4, "web_fetch_requests": 1},
+            }
+        }
+    )
+    assert usage.web_search_requests == 4
+    assert usage.web_fetch_requests == 1
+
+
 def test_claude_cost_is_authoritative_not_estimated(tmp_path: Path):
     adapter, _ = claude_adapter()
     outcome = run(adapter.dispatch(request_for(tmp_path)))

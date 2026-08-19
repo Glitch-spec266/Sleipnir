@@ -56,12 +56,21 @@ def config(**overrides) -> SleipnirConfig:
     return SleipnirConfig.from_dict(raw, source="<test>")
 
 
-def model(model_id, *, price=1.0, out=2.0, context=128_000, params=("tools",)):
+def model(
+    model_id,
+    *,
+    price=1.0,
+    out=2.0,
+    context=128_000,
+    params=("tools",),
+    web_search=None,
+):
     return ModelInfo(
         id=model_id,
         context_length=context,
         input_per_mtok=price,
         output_per_mtok=out,
+        web_search_cost_usd=web_search,
         supported_parameters=tuple(params),
     )
 
@@ -87,6 +96,14 @@ def test_first_preferred_backend_with_a_candidate_wins():
     decision = r.resolve(make_task("t", tier=Tier.CODE), attempt=1, tier=Tier.CODE)
     assert decision.model == "big-sub"
     assert decision.adapter is Adapter.CLAUDE
+
+
+def test_routing_freezes_catalogue_pricing_for_later_cost_accounting():
+    r = router(model("cheap/x", price=0.05, web_search=0.014))
+    decision = r.resolve(make_task("t", tier=Tier.MECHANICAL), attempt=1, tier=Tier.MECHANICAL)
+    assert decision.pricing is not None
+    assert decision.pricing.model == "cheap/x"
+    assert decision.pricing.web_search_per_request == pytest.approx(0.014)
 
 
 def test_mechanical_prefers_metered_over_the_subscription_spawn_overhead():
@@ -293,9 +310,14 @@ def test_unknown_tier_name_is_rejected():
     ("override", "message"),
     [
         ({"concurrency": 0}, "concurrency"),
+        ({"concurrency": True}, "concurrency"),
+        ({"concurrency": 1.5}, "concurrency"),
+        ({"catalog_ttl_s": True}, "catalog_ttl_s"),
         ({"catalog_ttl_s": float("nan")}, "catalog_ttl_s"),
+        ({"reserve_fraction": False}, "reserve_fraction"),
         ({"reserve_fraction": 1.0}, "reserve_fraction"),
         ({"window_tokens_limit": -1}, "window_tokens_limit"),
+        ({"window_tokens_limit": float("nan")}, "window_tokens_limit"),
         ({"metered_budget_usd": float("inf")}, "metered_budget_usd"),
     ],
 )
@@ -309,6 +331,28 @@ def test_non_finite_operator_model_price_is_rejected():
     raw = tomllib.loads(CONFIG_TOML)
     raw["backends"][0]["models"][0]["price_per_mtok"] = float("nan")
     with pytest.raises(ConfigError, match="price must be finite"):
+        SleipnirConfig.from_dict(raw, source="<test>")
+
+
+def test_fractional_integer_and_string_list_policy_values_are_rejected():
+    import tomllib
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["tiers"]["code"]["min_context"] = 1.5
+    with pytest.raises(ConfigError, match="min_context"):
+        SleipnirConfig.from_dict(raw, source="<test>")
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["tiers"]["code"]["require_parameters"] = "reasoning"
+    with pytest.raises(ConfigError, match="require_parameters"):
+        SleipnirConfig.from_dict(raw, source="<test>")
+
+
+@pytest.mark.parametrize("field", ["catalog_url", "catalog_cache_path"])
+def test_catalog_locations_must_be_nonempty_strings(field):
+    import tomllib
+    raw = tomllib.loads(CONFIG_TOML)
+    raw[field] = 123
+    with pytest.raises(ConfigError, match=field):
         SleipnirConfig.from_dict(raw, source="<test>")
 
 

@@ -101,6 +101,13 @@ def test_numeric_prices_are_accepted_as_well_as_strings():
     assert models["vendor/m"].input_per_mtok == pytest.approx(1.0)
 
 
+def test_web_search_request_price_is_retained_without_unit_conversion():
+    priced = entry()
+    priced["pricing"]["web_search"] = "0.014"
+    models, _ = parse_models({"data": [priced]})
+    assert models["vendor/m"].web_search_cost_usd == pytest.approx(0.014)
+
+
 def test_unrecognised_payload_is_reported():
     models, warnings = parse_models({"models": []})
     assert models == {}

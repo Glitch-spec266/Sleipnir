@@ -51,6 +51,7 @@ class ModelInfo:
     cache_read_per_mtok: float | None = None
     cache_write_per_mtok: float | None = None
     request_cost_usd: float = 0.0
+    web_search_cost_usd: float | None = None
     max_output_tokens: int | None = None
     supported_parameters: tuple[str, ...] = ()
     modality: str = ""
@@ -250,6 +251,7 @@ def parse_models(payload: dict[str, Any]) -> tuple[dict[str, ModelInfo], list[st
             cache_read_per_mtok=_per_mtok(pricing.get("input_cache_read")),
             cache_write_per_mtok=_per_mtok(pricing.get("input_cache_write")),
             request_cost_usd=_float(pricing.get("request")) or 0.0,
+            web_search_cost_usd=_nonnegative_float(pricing.get("web_search")),
             max_output_tokens=_first_int(top, ("max_completion_tokens",)),
             supported_parameters=tuple(params) if isinstance(params, list) else (),
             modality=str(architecture.get("modality") or ""),
@@ -275,6 +277,11 @@ def _float(value: Any) -> float | None:
         # and then silently destroys any ordering built on it.
         return parsed if math.isfinite(parsed) else None
     return None
+
+
+def _nonnegative_float(value: Any) -> float | None:
+    parsed = _float(value)
+    return parsed if parsed is not None and parsed >= 0 else None
 
 
 def _per_mtok(value: Any) -> float | None:

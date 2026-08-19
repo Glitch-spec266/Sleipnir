@@ -18,6 +18,7 @@ from sleipnir.pricing import CatalogSnapshot, ModelInfo
 from sleipnir.schema import (
     CHARS_PER_TOKEN,
     DOWNSHIFT_LADDER,
+    PriceSnapshot,
     RoutingDecision,
     Task,
     Tier,
@@ -292,6 +293,22 @@ class TierRouter:
                 f"tier {tier.value!r} prefers {list(policy.prefer)}; chose {model_id} from "
                 + ", ".join(bits)
             )[:1_000],
+            pricing=(
+                PriceSnapshot(
+                    source=self.catalog.source,
+                    fetched_at=self.catalog.fetched_at,
+                    model=model_id,
+                    input_per_mtok=info.input_per_mtok,
+                    output_per_mtok=info.output_per_mtok,
+                    cache_read_per_mtok=info.cache_read_per_mtok,
+                    cache_write_5m_per_mtok=info.cache_write_per_mtok,
+                    cache_write_1h_per_mtok=info.cache_write_per_mtok,
+                    web_search_per_request=info.web_search_cost_usd,
+                    context_window=info.context_length,
+                )
+                if info is not None
+                else None
+            ),
         )
 
 

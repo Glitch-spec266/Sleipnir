@@ -325,6 +325,22 @@ non-plan task id, while quota/notional accounting must include it.
 - **Draw the whole emblem or none of it.** `logo_lines` is all-or-nothing;
   slicing rows of terminal art renders as debris. The mark stays letter-free
   and keeps four leg pairs; the border title is where the name belongs.
+- **A provider total already includes its server tools.** Preserve
+  `server_tool_use` request counts and freeze live catalogue rates for fallback
+  estimates, but never add an estimated search charge on top of
+  `reported_cost_usd`. Web fetch currently has no separate Anthropic request
+  fee; its returned content is already represented in token usage.
+- **Do not make configuration convenient by coercion.** Boolean and fractional
+  values are not integers, and a string is not a one-item list. Reject these at
+  load time so a typo cannot silently change routing or concurrency.
+- **The workspace is untrusted after provider launch.** Harness metadata writes
+  require an already-claimed directory and must not follow a provider-created
+  symlink. Validate workspace roots before creating children; a rejection must
+  not leave mutations through an external symlink.
+- **The parent-death guard owns hard escalation.** ProcessRunner may be gone
+  after executor `SIGKILL`, so the guard itself must follow group `SIGTERM` with
+  `SIGKILL`; otherwise a provider descendant can ignore termination and spend
+  indefinitely.
 
 ## Checkpoint discipline
 
