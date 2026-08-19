@@ -44,13 +44,20 @@ class SecretRequest:
     submit: bool
     path: Path
     requester_pid: int
+    browser_selector: str | None = None
 
     @property
     def answer_path(self) -> Path:
         return self.path.with_suffix(".answer")
 
 
-def request_secret(label: str, *, submit: bool = False, directory: Path | None = None) -> SecretRequest:
+def request_secret(
+    label: str,
+    *,
+    submit: bool = False,
+    browser_selector: str | None = None,
+    directory: Path | None = None,
+) -> SecretRequest:
     """File a request for the console to fulfil."""
     folder = directory or REQUEST_DIR
     if folder.exists() and (folder.is_symlink() or not folder.is_dir()):
@@ -65,6 +72,7 @@ def request_secret(label: str, *, submit: bool = False, directory: Path | None =
         "submit": submit,
         "at": time.time(),
         "requester_pid": requester_pid,
+        "browser_selector": browser_selector,
     }
     with path.open("x", encoding="utf-8") as handle:
         os.chmod(handle.fileno(), 0o600)
@@ -77,6 +85,7 @@ def request_secret(label: str, *, submit: bool = False, directory: Path | None =
         submit=submit,
         path=path,
         requester_pid=requester_pid,
+        browser_selector=browser_selector,
     )
 
 
@@ -153,6 +162,11 @@ def pending(directory: Path | None = None) -> SecretRequest | None:
             submit=bool(payload.get("submit", False)),
             path=path,
             requester_pid=int(payload["requester_pid"]),
+            browser_selector=(
+                str(payload["browser_selector"])[:240]
+                if payload.get("browser_selector")
+                else None
+            ),
         )
     return None
 

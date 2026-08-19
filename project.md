@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–9 are complete with **415 tests passing**.
+Phases 1–9 are complete with **417 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -396,6 +396,11 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   records a content-free transcript notice when the fast lane is approved or
   fails closed to the strong model, so operators and live verification can
   distinguish Haiku action from Sonnet fallback without logging the request.
+- 2026-08-19 — **Credential handoff stays live during the model turn.** The
+  console polls while Claude is busy, because that is exactly when its tool
+  subprocess waits. Browser requests may carry a CSS selector; the console
+  fills it over CDP and wipes the secret, avoiding the focus paradox where
+  returning to the terminal loses the browser field.
 
 ## Open questions
 
