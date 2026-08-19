@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–9 are complete with **414 tests passing**.
+Phases 1–9 are complete with **415 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -388,6 +388,10 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   into the PTY planned exactly two independent `reason`/`code` tasks, routed
   both through Codex, and completed hashed `ROUTED_REASON_OK` and
   `ROUTED_CODE_OK` artifacts in one orchestration cycle (130,718 Codex tokens).
+- 2026-08-19 — **Only a tool-free failure may fall back automatically.** If the
+  Haiku assessment process itself is unavailable, Sleipnir rotates uncertain
+  first-turn session state and gives Sonnet the untouched original request.
+  Once any model has tools, failure is never replayed.
 
 ## Open questions
 
