@@ -616,15 +616,45 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
             base_prompt = f"{capability_brief()}\n\n{text}" if first_turn[0] else text
             if state.fast_model:
                 state.status = "checking · fast lane"
-                assessment = await chat.ask_claude(
-                    f"{chat.FAST_LANE_ASSESSMENT}\n\n{base_prompt}{queued}",
-                    state.session_id,
-                    resume=not first_turn[0],
-                    permission_mode=state.permission_mode,
-                    model=state.fast_model,
-                    tools=(),
-                    add_dirs=_claude_dirs(state),
-                )
+                assessment_error: chat.ChatError | None = None
+                try:
+                    assessment = await chat.ask_claude(
+                        f"{chat.FAST_LANE_ASSESSMENT}\n\n{base_prompt}{queued}",
+                        state.session_id,
+                        resume=not first_turn[0],
+                        permission_mode=state.permission_mode,
+                        model=state.fast_model,
+                        tools=(),
+                        add_dirs=_claude_dirs(state),
+                    )
+                except chat.ChatError as error:
+                    # This turn had physically no tools, so retrying the original
+                    # request cannot duplicate a side effect. A first-turn CLI
+                    # failure may have reserved its session id without creating
+                    # resumable state; rotate before opening the strong lane.
+                    assessment_error = error
+                    assessment = None
+                    if first_turn[0]:
+                        state.session_id = str(uuid.uuid4())
+                if assessment is None:
+                    state.status = "escalating · strong lane"
+                    reply = await chat.ask_claude(
+                        base_prompt + queued,
+                        state.session_id,
+                        resume=not first_turn[0],
+                        permission_mode=state.permission_mode,
+                        model=state.model,
+                        add_dirs=_claude_dirs(state),
+                    )
+                    first_turn[0] = False
+                    if assessment_error is not None:
+                        state.add(
+                            "sleipnir",
+                            "The tool-free Haiku check was unavailable; Sonnet handled "
+                            "the original request without replaying any action.",
+                        )
+                    state.add("claude", reply.text)
+                    return
                 first_turn[0] = False
                 if chat.fast_lane_capable(assessment):
                     state.status = "acting · fast lane"

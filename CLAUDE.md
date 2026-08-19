@@ -313,6 +313,9 @@ non-plan task id, while quota/notional accounting must include it.
   model to admit uncertainty before acting. Only the exact one-turn affirmative
   verdict opens Haiku's action lane. Everything malformed fails closed to
   Sonnet, and a post-action failure is never replayed automatically.
+  A failed assessment process is also safe to fall back because it had no
+  tools; on the first turn rotate the possibly reserved session ID and send
+  Sonnet the untouched original request.
 - **`/project` is the complex-work boundary.** Ordinary messages use guarded
   chat. `/project <goal>` runs the real `plan` then `orchestrate` pipeline; do
   not replace it with a second planner or a prose complexity heuristic. Its

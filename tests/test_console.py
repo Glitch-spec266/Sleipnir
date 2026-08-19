@@ -294,6 +294,34 @@ def test_failed_fast_action_is_not_replayed_on_strong_model(monkeypatch):
     assert "fast action failed" in state.messages[-1].text
 
 
+def test_failed_tool_free_assessment_falls_closed_to_strong_model(monkeypatch):
+    calls = []
+    original_session = "assessment-session"
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((prompt, session_id, kwargs))
+        if len(calls) == 1:
+            raise chat.ChatError("Haiku assessment unavailable")
+        return chat.Reply(text="handled by Sonnet", speaker="claude", turns=1)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(
+        session_id=original_session,
+        model="sonnet",
+        fast_model="haiku",
+    )
+    first_turn = [True]
+    asyncio.run(console._handle(state, "explain this screenshot", first_turn=first_turn))
+
+    assert [call[2]["model"] for call in calls] == ["haiku", "sonnet"]
+    assert calls[0][2]["tools"] == ()
+    assert calls[1][2]["resume"] is False
+    assert calls[1][1] != original_session
+    assert "explain this screenshot" in calls[1][0]
+    assert state.messages[-1].text == "handled by Sonnet"
+    assert first_turn == [False]
+
+
 def test_project_command_has_an_explicit_boundary():
     assert console.project_goal("/project build a widget") == "build a widget"
     assert console.project_goal("/project") == ""
