@@ -1,6 +1,6 @@
 # Sleipnir — Overview
 
-_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 406 tests passing._
+_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 409 tests passing._
 
 ## What this is
 
@@ -131,7 +131,7 @@ Sleipnir/
 │       ├── claude.py     # `claude -p`      (verified against real output)
 │       ├── codex.py      # `codex exec`     (verified against CLI 0.148.0)
 │       └── openrouter.py # plain HTTP
-├── tests/                # 406 tests, including the manifest and verdict size bounds
+├── tests/                # 409 tests, including the manifest and verdict size bounds
 ├── DESIGN.md             # the reasoning, tradeoffs and open decisions
 ├── project.md            # living state — current phase, decisions, next steps
 └── overview.md           # this file
@@ -333,7 +333,7 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-Last verified run: **406 passed** on Python 3.14.6. `pip check`, `compileall`,
+Last verified run: **409 passed** on Python 3.14.6. `pip check`, `compileall`,
 and `git diff --check` are also clean.
 
 Host control needs a third runtime dependency and one privileged install:

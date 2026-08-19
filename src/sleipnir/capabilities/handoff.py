@@ -20,12 +20,19 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 REQUEST_DIR = Path.home() / ".sleipnir" / "secret-requests"
+_MAX_REQUEST_BYTES = 4_096
+_ANSWER_STATUSES = frozenset({"supplied", "cancelled", "failed"})
+
+
+class HandoffError(RuntimeError):
+    """Credential request state failed its local trust checks."""
 
 
 @dataclass(frozen=True)
@@ -36,6 +43,7 @@ class SecretRequest:
     label: str
     submit: bool
     path: Path
+    requester_pid: int
 
     @property
     def answer_path(self) -> Path:
@@ -45,15 +53,58 @@ class SecretRequest:
 def request_secret(label: str, *, submit: bool = False, directory: Path | None = None) -> SecretRequest:
     """File a request for the console to fulfil."""
     folder = directory or REQUEST_DIR
+    if folder.exists() and (folder.is_symlink() or not folder.is_dir()):
+        raise HandoffError(f"unsafe credential request directory: {folder}")
     folder.mkdir(parents=True, exist_ok=True)
     request_id = uuid.uuid4().hex[:12]
     path = folder / f"{request_id}.request"
-    payload = {"id": request_id, "label": label, "submit": submit, "at": time.time()}
+    requester_pid = os.getpid()
+    payload = {
+        "id": request_id,
+        "label": label,
+        "submit": submit,
+        "at": time.time(),
+        "requester_pid": requester_pid,
+    }
     with path.open("x", encoding="utf-8") as handle:
+        os.chmod(handle.fileno(), 0o600)
         json.dump(payload, handle)
         handle.flush()
         os.fsync(handle.fileno())
-    return SecretRequest(id=request_id, label=label, submit=submit, path=path)
+    return SecretRequest(
+        id=request_id,
+        label=label,
+        submit=submit,
+        path=path,
+        requester_pid=requester_pid,
+    )
+
+
+def _read_json_regular(path: Path) -> dict[str, object] | None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_REQUEST_BYTES:
+            return None
+        raw = os.read(descriptor, _MAX_REQUEST_BYTES + 1)
+        payload = json.loads(raw.decode("utf-8"))
+        return payload if isinstance(payload, dict) else None
+    except (OSError, UnicodeError, ValueError):
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def _requester_alive(pid: object) -> bool:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid < 2:
+        return False
+    try:
+        return (Path("/proc") / str(pid)).stat().st_uid == os.getuid()
+    except OSError:
+        return False
 
 
 def await_answer(request: SecretRequest, *, timeout_s: float = 300.0, poll_s: float = 0.25) -> str:
@@ -66,12 +117,10 @@ def await_answer(request: SecretRequest, *, timeout_s: float = 300.0, poll_s: fl
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if request.answer_path.exists():
-            try:
-                status = json.loads(request.answer_path.read_text(encoding="utf-8"))["status"]
-            except (OSError, ValueError, KeyError):
-                status = "unknown"
+            payload = _read_json_regular(request.answer_path)
+            status = payload.get("status") if payload is not None else "unknown"
             request.answer_path.unlink(missing_ok=True)
-            return str(status)
+            return str(status) if status in _ANSWER_STATUSES else "unknown"
         time.sleep(poll_s)
     request.path.unlink(missing_ok=True)
     raise TimeoutError(
@@ -83,27 +132,37 @@ def await_answer(request: SecretRequest, *, timeout_s: float = 300.0, poll_s: fl
 def pending(directory: Path | None = None) -> SecretRequest | None:
     """The oldest unanswered request, if any. Called by the console each frame."""
     folder = directory or REQUEST_DIR
-    if not folder.is_dir():
+    if folder.is_symlink() or not folder.is_dir():
         return None
-    requests = sorted(folder.glob("*.request"), key=lambda path: path.stat().st_mtime)
+    requests = sorted(
+        folder.glob("*.request"),
+        key=lambda path: path.lstat().st_mtime,
+    )
     for path in requests:
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        payload = _read_json_regular(path)
+        if payload is None or not _requester_alive(payload.get("requester_pid")):
             path.unlink(missing_ok=True)  # unreadable request helps nobody
             continue
+        request_id = payload.get("id")
+        if not isinstance(request_id, str) or path.name != f"{request_id}.request":
+            path.unlink(missing_ok=True)
+            continue
         return SecretRequest(
-            id=str(payload.get("id", "")),
+            id=request_id,
             label=str(payload.get("label", "credential"))[:120],
             submit=bool(payload.get("submit", False)),
             path=path,
+            requester_pid=int(payload["requester_pid"]),
         )
     return None
 
 
 def answer(request: SecretRequest, status: str) -> None:
     """Tell the waiting process what happened. Status only — never the value."""
-    with request.answer_path.open("w", encoding="utf-8") as handle:
+    if status not in _ANSWER_STATUSES:
+        raise HandoffError(f"invalid credential handoff status: {status!r}")
+    with request.answer_path.open("x", encoding="utf-8") as handle:
+        os.chmod(handle.fileno(), 0o600)
         json.dump({"status": status}, handle)
         handle.flush()
         os.fsync(handle.fileno())
@@ -112,6 +171,7 @@ def answer(request: SecretRequest, status: str) -> None:
 
 __all__ = [
     "REQUEST_DIR",
+    "HandoffError",
     "SecretRequest",
     "answer",
     "await_answer",

@@ -349,6 +349,10 @@ non-plan task id, while quota/notional accounting must include it.
   can be stale or tampered with. Verify the live `/proc` argv, expected profile,
   debug port and session leadership before killing the process group; publish
   replacement PID state atomically without following symlinks.
+- **A credential request file is untrusted input.** Require a bounded regular
+  file, matching filename/ID and a live same-user requester PID before showing
+  a prompt. Answer only with the closed status vocabulary in a private,
+  write-once regular file; never follow request or answer symlinks.
 
 ## Checkpoint discipline
 
