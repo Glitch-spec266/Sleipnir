@@ -11,9 +11,11 @@ import asyncio
 import re
 
 import pytest
+from fakes import fake_spawner
 
 from sleipnir import chat, console
 from sleipnir.capabilities import clipboard
+from sleipnir.process import ProcessRunner
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -174,6 +176,43 @@ def test_capability_check_can_be_physically_denied_all_tools():
     assert argv[argv.index("--tools") + 1] == ""
 
 
+def test_chat_turn_uses_guarded_process_runner_and_stdin():
+    calls: list = []
+    processes: list = []
+    payload = b'{"result":"hello","session_id":"s","num_turns":1}'
+    runner = ProcessRunner(
+        spawn=fake_spawner(stdout=payload, calls=calls, processes=processes)
+    )
+    reply = asyncio.run(
+        chat.ask_claude("private prompt", "s", resume=False, runner=runner)
+    )
+    assert reply.text == "hello"
+    assert processes[0].stdin.text == "private prompt"
+    assert calls[0]["kwargs"]["start_new_session"] is True
+
+
+def test_chat_timeout_terminates_the_process_group():
+    processes: list = []
+    runner = ProcessRunner(
+        spawn=fake_spawner(never_exits=True, processes=processes)
+    )
+    with pytest.raises(chat.ChatError, match="did not reply"):
+        asyncio.run(
+            chat.ask_claude(
+                "prompt", "s", resume=False, timeout_s=0.01, runner=runner
+            )
+        )
+    assert processes[0].killed
+
+
+def test_chat_rejects_an_unbounded_response_without_loading_it(monkeypatch):
+    payload = b'{"result":"ok"}'
+    runner = ProcessRunner(spawn=fake_spawner(stdout=payload))
+    monkeypatch.setattr(chat, "MAX_CHAT_RESPONSE_BYTES", len(payload) - 1)
+    with pytest.raises(chat.ChatError, match="response exceeded"):
+        asyncio.run(chat.ask_claude("prompt", "s", resume=False, runner=runner))
+
+
 def test_only_an_exact_one_turn_capability_verdict_opens_the_fast_lane():
     assert chat.fast_lane_capable(
         chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1)
@@ -306,6 +345,18 @@ def test_project_child_inherits_console_workspace_and_config(tmp_path):
     assert argv[argv.index("--run-root") + 1] == str(tmp_path)
     assert argv[argv.index("--config") + 1] == str(config)
     assert argv[argv.index("--cache-read-weight") + 1] == "0.5"
+
+
+def test_project_stage_uses_guarded_process_runner(tmp_path):
+    calls: list = []
+    runner = ProcessRunner(spawn=fake_spawner(stdout=b"stage complete\n", calls=calls))
+    state = console.ConsoleState(run_dir=tmp_path)
+    output = asyncio.run(
+        console._run_project_stage(state, "orchestrate", runner=runner)
+    )
+    assert output == "stage complete"
+    assert calls[0]["kwargs"]["start_new_session"] is True
+    assert calls[0]["kwargs"]["cwd"] == str(tmp_path)
 
 
 def test_queue_instruction_is_parsed_from_a_duty_officer_reply():

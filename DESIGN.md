@@ -625,13 +625,14 @@ into a 2-task DAG, `--dry-run --explain` showed the routing without spending,
 
 ## Still open
 
-- **The OpenRouter catalogue shape is unverified.** This environment's egress
-  policy denies CONNECT to openrouter.ai, so the parser was written defensively
-  rather than confirmed. Verify on a machine with network access.
+- **The OpenRouter catalogue shape is live-verified and still parsed
+  defensively.** Network access later confirmed per-token prompt/completion,
+  cache and per-search fields plus negative dynamic-price sentinels.
 - **`codex` is verified** against CLI 0.148.0, including its JSONL usage shape.
-- **`cache_read_weight` defaults to 1.0**, which over-estimates window
-  consumption roughly tenfold. Still awaiting a decision on what the 5-hour
-  window actually meters.
+- **`cache_read_weight` defaults to 1.0**, which over-estimates local window
+  consumption roughly tenfold. The provider exposes utilization as a percentage,
+  not its weighting formula, so the governor self-calibrates an implied limit
+  from that percentage instead of pretending the weighting is known.
 
 ---
 

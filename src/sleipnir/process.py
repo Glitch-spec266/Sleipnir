@@ -104,7 +104,7 @@ class ProcessRunner:
         cwd: Path | None = None,
         env: Mapping[str, str] | None = None,
         stdin_data: str | None = None,
-        timeout_s: float = 900.0,
+        timeout_s: float | None = 900.0,
         grace_s: float = 5.0,
     ) -> ProcessResult:
         started = time.monotonic()

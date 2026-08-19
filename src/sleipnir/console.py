@@ -30,10 +30,10 @@ import codecs
 import contextlib
 import os
 import re
-import signal
 import shutil
 import sys
 import termios
+import tempfile
 import tty
 import uuid
 from dataclasses import dataclass, field
@@ -41,6 +41,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from sleipnir import theme
+from sleipnir.process import ProcessRunner
 
 FRAME_INTERVAL_S = 1 / 12  # fast enough for flicker, cheap enough to ignore
 
@@ -496,37 +497,32 @@ def _project_argv(state: ConsoleState, *command: str) -> list[str]:
     return [*argv, *command]
 
 
-async def _run_project_stage(state: ConsoleState, *command: str) -> str:
+async def _run_project_stage(
+    state: ConsoleState,
+    *command: str,
+    runner: ProcessRunner | None = None,
+) -> str:
     """Run one project stage without letting its output corrupt the console."""
-    process = await asyncio.create_subprocess_exec(
-        *_project_argv(state, *command),
-        cwd=state.run_dir or Path.cwd(),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        start_new_session=True,
-    )
-    try:
-        stdout, stderr = await process.communicate()
-    except asyncio.CancelledError:
-        # Ctrl-C closes the console. The project owns a process group so that
-        # its provider grandchildren do not continue spending after the UI is
-        # gone.
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-        try:
-            await asyncio.wait_for(process.wait(), timeout=5.0)
-        except TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            await process.wait()
-        raise
-
-    out = stdout.decode("utf-8", "replace").strip()
-    err = stderr.decode("utf-8", "replace").strip()
-    if process.returncode != 0:
-        detail = (err or out or "no diagnostic output")[-2_000:]
-        raise RuntimeError(f"project stage {command[0]!r} exited {process.returncode}: {detail}")
-    return "\n".join(part for part in (out, err) if part)
+    process_runner = runner or ProcessRunner()
+    with tempfile.TemporaryDirectory(prefix="sleipnir-project-") as temporary:
+        directory = Path(temporary)
+        stdout_path = directory / "stdout.log"
+        stderr_path = directory / "stderr.log"
+        result = await process_runner.run(
+            _project_argv(state, *command),
+            cwd=state.run_dir or Path.cwd(),
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            timeout_s=None,
+        )
+        out = stdout_path.read_text(encoding="utf-8", errors="replace").strip()
+        err = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+        if result.exit_code != 0:
+            detail = (err or out or "no diagnostic output")[-2_000:]
+            raise RuntimeError(
+                f"project stage {command[0]!r} exited {result.exit_code}: {detail}"
+            )
+        return "\n".join(part for part in (out, err) if part)
 
 
 async def _run_project(state: ConsoleState, goal: str) -> None:

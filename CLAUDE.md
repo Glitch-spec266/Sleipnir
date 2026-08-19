@@ -341,6 +341,10 @@ non-plan task id, while quota/notional accounting must include it.
   after executor `SIGKILL`, so the guard itself must follow group `SIGTERM` with
   `SIGKILL`; otherwise a provider descendant can ignore termination and spend
   indefinitely.
+- **Interactive calls use ProcessRunner too.** Do not regress console chat or
+  `/project` stages to raw `create_subprocess_exec`: cancellation, timeouts and
+  executor death must terminate the whole provider group, and response capture
+  belongs in bounded private files rather than unbounded `communicate()` memory.
 
 ## Checkpoint discipline
 
