@@ -489,8 +489,9 @@ credential was supplied. Nothing is stored, logged, or returned.
 - **`code`-tier work starts on Codex subscription.** The default then falls back
   to metered OpenRouter and finally Claude, preserving the scarce Claude window.
 - **Two host-capability joins remain unverified.** Console→Claude→screenshot is
-  live-proven. Browser and credential handoff work standalone but have not yet
-  been invoked by Claude from inside the real console.
+  live-proven. Browser navigation and focus-independent secret/CDP submission
+  are live-proven standalone but have not yet been invoked by Claude from inside
+  the real console.
 - **The phase gate is live-verified.** A seeded terminal module failure produced
   one finite routing-only escalation; real Codex then completed and hashed the
   accepted retry without waking or charging the Claude brain.
