@@ -824,6 +824,16 @@ class TokenUsage(BaseModel):
     cache_read_tokens: int = Field(default=0, ge=0)
     cache_write_5m_tokens: int = Field(default=0, ge=0)
     cache_write_1h_tokens: int = Field(default=0, ge=0)
+    web_search_requests: int = Field(
+        default=0,
+        ge=0,
+        description="Successful provider-side web searches, billed per request.",
+    )
+    web_fetch_requests: int = Field(
+        default=0,
+        ge=0,
+        description="Provider-side web fetches; retained even when the request fee is zero.",
+    )
 
     @model_validator(mode="after")
     def _thinking_within_output(self) -> Self:
@@ -847,7 +857,7 @@ class TokenUsage(BaseModel):
 
 
 class PriceSnapshot(BaseModel):
-    """Per-million-token prices as fetched at dispatch time.
+    """Token and server-tool prices as fetched at dispatch time.
 
     Never populated from training data — Phase 3 fetches these from the
     OpenRouter models API and caches with a TTL. ``fetched_at`` and ``source``
@@ -864,6 +874,12 @@ class PriceSnapshot(BaseModel):
     cache_read_per_mtok: float | None = Field(default=None, ge=0)
     cache_write_5m_per_mtok: float | None = Field(default=None, ge=0)
     cache_write_1h_per_mtok: float | None = Field(default=None, ge=0)
+    web_search_per_request: float | None = Field(default=None, ge=0)
+    web_fetch_per_request: float = Field(
+        default=0.0,
+        ge=0,
+        description="Separate request fee only; fetched content is already in token usage.",
+    )
     context_window: int | None = Field(default=None, gt=0)
 
     def cost_usd(self, usage: TokenUsage) -> float:
@@ -890,13 +906,18 @@ class PriceSnapshot(BaseModel):
             else write5_rate
         )
         million = 1_000_000
-        return (
+        token_cost = (
             usage.input_tokens * self.input_per_mtok
             + usage.cache_read_tokens * read_rate
             + usage.cache_write_5m_tokens * write5_rate
             + usage.cache_write_1h_tokens * write1h_rate
             + usage.output_tokens * self.output_per_mtok
         ) / million
+        server_tool_cost = (
+            usage.web_search_requests * (self.web_search_per_request or 0.0)
+            + usage.web_fetch_requests * self.web_fetch_per_request
+        )
+        return token_cost + server_tool_cost
 
 
 class CostEstimate(BaseModel):
@@ -946,6 +967,10 @@ class RoutingDecision(BaseModel):
     downshift_reason: str | None = Field(default=None, max_length=400)
     candidates_considered: list[str] = Field(default_factory=list, max_length=20)
     rationale: str = Field(default="", max_length=1_000)
+    pricing: PriceSnapshot | None = Field(
+        default=None,
+        description="Catalogue prices frozen when this dispatch was routed.",
+    )
 
     @model_validator(mode="after")
     def _downshift_is_explained(self) -> Self:

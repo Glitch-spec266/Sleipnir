@@ -93,6 +93,18 @@ def test_iterations_are_not_double_counted():
     assert record.usage.output_tokens == 901, "iterations[] must not be summed in"
 
 
+def test_server_tool_usage_is_retained_without_affecting_window_tokens():
+    line = assistant_line(ts=NOW)
+    line["message"]["usage"]["server_tool_use"] = {
+        "web_search_requests": 2,
+        "web_fetch_requests": 3,
+    }
+    record = parse_usage_line(line)
+    assert record.usage.web_search_requests == 2
+    assert record.usage.web_fetch_requests == 3
+    assert window_tokens(record.usage) == 47_054 + 901
+
+
 def test_flat_cache_creation_is_attributed_when_ttl_breakdown_is_absent():
     """Older records carry no cache_creation table. Dropping those tokens would
     under-count; attributing them to the cheap 5m bucket would too."""

@@ -458,6 +458,20 @@ def test_missing_cache_prices_fall_back_without_undercounting():
     assert price.cost_usd(TokenUsage(cache_read_tokens=1_000_000)) == pytest.approx(3.0)
 
 
+def test_server_tool_requests_are_priced_separately_from_tokens():
+    price = PriceSnapshot(
+        source="test",
+        fetched_at=T0,
+        model="m",
+        input_per_mtok=3.0,
+        output_per_mtok=15.0,
+        web_search_per_request=0.01,
+        web_fetch_per_request=0.0,
+    )
+    usage = TokenUsage(web_search_requests=3, web_fetch_requests=8)
+    assert price.cost_usd(usage) == pytest.approx(0.03)
+
+
 def test_thinking_tokens_cannot_exceed_output():
     with pytest.raises(ValidationError, match="cannot exceed output_tokens"):
         TokenUsage(output_tokens=10, thinking_tokens=11)

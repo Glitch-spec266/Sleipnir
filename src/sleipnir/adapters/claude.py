@@ -267,10 +267,22 @@ class ClaudeAdapter(BaseAdapter):
                 # provider anyway, so attribution here only affects window
                 # accounting, where the total is what matters.
                 usage.cache_write_1h_tokens += int(entry.get("cacheCreationInputTokens") or 0)
+                server_tools = entry.get("serverToolUse") or {}
+                usage.web_search_requests += int(server_tools.get("webSearchRequests") or 0)
+                usage.web_fetch_requests += int(server_tools.get("webFetchRequests") or 0)
+            # Current Claude CLI modelUsage records omit server tools while the
+            # top-level usage block retains their snake_case request counts.
+            # Use that block only when the aggregate had no corresponding data.
+            fallback_tools = fallback.get("server_tool_use") or {}
+            if not usage.web_search_requests:
+                usage.web_search_requests = int(fallback_tools.get("web_search_requests") or 0)
+            if not usage.web_fetch_requests:
+                usage.web_fetch_requests = int(fallback_tools.get("web_fetch_requests") or 0)
             return usage
 
         details = fallback.get("output_tokens_details") or {}
         creation = fallback.get("cache_creation") or {}
+        server_tools = fallback.get("server_tool_use") or {}
         return TokenUsage(
             input_tokens=int(fallback.get("input_tokens") or 0),
             output_tokens=int(fallback.get("output_tokens") or 0),
@@ -278,6 +290,8 @@ class ClaudeAdapter(BaseAdapter):
             cache_read_tokens=int(fallback.get("cache_read_input_tokens") or 0),
             cache_write_5m_tokens=int(creation.get("ephemeral_5m_input_tokens") or 0),
             cache_write_1h_tokens=int(creation.get("ephemeral_1h_input_tokens") or 0),
+            web_search_requests=int(server_tools.get("web_search_requests") or 0),
+            web_fetch_requests=int(server_tools.get("web_fetch_requests") or 0),
         )
 
     @staticmethod

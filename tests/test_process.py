@@ -176,7 +176,8 @@ def test_parent_death_guard_terminates_child_after_hard_parent_kill():
 import subprocess, sys, time
 child = subprocess.Popen([
     sys.executable, {str(guard)!r}, '--',
-    sys.executable, '-c', 'import time; time.sleep(30)'
+    sys.executable, '-c',
+    'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'
 ])
 print(child.pid, flush=True)
 time.sleep(30)

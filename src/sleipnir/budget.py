@@ -128,6 +128,7 @@ def parse_usage_line(payload: dict[str, Any]) -> UsageRecord | None:
 
     details = usage.get("output_tokens_details") or {}
     creation = usage.get("cache_creation") or {}
+    server_tools = usage.get("server_tool_use") or {}
     output_tokens = _int(usage.get("output_tokens"))
 
     # NOTE: `iterations` is deliberately ignored. It repeats the same counts
@@ -139,6 +140,8 @@ def parse_usage_line(payload: dict[str, Any]) -> UsageRecord | None:
         cache_read_tokens=_int(usage.get("cache_read_input_tokens")),
         cache_write_5m_tokens=_int(creation.get("ephemeral_5m_input_tokens")),
         cache_write_1h_tokens=_int(creation.get("ephemeral_1h_input_tokens")),
+        web_search_requests=_int(server_tools.get("web_search_requests")),
+        web_fetch_requests=_int(server_tools.get("web_fetch_requests")),
     )
 
     # When the TTL breakdown is absent, fall back to the flat total so the

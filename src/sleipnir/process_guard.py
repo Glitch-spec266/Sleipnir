@@ -15,8 +15,10 @@ import signal
 # Exact argv execution is this module's sole purpose.
 import subprocess  # nosec B404
 import sys
+import time
 
 _PR_SET_PDEATHSIG = 1
+_ORPHAN_TERM_GRACE_S = 1.0
 
 
 def _install_parent_death_signal() -> None:
@@ -57,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     child: subprocess.Popen[bytes] | None = None
 
     def terminate_group(signum: int, _frame: object) -> None:
-        """Forward parent death/cancellation to every provider descendant."""
+        """Terminate every descendant, including ones that ignore SIGTERM."""
         # Ignore our own group broadcast while provider descendants receive it.
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         if child is None:
@@ -66,10 +68,15 @@ def main(argv: list[str] | None = None) -> int:
             os.killpg(os.getpgrp(), signal.SIGTERM)
         except ProcessLookupError:
             pass
-        # Popen.wait may hold an internal lock when the signal arrives, so no
-        # Popen method is signal-safe here. The ordinary ProcessRunner path
-        # still escalates the whole group to SIGKILL after its grace period.
-        os._exit(128 + signum)
+        # The executor may itself have received SIGKILL, in which case nobody
+        # remains to perform ProcessRunner's normal escalation. Stay alive just
+        # long enough to hard-kill this process group. Popen methods are avoided
+        # because its internal lock may be held when the signal interrupts wait().
+        time.sleep(_ORPHAN_TERM_GRACE_S)
+        try:
+            os.killpg(os.getpgrp(), signal.SIGKILL)
+        except ProcessLookupError:
+            os._exit(128 + signum)
 
     signal.signal(signal.SIGTERM, terminate_group)
     # The validated adapter invocation is passed as an argv vector; no shell,

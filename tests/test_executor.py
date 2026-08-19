@@ -18,7 +18,13 @@ from sleipnir.adapters.base import (
     DispatchRequest,
 )
 from sleipnir.checks import UnsupportedCheckError
-from sleipnir.executor import ConcurrentExecutionError, Executor, ExecutorConfig, StaticRouter
+from sleipnir.executor import (
+    ConcurrentExecutionError,
+    Executor,
+    ExecutorConfig,
+    StaticRouter,
+    cost_from_outcome,
+)
 from sleipnir.runlog import ResultLog
 from sleipnir.schema import (
     Adapter,
@@ -33,6 +39,8 @@ from sleipnir.schema import (
     OutputContract,
     OutputKind,
     Plan,
+    PriceSnapshot,
+    RoutingDecision,
     TaskStatus,
     Tier,
     TokenUsage,
@@ -434,6 +442,59 @@ def test_reported_cost_marks_the_estimate_as_authoritative(tmp_path: Path):
     assert record2.cost.is_estimate is True
 
 
+def test_missing_provider_cost_uses_frozen_token_and_server_tool_prices():
+    routing = RoutingDecision(
+        tier_requested=Tier.MECHANICAL,
+        tier_final=Tier.MECHANICAL,
+        model="vendor/model",
+        adapter=Adapter.OPENROUTER,
+        pricing=PriceSnapshot(
+            source="test",
+            fetched_at=T0,
+            model="vendor/model",
+            input_per_mtok=1.0,
+            output_per_mtok=2.0,
+            web_search_per_request=0.01,
+        ),
+    )
+    outcome = DispatchOutcome(
+        status=AttemptStatus.SUCCEEDED,
+        billing_mode=BillingMode.METERED,
+        usage=TokenUsage(
+            input_tokens=1_000_000,
+            output_tokens=500_000,
+            web_search_requests=2,
+        ),
+    )
+    cost = cost_from_outcome(outcome, routing)
+    assert cost.amount_usd == pytest.approx(2.02)
+    assert cost.is_estimate is True
+
+
+def test_reported_provider_cost_is_not_double_charged_for_server_tools():
+    routing = RoutingDecision(
+        tier_requested=Tier.MECHANICAL,
+        tier_final=Tier.MECHANICAL,
+        model="vendor/model",
+        adapter=Adapter.OPENROUTER,
+        pricing=PriceSnapshot(
+            source="test",
+            fetched_at=T0,
+            model="vendor/model",
+            input_per_mtok=1.0,
+            output_per_mtok=2.0,
+            web_search_per_request=0.01,
+        ),
+    )
+    outcome = DispatchOutcome(
+        status=AttemptStatus.SUCCEEDED,
+        billing_mode=BillingMode.METERED,
+        usage=TokenUsage(web_search_requests=5),
+        reported_cost_usd=0.123,
+    )
+    assert cost_from_outcome(outcome, routing).amount_usd == pytest.approx(0.123)
+
+
 # ---------------------------------------------------------------------------
 # Retry and recovery
 # ---------------------------------------------------------------------------
@@ -471,6 +532,42 @@ def test_preexisting_attempt_workspace_is_never_reused_as_provider_output(tmp_pa
         run(executor.run())
     assert adapter.dispatched == []
     assert log.read() == []
+
+
+def test_workspace_harness_write_refuses_provider_created_symlink(tmp_path: Path):
+    from sleipnir.artifacts import AttemptWorkspace, WorkspaceCollisionError
+
+    workspace = AttemptWorkspace(tmp_path, "a", 1)
+    workspace.prepare_fresh()
+    host_file = tmp_path / "outside.json"
+    host_file.write_text("keep me", encoding="utf-8")
+    (workspace.dir / "outcome.json").symlink_to(host_file)
+
+    with pytest.raises(WorkspaceCollisionError, match="unsafe workspace output"):
+        workspace.write_json("outcome.json", {"provider": "untrusted"})
+    assert host_file.read_text(encoding="utf-8") == "keep me"
+
+
+def test_workspace_harness_write_requires_preclaimed_directory(tmp_path: Path):
+    from sleipnir.artifacts import AttemptWorkspace, WorkspaceCollisionError
+
+    workspace = AttemptWorkspace(tmp_path, "a", 1)
+    with pytest.raises(WorkspaceCollisionError, match="unsafe attempt workspace"):
+        workspace.write_text("prompt.txt", "must not create implicitly")
+    assert not workspace.dir.exists()
+
+
+def test_workspace_claim_rejects_artifacts_symlink_before_external_mutation(tmp_path: Path):
+    from sleipnir.artifacts import AttemptWorkspace, WorkspaceCollisionError
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "artifacts").symlink_to(outside, target_is_directory=True)
+    workspace = AttemptWorkspace(tmp_path, "a", 1)
+
+    with pytest.raises(WorkspaceCollisionError, match="root is unsafe"):
+        workspace.prepare_fresh()
+    assert list(outside.iterdir()) == []
 
 
 def test_completed_work_is_not_redispatched_on_resume(tmp_path: Path):

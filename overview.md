@@ -1,6 +1,6 @@
 # Sleipnir — Overview
 
-_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 380 tests passing._
+_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 399 tests passing._
 
 ## What this is
 
@@ -131,7 +131,7 @@ Sleipnir/
 │       ├── claude.py     # `claude -p`      (verified against real output)
 │       ├── codex.py      # `codex exec`     (verified against CLI 0.148.0)
 │       └── openrouter.py # plain HTTP
-├── tests/                # 380 tests, including the manifest and verdict size bounds
+├── tests/                # 399 tests, including the manifest and verdict size bounds
 ├── DESIGN.md             # the reasoning, tradeoffs and open decisions
 ├── project.md            # living state — current phase, decisions, next steps
 └── overview.md           # this file
@@ -333,7 +333,7 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-Last verified run: **380 passed** on Python 3.14.6. `pip check`, `compileall`,
+Last verified run: **399 passed** on Python 3.14.6. `pip check`, `compileall`,
 and `git diff --check` are also clean.
 
 Host control needs a third runtime dependency and one privileged install:
@@ -480,8 +480,10 @@ credential was supplied. Nothing is stored, logged, or returned.
   tokens, though they are priced far lower. Kept deliberately pessimistic until
   Phase 3 measures what the window really counts.
 - **`llm_judge` acceptance checks are unimplemented** and raise on purpose.
-- **`server_tool_use` is captured but not yet priced.** Web search and fetch are
-  billed per request; no run has used them yet.
+- **Server-tool accounting is provider-aware.** Search/fetch request counts are
+  durable usage fields. Frozen catalogue search rates feed fallback estimates;
+  provider totals win when present, avoiding double charges. Anthropic web
+  fetch currently has no separate request fee, though fetched tokens still bill.
 - **The router assumes every task produces about 8,000 tokens of output.** Output
   is priced several times higher than input, so this flat guess moves the
   rankings. A real per-task estimate should come from the planner in Phase 4.

@@ -188,13 +188,18 @@ def cost_from_outcome(
     """Compose the shared dollar/quota axes for worker and control calls."""
     metered = outcome.billing_mode is BillingMode.METERED
     codex_subscription = not metered and routing.adapter is Adapter.CODEX
+    pricing = routing.pricing
+    reported = outcome.reported_cost_usd
+    amount = float(reported) if reported is not None else (
+        pricing.cost_usd(outcome.usage) if pricing is not None else 0.0
+    )
     return CostEstimate(
         billing_mode=outcome.billing_mode,
-        amount_usd=float(outcome.reported_cost_usd or 0.0),
+        amount_usd=amount,
         window_tokens=0 if metered or codex_subscription else outcome.usage.total_tokens,
         quota_pool=None if metered else routing.adapter.value,
-        pricing=None,
-        is_estimate=outcome.reported_cost_usd is None,
+        pricing=pricing,
+        is_estimate=reported is None,
     )
 
 

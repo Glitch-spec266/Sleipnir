@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -128,12 +129,26 @@ class AttemptWorkspace:
 
     def prepare_fresh(self) -> None:
         """Atomically claim a new attempt directory; never reuse old contents."""
-        parent = self.dir.parent
-        parent.mkdir(parents=True, exist_ok=True)
-        artifacts_root = self.run_root / "artifacts"
-        if artifacts_root.is_symlink() or parent.is_symlink():
+        if Path(self.task_id).name != self.task_id or self.attempt < 1:
             raise WorkspaceCollisionError(
-                f"attempt workspace parent is a symlink: {parent}"
+                f"unsafe attempt workspace identity: {self.task_id!r}/{self.attempt}"
+            )
+        parent = self.dir.parent
+        artifacts_root = self.run_root / "artifacts"
+        if artifacts_root.exists():
+            if artifacts_root.is_symlink() or not artifacts_root.is_dir():
+                raise WorkspaceCollisionError(
+                    f"attempt workspace root is unsafe: {artifacts_root}"
+                )
+        else:
+            artifacts_root.mkdir()
+        try:
+            parent.mkdir()
+        except FileExistsError:
+            pass
+        if parent.is_symlink() or not parent.is_dir():
+            raise WorkspaceCollisionError(
+                f"attempt workspace parent is unsafe: {parent}"
             )
         try:
             self.dir.mkdir()
@@ -143,8 +158,30 @@ class AttemptWorkspace:
             ) from exc
 
     def write_text(self, filename: str, text: str) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
-        (self.dir / filename).write_text(text, encoding="utf-8")
+        """Write one harness-owned top-level file without following symlinks.
+
+        The workspace must already have been atomically claimed. A provider can
+        write inside it, so a normal Path.write_text after dispatch would follow
+        a malicious pre-created ``outcome.json`` symlink into the host.
+        """
+        if Path(filename).name != filename or filename in {"", ".", ".."}:
+            raise WorkspaceCollisionError(f"unsafe workspace filename: {filename!r}")
+        try:
+            directory_fd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as exc:
+            raise WorkspaceCollisionError(f"unsafe attempt workspace: {self.dir}") from exc
+        try:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+            try:
+                file_fd = os.open(filename, flags, 0o600, dir_fd=directory_fd)
+            except OSError as exc:
+                raise WorkspaceCollisionError(
+                    f"unsafe workspace output path: {self.dir / filename}"
+                ) from exc
+            with os.fdopen(file_fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        finally:
+            os.close(directory_fd)
 
     def write_json(self, filename: str, payload: Any) -> None:
         self.write_text(filename, json.dumps(payload, indent=2, default=str))

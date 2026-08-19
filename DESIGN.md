@@ -313,6 +313,12 @@ Five findings, four of which would have produced a silently wrong budget:
 5. **There is no cost field at all.** Cost must be computed, which makes the
    OpenRouter pricing fetch load-bearing for the governor rather than
    decorative.
+6. **Server tools are counted outside token fields.** `server_tool_use` reports
+   search and fetch requests. Those counts survive normalization; the frozen
+   route snapshot prices searches independently from tokens. A provider total
+   remains authoritative, so its already-included tool charge is not added a
+   second time. Fetch request count is retained even though Anthropic currently
+   charges only for the resulting tokens, not for the fetch itself.
 
 The parser will still be written defensively in Phase 4 — this is one CLI
 version on one machine, and `BudgetSnapshot.parse_warnings` exists so
@@ -497,6 +503,14 @@ reads the number as economic truth.
   provider CLI survive when the executor itself receives `SIGKILL`. On Linux,
   real subprocesses now pass through `process_guard.py`, which installs
   `PR_SET_PDEATHSIG` and forwards parent death to the provider process group.
+  The guard owns the final escalation as well: after one second it sends
+  `SIGKILL`, so a descendant that ignores `SIGTERM` cannot outlive an executor
+  that is no longer present to run normal cancellation cleanup.
+- **An agent-controlled workspace becomes hostile after dispatch.** Harness
+  metadata is written only inside a previously claimed directory using
+  no-follow file opens. Workspace roots are checked before child directories
+  are created, preventing a pre-created `artifacts` symlink from causing even
+  a rejected claim to mutate an external directory.
 - **Revision invalidation must cause execution.** `SUPERSEDED` means the task's
   own contract changed; `STALE` means an upstream contract changed. The
   executor schedules both as work and requires freshly `DONE` dependencies,
