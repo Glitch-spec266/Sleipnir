@@ -1,6 +1,6 @@
 # Sleipnir — Overview
 
-_Last updated: 2026-08-18 · Status: phases 1-5 complete; final gate pending._
+_Last updated: 2026-08-18 · Status: Phase 6 local gate in progress; live gate paused at quota._
 
 ## What this is
 
@@ -64,8 +64,11 @@ Runtime dependencies are only `pydantic` (data validation) and `httpx` (HTTP).
 | OpenRouter (`/api/v1/models`) | Current model prices, so costs can be computed | **No** — public endpoint, verified |
 
 **Sleipnir never implements a login flow.** The two CLI adapters shell out to the
-official tools and inherit whatever credentials those already hold. Only
-OpenRouter takes a key, read from the environment and never stored in the repo.
+official tools and inherit whatever credentials those already hold. OpenRouter
+takes a key from the environment. Separately, the budget meter performs one
+narrow read of Claude's existing credential file for `claudeAiOauth.accessToken`
+so it can call the same read-only usage endpoint as the CLI. That token is never
+logged, persisted, placed in state, or exposed by an exception.
 
 An important billing distinction that the code models explicitly: a `claude -p`
 call costs about **zero dollars** but consumes your **5-hour usage window**; an
@@ -96,9 +99,9 @@ Sleipnir/
 │   └── adapters/
 │       ├── base.py       # the one interface every provider must implement
 │       ├── claude.py     # `claude -p`      (verified against real output)
-│       ├── codex.py      # `codex exec`     (UNVERIFIED — flags not confirmed)
+│       ├── codex.py      # `codex exec`     (verified against CLI 0.148.0)
 │       └── openrouter.py # plain HTTP
-├── tests/                # 217 tests, including the manifest size bound
+├── tests/                # 221 tests, including the manifest size bound
 ├── DESIGN.md             # the reasoning, tradeoffs and open decisions
 ├── project.md            # living state — current phase, decisions, next steps
 └── overview.md           # this file
@@ -170,6 +173,11 @@ not trust.
 7. Finished work is folded back into a fresh, capped **manifest**, and the cycle
    repeats.
 
+If the executor is hard-killed after its fsynced start record but before its
+finish record, the next run closes that orphan as `INTERRUPTED` and retries in a
+new attempt directory. It first probes the recorded executor PID and refuses to
+steal work from a process that is still alive.
+
 ### How the router chooses a model
 
 The division of labour is the whole idea: **a person declares capability, the
@@ -209,22 +217,16 @@ no window. So a nearly-full window must never block an OpenRouter call, and a
 blown dollar budget must never be "fixed" by choosing a cheaper model — a
 cheaper model still costs money, and only refusing actually stops the spend.
 
-The awkward part is that **Sleipnir cannot see your real window limit.** Claude
-Code itself asks an authenticated endpoint (`GET /api/oauth/usage`) which
-answers in percentages, not tokens. Reaching it needs the login token the
-`claude` CLI holds, and Sleipnir's rule is that it never touches your
-credentials — the adapters shell out to the official tools precisely so the
-secret stays with the tool that owns it.
+Claude's authenticated `GET /api/oauth/usage` endpoint reports the five-hour
+window as a percentage, not a token limit. The governor reads that percentage
+through a narrowly scoped credential helper, then derives the token limit that
+is consistent with locally observed usage. Every credential or network failure
+falls back to local estimation rather than failing the run, and endpoint
+failures are cached to prevent a 429 retry storm.
 
-So the governor does the honest thing: **when it does not know the limit, it says
-so and allows the work**, while reporting how fast you are burning. A guessed
-limit is worse than none — it either throttles a run that had plenty of room, or
-waves through one that did not, and you cannot tell which happened.
-
-What it leans on instead is the one signal that is never a guess: an actual
-rate-limit rejection from the API. When that arrives, the window really is spent,
-and that fact outranks every estimate. Subscription work steps down a tier;
-OpenRouter work carries on untouched.
+An observed rate-limit rejection remains ground truth and outranks every
+estimate. It stops subscription dispatch while leaving metered OpenRouter work
+alone, because those spend different resources.
 
 One thing it will not do at any price: quietly downgrade a task that needs a huge
 context window. That is not a saving, it is a task that now fails for a different
@@ -273,10 +275,10 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-Last verified run: **118 passed** on Python 3.14.6.
+Last verified run: **221 passed** on Python 3.14.6.
 
-There is no command to run yet — the CLI is Phase 5, and the planner that would
-give it something to do is Phase 4.
+The CLI exposes `plan`, `run`, `resume`, `status`, and `explain` through both
+the `sleipnir` and `orch` console-script names.
 
 ## How to add code / extend it
 
@@ -305,8 +307,9 @@ give it something to do is Phase 4.
 ## Known limitations / TODO
 
 
-- **The `codex` adapter is unverified.** Its flags were written without the CLI
-  present. `codex` is now installed here, so this can be cleared.
+- **The full hard-kill live gate remains.** Codex flags and JSONL usage were
+  verified against CLI 0.148.0, and synthetic crash recovery is tested, but the
+  provider-backed killed-and-resumed run is paused until the usage window resets.
 - **Window-token accounting is roughly 10× too pessimistic.** Cache reads are
   ~94% of measured window usage and are currently counted as equal to input
   tokens, though they are priced far lower. Kept deliberately pessimistic until

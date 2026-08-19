@@ -22,3 +22,5 @@ run.lock
 graphify-out/.graphify_python
 graphify-out/.graphify_root
 graphify-out/cache/
+graphify-out/*.sig
+graphify-out/20??-??-??/

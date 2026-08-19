@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from sleipnir.adapters.base import (
     DispatchRequest,
 )
 from sleipnir.checks import UnsupportedCheckError
-from sleipnir.executor import Executor, ExecutorConfig, StaticRouter
+from sleipnir.executor import ConcurrentExecutionError, Executor, ExecutorConfig, StaticRouter
 from sleipnir.runlog import ResultLog
 from sleipnir.schema import (
     Adapter,
@@ -374,6 +375,70 @@ def test_completed_work_is_not_redispatched_on_resume(tmp_path: Path):
     )
     run(resumed.run())
     assert second.dispatched == [], "resume must not re-run completed tasks"
+
+
+def test_resume_closes_an_open_attempt_and_retries_in_a_fresh_workspace(tmp_path: Path):
+    """A hard-killed executor leaves only AttemptStarted; resume must not keep
+    that task in RUNNING forever or overwrite its first workspace."""
+    plan = plan_of(make_task("a"))
+    log = ResultLog(tmp_path / "results.jsonl")
+    routing = ROUTER.resolve(plan.tasks[0], attempt=1, tier=Tier.CODE)
+    log.append(AttemptStarted(
+        run_id="killed-run",
+        task_id="a",
+        attempt=1,
+        spec_hash=plan.tasks[0].spec_hash(),
+        plan_revision=plan.revision,
+        routing=routing,
+        pid=2_147_483_647,
+        started_at=T0,
+    ))
+
+    adapter = ScriptedAdapter()
+    resumed = Executor(
+        plan,
+        adapters={Adapter.OPENROUTER: adapter},
+        router=ROUTER,
+        log=log,
+        config=ExecutorConfig(run_root=tmp_path, env={}),
+    )
+    report = run(resumed.run())
+
+    assert adapter.dispatched == [("a", 2)]
+    assert report.succeeded == 1 and report.failed == 0
+    assert log.open_attempts() == {}
+    interrupted = [
+        record for record in log.read()
+        if isinstance(record, AttemptFinished)
+        and record.attempt == 1
+    ]
+    assert interrupted[0].failure_kind is FailureKind.INTERRUPTED
+    assert (tmp_path / "artifacts" / "task-a" / "attempt-02").is_dir()
+
+
+def test_resume_refuses_to_steal_an_attempt_from_a_live_executor(tmp_path: Path):
+    plan = plan_of(make_task("a"))
+    log = ResultLog(tmp_path / "results.jsonl")
+    routing = ROUTER.resolve(plan.tasks[0], attempt=1, tier=Tier.CODE)
+    log.append(AttemptStarted(
+        run_id="live-run",
+        task_id="a",
+        attempt=1,
+        spec_hash=plan.tasks[0].spec_hash(),
+        plan_revision=plan.revision,
+        routing=routing,
+        pid=os.getpid(),
+        started_at=T0,
+    ))
+    resumed = Executor(
+        plan,
+        adapters={Adapter.OPENROUTER: ScriptedAdapter()},
+        router=ROUTER,
+        log=log,
+        config=ExecutorConfig(run_root=tmp_path, env={}),
+    )
+    with pytest.raises(ConcurrentExecutionError, match="live executor"):
+        run(resumed.run())
 
 
 def test_downstream_receives_the_upstream_summary(tmp_path: Path):

@@ -4,11 +4,11 @@ Nothing in this module hardcodes a model name, a context window, or a price.
 Every one of those is fetched at runtime and cached, because a price baked into
 source is wrong the moment a provider changes it and wrong *silently*.
 
-**Response shape is UNVERIFIED in the environment this was written in** — the
-network policy here rejects CONNECT to openrouter.ai — so parsing is defensive
-in the same way the codex adapter's is: tolerant of key variation, explicit
-about what it could not understand, and never silently substituting zeros.
-A zero price would tell the budget governor that every model is free.
+The response shape and pricing sentinels were verified against the live
+OpenRouter catalogue on 2026-08-18. Parsing remains defensive: it tolerates
+optional metadata, reports what it could not understand, and never silently
+substitutes a missing price with zero. A zeroed missing price would tell the
+budget governor that every model is free.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class CatalogUnavailableError(RuntimeError):
 @dataclass(slots=True, frozen=True)
 class ModelInfo:
     id: str
-    context_length: int
+    context_length: int | None
     input_per_mtok: float
     output_per_mtok: float
     cache_read_per_mtok: float | None = None
@@ -234,8 +234,10 @@ def parse_models(payload: dict[str, Any]) -> tuple[dict[str, ModelInfo], list[st
         top = entry.get("top_provider") if isinstance(entry.get("top_provider"), dict) else {}
         context = _first_int(entry, ("context_length",)) or _first_int(top, ("context_length",))
         if not context:
-            warnings.append(f"{model_id}: no context_length; dropped")
-            continue
+            # Unknown is not the same as too small. Retain a priced model and
+            # let explainability surface the uncertainty; excluding it here
+            # quietly turns optional catalogue metadata into a hard policy.
+            warnings.append(f"{model_id}: no context_length; retained with unknown context")
 
         architecture = entry.get("architecture") if isinstance(entry.get("architecture"), dict) else {}
         params = entry.get("supported_parameters")
