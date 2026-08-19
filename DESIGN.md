@@ -511,6 +511,10 @@ reads the number as economic truth.
   no-follow file opens. Workspace roots are checked before child directories
   are created, preventing a pre-created `artifacts` symlink from causing even
   a rejected claim to mutate an external directory.
+- **Detached-process PID files are untrusted hints.** Browser shutdown verifies
+  the live process command line, debugging port, profile and session-leader
+  identity before signaling its group. PID publication uses atomic replacement,
+  so a symlink or recycled integer cannot become authority to kill a process.
 - **Revision invalidation must cause execution.** `SUPERSEDED` means the task's
   own contract changed; `STALE` means an upstream contract changed. The
   executor schedules both as work and requires freshly `DONE` dependencies,

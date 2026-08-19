@@ -20,7 +20,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import signal
+import stat
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,6 +47,60 @@ CDP_ENDPOINT = f"http://127.0.0.1:{DEBUG_PORT}"
 #: success while Chromium kept running, which is exactly the kind of stray
 #: process that makes a tool feel untrustworthy.
 PID_FILE = Path.home() / ".sleipnir" / "browser.pid"
+
+
+def _publish_pid(pid: int, path: Path | None = None) -> None:
+    """Atomically publish a private PID file without following an old symlink."""
+    path = PID_FILE if path is None else path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+            handle.write(str(pid))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _read_pid(path: Path | None = None) -> int | None:
+    path = PID_FILE if path is None else path
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 32:
+            return None
+        raw = os.read(descriptor, 32)
+        pid = int(raw.decode("ascii").strip())
+        return pid if pid > 1 else None
+    except (OSError, UnicodeError, ValueError):
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def _pid_matches_browser(
+    pid: int,
+    profile_dir: Path | None = None,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> bool:
+    """Verify the PID still names Sleipnir's exact Chromium invocation."""
+    profile_dir = DEFAULT_PROFILE if profile_dir is None else profile_dir
+    try:
+        argv = (proc_root / str(pid) / "cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return False
+    decoded = {arg.decode("utf-8", "replace") for arg in argv if arg}
+    return (
+        f"--remote-debugging-port={DEBUG_PORT}" in decoded
+        and f"--user-data-dir={profile_dir}" in decoded
+    )
 
 
 def _cdp_alive(timeout_s: float = 0.5) -> bool:
@@ -102,8 +160,7 @@ async def ensure_browser(profile_dir: Path = DEFAULT_PROFILE, *, headless: bool 
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text(str(process.pid), encoding="utf-8")
+    _publish_pid(process.pid)
 
     deadline = time.monotonic() + 20.0
     while time.monotonic() < deadline:
@@ -111,6 +168,9 @@ async def ensure_browser(profile_dir: Path = DEFAULT_PROFILE, *, headless: bool 
             audit.record("browser.daemon_started", {"endpoint": CDP_ENDPOINT})
             return CDP_ENDPOINT
         await asyncio.sleep(0.2)
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    PID_FILE.unlink(missing_ok=True)
     raise CapabilityError(
         f"the browser did not open a debugging port on {CDP_ENDPOINT} within 20s"
     )
@@ -126,18 +186,16 @@ def available() -> bool:
 
 def stop_browser(timeout_s: float = 8.0) -> bool:
     """Terminate the detached browser, if one is running. True if it stopped."""
-    import os
-    import signal
-
-    if not PID_FILE.exists():
-        return False
-    try:
-        pid = int(PID_FILE.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+    pid = _read_pid()
+    if pid is None or not _pid_matches_browser(pid):
         PID_FILE.unlink(missing_ok=True)
         return False
     try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        group = os.getpgid(pid)
+        if group != pid:
+            PID_FILE.unlink(missing_ok=True)
+            return False
+        os.killpg(group, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
         PID_FILE.unlink(missing_ok=True)
         return False

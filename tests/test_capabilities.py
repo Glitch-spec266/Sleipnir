@@ -218,3 +218,41 @@ def test_browser_profile_defaults_outside_the_repo():
     # accident sooner or later; keep it in the user's home.
     assert "Sleipnir" not in str(browser.DEFAULT_PROFILE)
     assert browser.DEFAULT_PROFILE.name == "browser-profile"
+
+
+def test_browser_pid_is_published_without_following_an_old_symlink(tmp_path):
+    pid_file = tmp_path / "browser.pid"
+    outside = tmp_path / "outside"
+    outside.write_text("do not overwrite", encoding="utf-8")
+    pid_file.symlink_to(outside)
+    browser._publish_pid(1234, pid_file)
+    assert pid_file.is_symlink() is False
+    assert pid_file.read_text(encoding="ascii") == "1234"
+    assert outside.read_text(encoding="utf-8") == "do not overwrite"
+
+
+def test_browser_pid_reader_rejects_symlink_and_implausible_pid(tmp_path):
+    real = tmp_path / "real"
+    real.write_text("1234", encoding="ascii")
+    linked = tmp_path / "linked"
+    linked.symlink_to(real)
+    assert browser._read_pid(linked) is None
+    real.write_text("1", encoding="ascii")
+    assert browser._read_pid(real) is None
+
+
+def test_browser_pid_must_match_the_expected_port_and_profile(tmp_path):
+    proc = tmp_path / "proc"
+    cmdline = proc / "4321" / "cmdline"
+    cmdline.parent.mkdir(parents=True)
+    profile = tmp_path / "profile"
+    cmdline.write_bytes(
+        b"/chromium\0--remote-debugging-port=9333\0"
+        + f"--user-data-dir={profile}".encode()
+        + b"\0"
+    )
+    assert browser._pid_matches_browser(4321, profile, proc_root=proc)
+    assert not browser._pid_matches_browser(4321, tmp_path / "other", proc_root=proc)
+
+    cmdline.write_bytes(b"/unrelated\0--remote-debugging-port=9333\0")
+    assert not browser._pid_matches_browser(4321, profile, proc_root=proc)
