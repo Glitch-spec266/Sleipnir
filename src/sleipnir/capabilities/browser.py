@@ -130,12 +130,14 @@ async def ensure_browser(profile_dir: Path = DEFAULT_PROFILE, *, headless: bool 
     """
     import subprocess
 
-    from playwright.async_api import async_playwright
-
     if _cdp_alive():
         return CDP_ENDPOINT
 
+    if profile_dir.exists() and (profile_dir.is_symlink() or not profile_dir.is_dir()):
+        raise CapabilityError(f"unsafe browser profile directory: {profile_dir}")
     profile_dir.mkdir(parents=True, exist_ok=True)
+    from playwright.async_api import async_playwright
+
     playwright = await async_playwright().start()
     try:
         executable = playwright.chromium.executable_path

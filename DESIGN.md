@@ -519,6 +519,10 @@ reads the number as economic truth.
   only bounded, no-follow request files whose filename, embedded ID and live
   same-user requester PID agree. Answers are private write-once status files;
   neither arbitrary payloads nor stale requests can trigger credential entry.
+- **Persistent host paths reject redirection.** Capability audit files are
+  opened append-only/no-follow with private mode; clipboard attachment and
+  browser-profile directories must be real directories. A failed trust check
+  happens before creating anything through the suspect path.
 - **Revision invalidation must cause execution.** `SUPERSEDED` means the task's
   own contract changed; `STALE` means an upstream contract changed. The
   executor schedules both as work and requires freshly `DONE` dependencies,

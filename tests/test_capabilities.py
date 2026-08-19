@@ -8,6 +8,7 @@ boundary — the same discipline the executor tests use for provider spawns.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -63,6 +64,16 @@ def test_typed_text_is_recorded_by_length_not_content(audit_log, fake_ydotool):
     body = audit_log.read_text()
     assert "my-api-key-value" not in body
     assert '"chars": 16' in body
+
+
+def test_audit_log_never_follows_a_precreated_symlink(tmp_path):
+    outside = tmp_path / "outside"
+    outside.write_text("keep", encoding="utf-8")
+    linked = tmp_path / "audit.jsonl"
+    linked.symlink_to(outside)
+    with pytest.raises(OSError):
+        audit.record("desktop.test", log=linked)
+    assert outside.read_text(encoding="utf-8") == "keep"
 
 
 # --- keyboard / mouse ----------------------------------------------------
@@ -147,6 +158,22 @@ def test_wayland_clipboard_materialises_an_image_privately(audit_log, tmp_path, 
     assert payload.mime_type == "image/png"
     assert payload.path is not None and payload.path.read_bytes() == b"\x89PNGpixels"
     assert payload.path.stat().st_mode & 0o777 == 0o600
+
+
+def test_clipboard_image_rejects_a_symlinked_destination(audit_log, tmp_path, monkeypatch):
+    def fake_run(argv, **kwargs):
+        stdout = b"image/png\n" if "--list-types" in argv else b"pixels"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": b""})()
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = tmp_path / "clipboard"
+    linked.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: "/usr/bin/wl-paste")
+    monkeypatch.setattr(clipboard.subprocess, "run", fake_run)
+    with pytest.raises(clipboard.ClipboardError, match="unsafe"):
+        clipboard.read(destination_dir=linked)
+    assert list(outside.iterdir()) == []
 
 
 def test_grim_is_not_selected_on_kde(monkeypatch):
@@ -256,3 +283,13 @@ def test_browser_pid_must_match_the_expected_port_and_profile(tmp_path):
 
     cmdline.write_bytes(b"/unrelated\0--remote-debugging-port=9333\0")
     assert not browser._pid_matches_browser(4321, profile, proc_root=proc)
+
+
+def test_browser_rejects_a_symlinked_profile_before_launch(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = tmp_path / "profile"
+    linked.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(browser, "_cdp_alive", lambda: False)
+    with pytest.raises(computer.CapabilityError, match="unsafe browser profile"):
+        asyncio.run(browser.ensure_browser(linked))
