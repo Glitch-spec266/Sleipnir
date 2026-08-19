@@ -1,6 +1,6 @@
 # Sleipnir — Project State
 
-_Started: 2026-08-18 · Last checkpoint: 2026-08-19, sparse control + live Codex gate_
+_Started: 2026-08-18 · Last checkpoint: 2026-08-19, complete live console matrix_
 
 ## Goal
 
@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–9 are complete with **419 tests passing**.
+Phases 1–9 are complete with **423 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -117,10 +117,13 @@ already carries the readable product name.
 ## Guarded fast lane and `/project` (2026-08-19)
 
 Ordinary console requests now default to Haiku, but Haiku is not trusted to
-decide and act in one step. Sleipnir first invokes it with `--tools ""` and a
-binary capability protocol. Only an exact one-turn `SLEIPNIR_CAPABLE` verdict
-allows a second Haiku turn to use tools. A decline, extra prose, missing turn
-telemetry, or any malformed answer fails closed to Sonnet. Sleipnir never
+decide and act in one step. Classification runs in a disposable session with
+the binary protocol as its replacement system prompt. Built-ins are disabled
+with `--tools ""`; plugin tools are independently removed with strict empty MCP
+configuration. Only an exact one-turn `SLEIPNIR_CAPABLE` verdict opens the
+durable action session. A decline, extra prose, missing telemetry, or malformed
+answer fails closed to Sonnet. The chosen model receives the untouched request
+directly, never the classifier's contaminated conversation. Sleipnir never
 replays a failed action automatically: once a model may have touched the host,
 retrying the same request could duplicate an irreversible side effect.
 
@@ -323,10 +326,13 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   reads the run lock: an owned run directory means an executor is mid-build and
   the brain is asleep between decisions. Nothing is stored, so there is no
   wake-state file to go stale or to repair after a crash.
-- 2026-08-19 — **Capability classification gets no tools.** Asking a model to
-  promise it will decline before acting is not enforcement. The fast-lane check
-  runs with an empty tool set, and only a strict affirmative opens Haiku's
-  action turn; uncertainty and protocol drift go to Sonnet.
+- 2026-08-19 — **Capability classification gets no tool surface.** Asking a
+  model to promise it will decline before acting is not enforcement. A live
+  check proved `--tools ""` removes built-ins but not plugin MCP tools: Haiku
+  reached an MCP shell during assessment. The classifier now also uses strict
+  empty MCP configuration, a replacement system prompt, and an ephemeral
+  session. Only a strict affirmative opens Haiku's separate action session;
+  uncertainty and protocol drift go to Sonnet.
 - 2026-08-19 — **Complexity is an operator command, not a prose heuristic.**
   Ordinary messages are small requests; `/project <goal>` invokes the existing
   multi-model plan/orchestrate pipeline. This boundary is visible, predictable,
@@ -388,10 +394,11 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   into the PTY planned exactly two independent `reason`/`code` tasks, routed
   both through Codex, and completed hashed `ROUTED_REASON_OK` and
   `ROUTED_CODE_OK` artifacts in one orchestration cycle (130,718 Codex tokens).
-- 2026-08-19 — **Only a tool-free failure may fall back automatically.** If the
-  Haiku assessment process itself is unavailable, Sleipnir rotates uncertain
-  first-turn session state and gives Sonnet the untouched original request.
-  Once any model has tools, failure is never replayed.
+- 2026-08-19 — **Only a tool-free failure may fall back automatically.** The
+  Haiku assessment owns a disposable session, so process failure cannot reserve
+  or poison the durable action conversation. Sonnet receives the untouched
+  original request directly. Once any model has tools, failure is never
+  replayed.
 - 2026-08-19 — **Lane choice stays visible after the status frame.** The console
   records a content-free transcript notice when the fast lane is approved or
   fails closed to the strong model, so operators and live verification can
@@ -410,6 +417,14 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   arity is checked before Playwright attaches, and `browser close` signals the
   verified detached process directly. Closing an absent browser no longer
   launches Chromium merely to shut it down.
+- 2026-08-19 — **The ordinary console matrix is live.** A real tool-free Haiku
+  session returned `SLEIPNIR_CAPABLE` with zero tool calls; real Haiku answered
+  `Four.` in the separate action session. A separate destructive database ask
+  produced an exact `SLEIPNIR_DECLINE` with zero tool calls, and real Sonnet
+  refused the untouched request. In a third session Haiku opened headless
+  Chromium, initiated the credential handoff, read `SUBMITTED_LENGTH_25`, and
+  closed the browser. The dummy appeared in no audit record and the browser PID
+  state was gone afterward.
 
 ## Open questions
 
@@ -428,9 +443,10 @@ lookback. Both are preserved on the `parallel-build-local` branch.
    `python -m sleipnir.cli computer screenshot` itself and read back a real
    3840x1080 dual-monitor capture. That closes the join the harness exists for:
    console → `claude` → host capability → image back into the model's context.
-   Browser navigation and the new focus-independent secret/CDP handoff are also
-   live-verified standalone; the remaining proof is Claude initiating them from
-   inside the console after quota resets.
+   Browser navigation and focus-independent secret/CDP submission have now also
+   been initiated by Claude from inside the console: the model opened a local
+   form, requested the out-of-band credential, read `SUBMITTED_LENGTH_25`, and
+   closed Chromium without learning the value.
 2. ~~**Live-verify the gate against a real provider run.**~~ **Done, live,
    2026-08-19.** The gate persisted one finite failed-module-only escalation,
    real Codex completed attempt two, and the declared proof artifact passed.
@@ -442,15 +458,12 @@ lookback. Both are preserved on the `parallel-build-local` branch.
    Search request rates come from the frozen live catalogue snapshot; fetch
    counts remain visible but carry no separate fee under current Anthropic
    pricing. Provider totals take precedence over estimates.
-5. **Partially live-verified.** A disposable `/project` typed into the real PTY
-   completed through `reason` and `code` tiers with two accepted artifacts.
-   The ordinary Haiku-pass and Haiku-decline→Sonnet branches still require the
-   exhausted Claude window to reset.
-
-Live verification is currently paused by the provider, not by the harness: the
-read-only Anthropic meter reported the five-hour window at **100.0%**, resetting
-at **2026-08-19 23:29:59 UTC**. No Claude call was attempted after that reading;
-the gate and `/project` proofs used the separate Codex subscription pool.
+5. ~~**Live-verify `/project` and both ordinary routing branches.**~~ **Done,
+   live, 2026-08-19.** A disposable `/project` typed into the real PTY completed
+   through `reason` and `code` tiers with two accepted artifacts. After the
+   provider reset, an ordinary request opened real Haiku, while an exact
+   high-stakes decline routed the untouched request to real Sonnet. The same
+   matrix closed the console→Claude→browser→secret join.
 
 ## Environment on this machine
 

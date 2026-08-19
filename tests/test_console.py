@@ -174,6 +174,24 @@ def test_console_model_alias_is_passed_to_the_cli():
 def test_capability_check_can_be_physically_denied_all_tools():
     argv = chat.claude_argv("s", resume=False, model="fast", tools=())
     assert argv[argv.index("--tools") + 1] == ""
+    assert "--strict-mcp-config" in argv
+    assert argv[argv.index("--mcp-config") + 1] == '{"mcpServers":{}}'
+
+
+def test_nonempty_claude_tools_preserve_operator_mcp_configuration():
+    argv = chat.claude_argv("s", resume=False, tools=("Read",))
+    assert argv[argv.index("--tools") + 1] == "Read"
+    assert "--strict-mcp-config" not in argv
+    assert "--mcp-config" not in argv
+
+
+def test_classifier_can_replace_the_default_agent_prompt():
+    argv = chat.claude_argv(
+        "s",
+        resume=False,
+        system_prompt="classify only",
+    )
+    assert argv[argv.index("--system-prompt") + 1] == "classify only"
 
 
 def test_chat_turn_uses_guarded_process_runner_and_stdin():
@@ -238,7 +256,7 @@ def test_capable_request_is_checked_without_tools_then_run_on_fast_model(monkeyp
     )
 
     async def fake_ask(prompt, session_id, **kwargs):
-        calls.append((prompt, kwargs))
+        calls.append((prompt, session_id, kwargs))
         return next(replies)
 
     monkeypatch.setattr(chat, "ask_claude", fake_ask)
@@ -246,9 +264,15 @@ def test_capable_request_is_checked_without_tools_then_run_on_fast_model(monkeyp
     first_turn = [True]
     asyncio.run(console._handle(state, "take a screenshot", first_turn=first_turn))
 
-    assert [kwargs["model"] for _, kwargs in calls] == ["fast", "fast"]
-    assert calls[0][1]["tools"] == ()
-    assert "tools" not in calls[1][1]
+    assert [kwargs["model"] for _, _, kwargs in calls] == ["fast", "fast"]
+    assert calls[0][2]["tools"] == ()
+    assert calls[0][2]["system_prompt"] == chat.FAST_LANE_ASSESSMENT
+    assert calls[0][1] != state.session_id
+    assert calls[0][2]["resume"] is False
+    assert calls[1][1] == state.session_id
+    assert calls[1][2]["resume"] is False
+    assert "take a screenshot" in calls[1][0]
+    assert "tools" not in calls[1][2]
     assert state.messages[-1].text == "done"
     assert any("Fast lane approved" in message.text for message in state.messages)
     assert first_turn == [False]
@@ -265,15 +289,19 @@ def test_decline_or_malformed_check_routes_to_strong_model(monkeypatch, verdict)
     )
 
     async def fake_ask(prompt, session_id, **kwargs):
-        calls.append(kwargs)
+        calls.append((prompt, session_id, kwargs))
         return next(replies)
 
     monkeypatch.setattr(chat, "ask_claude", fake_ask)
     state = console.ConsoleState(model="strong", fast_model="fast")
     asyncio.run(console._handle(state, "do the thing", first_turn=[True]))
 
-    assert [call["model"] for call in calls] == ["fast", "strong"]
-    assert calls[0]["tools"] == ()
+    assert [call[2]["model"] for call in calls] == ["fast", "strong"]
+    assert calls[0][2]["tools"] == ()
+    assert calls[0][1] != state.session_id
+    assert calls[1][1] == state.session_id
+    assert calls[1][2]["resume"] is False
+    assert "do the thing" in calls[1][0]
     assert state.messages[-1].text == "handled safely"
     assert any("routing the untouched request" in message.text for message in state.messages)
 
@@ -318,10 +346,62 @@ def test_failed_tool_free_assessment_falls_closed_to_strong_model(monkeypatch):
     assert [call[2]["model"] for call in calls] == ["haiku", "sonnet"]
     assert calls[0][2]["tools"] == ()
     assert calls[1][2]["resume"] is False
-    assert calls[1][1] != original_session
+    assert calls[0][1] != original_session
+    assert calls[1][1] == original_session
     assert "explain this screenshot" in calls[1][0]
     assert state.messages[-1].text == "handled by Sonnet"
     assert first_turn == [False]
+
+
+def test_failed_assessment_reserves_session_before_strong_action(monkeypatch):
+    calls = []
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((session_id, kwargs))
+        if len(calls) == 1:
+            raise chat.ChatError("assessment unavailable")
+        raise chat.ChatError("Sonnet failed after it may have changed the host")
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(session_id="durable", model="sonnet", fast_model="haiku")
+    first_turn = [True]
+    asyncio.run(console._handle(state, "perform an action", first_turn=first_turn))
+
+    assert calls[0][0] != state.session_id
+    assert calls[1][0] == state.session_id
+    assert calls[1][1]["resume"] is False
+    assert first_turn == [False]
+    assert state.messages[-1].role == "error"
+    assert "may have changed the host" in state.messages[-1].text
+
+
+def test_each_gate_is_ephemeral_while_action_chat_resumes(monkeypatch):
+    calls = []
+    replies = iter(
+        [
+            chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1),
+            chat.Reply(text="first", speaker="claude", turns=1),
+            chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1),
+            chat.Reply(text="second", speaker="claude", turns=1),
+        ]
+    )
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((prompt, session_id, kwargs))
+        return next(replies)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(session_id="durable", model="strong", fast_model="fast")
+    first_turn = [True]
+    asyncio.run(console._handle(state, "first request", first_turn=first_turn))
+    asyncio.run(console._handle(state, "second request", first_turn=first_turn))
+
+    assert calls[0][1] != calls[2][1]
+    assert calls[0][1] != state.session_id and calls[2][1] != state.session_id
+    assert [calls[index][1] for index in (1, 3)] == [state.session_id, state.session_id]
+    assert [calls[index][2]["resume"] for index in range(4)] == [False, False, False, True]
+    assert "first request" in calls[1][0]
+    assert calls[3][0] == "second request"
 
 
 def test_project_command_has_an_explicit_boundary():

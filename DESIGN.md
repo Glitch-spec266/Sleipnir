@@ -527,6 +527,12 @@ reads the number as economic truth.
   allocates a fresh timestamped directory beneath the console's `runs/` base
   and carries discovered configuration into it. An exact run root is used only
   when the operator supplied `--run-root` explicitly.
+- **Fast-lane classification and action are different security domains.** The
+  classifier has a replacement binary-verdict system prompt, a disposable
+  session, no built-in tools, and strict empty MCP configuration. This last
+  control is independent: a live run proved `--tools ""` alone still permits
+  plugin MCP tools. The chosen action model receives the untouched request in
+  the durable session, so gate instructions cannot poison a Sonnet fallback.
 - **Gate escalation has crossed a real provider boundary.** A seeded terminal
   module was the only failed ID in the verdict; the gate persisted a one-tier,
   one-attempt revision and real Codex produced the declared proof on attempt

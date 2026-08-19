@@ -308,14 +308,15 @@ non-plan task id, while quota/notional accounting must include it.
 - **A credential answer carries a status, never a value.** `await_answer`
   returns `supplied`/`cancelled`/`failed`. A caller that could read the
   plaintext is a caller that could log it.
-- **Capability checks must be physically tool-free.** The console invokes the
-  Haiku assessment with `--tools ""`; prompt instructions alone do not force a
-  model to admit uncertainty before acting. Only the exact one-turn affirmative
-  verdict opens Haiku's action lane. Everything malformed fails closed to
-  Sonnet, and a post-action failure is never replayed automatically.
-  A failed assessment process is also safe to fall back because it had no
-  tools; on the first turn rotate the possibly reserved session ID and send
-  Sonnet the untouched original request.
+- **Capability checks must be physically tool-free.** `--tools ""` disables
+  built-ins but does not disable plugin MCP tools; this escaped live and let an
+  assessment reach an MCP shell. Use strict discovery with an explicit empty MCP
+  configuration too. The gate protocol is a replacement system prompt in a
+  disposable session; only its exact one-turn affirmative opens the separate
+  durable action session. Everything malformed fails closed to Sonnet with the
+  untouched request, and a post-action failure is never replayed automatically.
+  A failed assessment is safe to fall back because it cannot reserve or poison
+  the action session and has neither tool surface.
   Keep the content-free lane decision visible in the console transcript; a
   transient status-bar label is not enough evidence of which model acted.
 - **`/project` is the complex-work boundary.** Ordinary messages use guarded
