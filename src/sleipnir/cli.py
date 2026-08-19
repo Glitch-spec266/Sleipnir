@@ -887,6 +887,7 @@ async def cmd_console(args: argparse.Namespace) -> int:
     state.run_dir = run_dir if run_dir.exists() else None
     if getattr(args, "ask_first", False):
         state.permission_mode = "acceptEdits"
+    state.model = getattr(args, "model", "sonnet") or None
     return await run_console(state, splash=not getattr(args, "no_splash", False))
 
 
@@ -1037,6 +1038,9 @@ async def cmd_browser(args: argparse.Namespace) -> int:
             await web.fill(rest[0], rest[1])
         elif action == "screenshot":
             print(await web.screenshot(rest[0] if rest else "page.png"))
+        elif action == "close":
+            await web.shutdown()
+            print("browser closed")
     return 0
 
 
@@ -1047,12 +1051,28 @@ async def cmd_secret(args: argparse.Namespace) -> int:
     command learns only that a credential was supplied — which is the entire
     point of routing sign-ins through Sleipnir instead of the conversation.
     """
-    from sleipnir.capabilities import secrets
+    from sleipnir.capabilities import handoff, secrets
 
-    print(f"Sleipnir needs a credential: {args.label}", file=sys.stderr)
-    print("It is typed into the focused window and never stored.", file=sys.stderr)
-    secret = secrets.capture(args.label)
-    secrets.type_into_focused_window(secret, submit=args.submit)
+    # A tool subprocess has no controlling terminal, so it cannot prompt. When
+    # this command *is* run from a terminal — an operator testing it by hand —
+    # prompting directly is still the shortest path and avoids requiring a
+    # console to be open.
+    if sys.stdin.isatty():
+        print(f"Sleipnir needs a credential: {args.label}", file=sys.stderr)
+        print("It is typed into the focused window and never stored.", file=sys.stderr)
+        secret = secrets.capture(args.label)
+        secrets.type_into_focused_window(secret, submit=args.submit)
+        print("credential supplied")
+        return 0
+
+    request = handoff.request_secret(args.label, submit=args.submit)
+    print(f"waiting for the Sleipnir console to supply: {args.label}", file=sys.stderr)
+    try:
+        status = handoff.await_answer(request)
+    except TimeoutError as exc:
+        raise CliError(str(exc)) from exc
+    if status != "supplied":
+        raise CliError(f"credential was not supplied ({status})")
     print("credential supplied")
     return 0
 
@@ -1083,6 +1103,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="confirm each tool use instead of granting full host control",
     )
+    console_parser.add_argument(
+        "--model",
+        default="sonnet",
+        help="model alias for console turns (default: sonnet — the account "
+             "default is slower and costs a full spawn per message); pass an "
+             "empty string to let the account choose",
+    )
     console_parser.set_defaults(func=cmd_console)
 
     setup_parser = subparsers.add_parser(
@@ -1104,7 +1131,9 @@ def build_parser() -> argparse.ArgumentParser:
     computer_parser.set_defaults(func=cmd_computer)
 
     browser_parser = subparsers.add_parser("browser", help="drive a real browser")
-    browser_parser.add_argument("action", choices=["open", "text", "click", "fill", "screenshot"])
+    browser_parser.add_argument(
+        "action", choices=["open", "text", "click", "fill", "screenshot", "close"]
+    )
     browser_parser.add_argument("args", nargs="*")
     browser_parser.add_argument("--headless", action="store_true")
     browser_parser.set_defaults(func=cmd_browser)
