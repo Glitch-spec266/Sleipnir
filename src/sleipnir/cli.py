@@ -884,9 +884,16 @@ async def cmd_console(args: argparse.Namespace) -> int:
 
     state = ConsoleState()
     run_dir = Path(getattr(args, "run_root", ".")).resolve()
-    state.run_dir = run_dir if run_dir.exists() else None
+    state.project_base = run_dir
+    state.run_root_explicit = bool(getattr(args, "run_root_explicit", False))
+    state.run_dir = run_dir if state.run_root_explicit else None
     config_arg = getattr(args, "config", None)
-    state.config_path = Path(config_arg).resolve() if config_arg else None
+    discovered = SleipnirConfig.discover(run_dir) if not config_arg else None
+    state.config_path = (
+        Path(config_arg).resolve()
+        if config_arg
+        else discovered.resolve() if discovered is not None else None
+    )
     state.cache_read_weight = getattr(args, "cache_read_weight", 1.0)
     if getattr(args, "ask_first", False):
         state.permission_mode = "acceptEdits"
@@ -1105,7 +1112,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Budget-aware agentic orchestrator.",
     )
     parser.add_argument("--config", help="path to sleipnir.toml (default: discover in cwd)")
-    parser.add_argument("--run-root", default=".", help="run directory (default: .)")
+    parser.add_argument(
+        "--run-root",
+        default=argparse.SUPPRESS,
+        help="run directory (commands default to .; bare console projects allocate under ./runs)",
+    )
     parser.add_argument(
         "--cache-read-weight",
         type=nonnegative_float,
@@ -1268,6 +1279,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    args.run_root_explicit = hasattr(args, "run_root")
+    if not args.run_root_explicit:
+        args.run_root = "."
     if getattr(args, "func", None) is None:
         # Bare `sleipnir` is the console, the way bare `claude` is a session.
         args.func = cmd_console

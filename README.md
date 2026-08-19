@@ -54,7 +54,7 @@ src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
 src/sleipnir/console.py      guarded chat + `/project` multi-model front door
 src/sleipnir/chat.py         Claude session transport + tool-free fast-lane gate
 src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate
-tests/                       412 tests, including the executable form of the
+tests/                       414 tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -112,7 +112,9 @@ side effect. `--fast-model` and `--model` override the two aliases, and an empty
 `/project <goal>` is the explicit boundary for larger work. It bypasses ordinary
 chat and runs the existing `plan` then `orchestrate` commands, so decomposition,
 tier routing, budgets, acceptance checks, phase-gate escalation, and review gates
-remain the same pipeline as batch operation.
+remain the same pipeline as batch operation. In a bare console every invocation
+gets a fresh named workspace beneath `./runs`; `--run-root` opts into one exact
+workspace instead.
 
 The console enables terminal bracketed-paste mode, so Ctrl+Shift+V inserts
 multiline text atomically instead of leaking CSI markers or submitting halfway

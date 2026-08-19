@@ -523,6 +523,10 @@ reads the number as economic truth.
   opened append-only/no-follow with private mode; clipboard attachment and
   browser-profile directories must be real directories. A failed trust check
   happens before creating anything through the suspect path.
+- **Interactive projects never default to the source tree.** Bare `/project`
+  allocates a fresh timestamped directory beneath the console's `runs/` base
+  and carries discovered configuration into it. An exact run root is used only
+  when the operator supplied `--run-root` explicitly.
 - **Revision invalidation must cause execution.** `SUPERSEDED` means the task's
   own contract changed; `STALE` means an upstream contract changed. The
   executor schedules both as work and requires freshly `DONE` dependencies,

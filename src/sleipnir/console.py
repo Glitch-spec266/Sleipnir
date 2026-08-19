@@ -110,6 +110,10 @@ class ConsoleState:
     status: str = "ready"
     busy: bool = False
     run_dir: Path | None = None
+    #: Base under which a bare console allocates one fresh run per `/project`.
+    project_base: Path | None = None
+    #: An operator-supplied --run-root is exact and must not be silently nested.
+    run_root_explicit: bool = False
     config_path: Path | None = None
     cache_read_weight: float = 1.0
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -497,6 +501,22 @@ def _project_argv(state: ConsoleState, *command: str) -> list[str]:
     return [*argv, *command]
 
 
+def _allocate_project_run(state: ConsoleState, goal: str) -> Path:
+    """Choose a collision-resistant workspace for one `/project` invocation."""
+    if state.run_root_explicit:
+        if state.run_dir is None:  # pragma: no cover - cmd_console establishes it
+            raise RuntimeError("explicit project run root is unavailable")
+        state.run_dir.mkdir(parents=True, exist_ok=True)
+        return state.run_dir
+    base = state.project_base or Path.cwd()
+    slug = re.sub(r"[^a-z0-9]+", "-", goal.lower()).strip("-")[:40] or "project"
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    run_dir = base / "runs" / f"{stamp}-{slug}-{uuid.uuid4().hex[:6]}"
+    run_dir.mkdir(parents=True)
+    state.run_dir = run_dir
+    return run_dir
+
+
 async def _run_project_stage(
     state: ConsoleState,
     *command: str,
@@ -527,6 +547,7 @@ async def _run_project_stage(
 
 async def _run_project(state: ConsoleState, goal: str) -> None:
     """Plan and execute a goal through Sleipnir's real multi-model pipeline."""
+    _allocate_project_run(state, goal)
     state.status = "project · planning"
     plan_output = await _run_project_stage(state, "plan", goal)
     state.add(
