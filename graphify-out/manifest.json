@@ -1,121 +1,121 @@
 {
   "pyproject.toml": {
     "mtime": 1787148278.2762582,
-    "seen": 1787148603.6370313,
+    "seen": 1787164469.7182868,
     "ast_hash": "20f4dbc3539ee480413070283e4487e7",
     "semantic_hash": "20f4dbc3539ee480413070283e4487e7"
   },
   "src/sleipnir/__init__.py": {
     "mtime": 1787097960.862731,
-    "seen": 1787148603.637036,
+    "seen": 1787164469.71829,
     "ast_hash": "4ec002d6c72d9fda63143d7f1893fa52",
     "semantic_hash": "4ec002d6c72d9fda63143d7f1893fa52"
   },
   "src/sleipnir/adapters/__init__.py": {
     "mtime": 1787029541.6544282,
-    "seen": 1787148603.6370387,
+    "seen": 1787164469.718292,
     "ast_hash": "395e84dd274ccd8aa2b6764163921b14",
     "semantic_hash": "395e84dd274ccd8aa2b6764163921b14"
   },
   "src/sleipnir/adapters/base.py": {
     "mtime": 1787115317.0232441,
-    "seen": 1787148603.6370401,
+    "seen": 1787164469.7182927,
     "ast_hash": "8c1889cac0e367c4412c84aec819ab43",
     "semantic_hash": "8c1889cac0e367c4412c84aec819ab43"
   },
   "src/sleipnir/adapters/claude.py": {
     "mtime": 1787115317.024244,
-    "seen": 1787148603.6370413,
+    "seen": 1787164469.7182934,
     "ast_hash": "1c61181bf9f6d5f3cb502832573ac7b5",
     "semantic_hash": "1c61181bf9f6d5f3cb502832573ac7b5"
   },
   "src/sleipnir/adapters/codex.py": {
     "mtime": 1787116902.037393,
-    "seen": 1787148603.6370428,
+    "seen": 1787164469.718294,
     "ast_hash": "18f13e7441496b6cfadff7ba0300c80a",
     "semantic_hash": "18f13e7441496b6cfadff7ba0300c80a"
   },
   "src/sleipnir/adapters/openrouter.py": {
     "mtime": 1787116532.1959383,
-    "seen": 1787148603.6370435,
+    "seen": 1787164469.7182946,
     "ast_hash": "892c515475626d2d5db33325dceb8271",
     "semantic_hash": "892c515475626d2d5db33325dceb8271"
   },
   "src/sleipnir/artifacts.py": {
     "mtime": 1787115673.2394016,
-    "seen": 1787148603.6370444,
+    "seen": 1787164469.7182956,
     "ast_hash": "c3fe6967e1add02ca2825f220df4f857",
     "semantic_hash": "c3fe6967e1add02ca2825f220df4f857"
   },
   "src/sleipnir/checks.py": {
     "mtime": 1787029541.6545057,
-    "seen": 1787148603.637054,
+    "seen": 1787164469.7183008,
     "ast_hash": "756559d8a93c483e92e262e7535a80a0",
     "semantic_hash": "756559d8a93c483e92e262e7535a80a0"
   },
   "src/sleipnir/context.py": {
     "mtime": 1787115384.464264,
-    "seen": 1787148603.637058,
+    "seen": 1787164469.718303,
     "ast_hash": "c019ae144868b1608df83ff05058901f",
     "semantic_hash": "c019ae144868b1608df83ff05058901f"
   },
   "src/sleipnir/executor.py": {
     "mtime": 1787118292.1289928,
-    "seen": 1787148603.637059,
+    "seen": 1787164469.7183034,
     "ast_hash": "08dd730363108190a46e39b95a69b6c4",
     "semantic_hash": "08dd730363108190a46e39b95a69b6c4"
   },
   "src/sleipnir/process.py": {
     "mtime": 1787117590.8502545,
-    "seen": 1787148603.6370625,
+    "seen": 1787164469.7183065,
     "ast_hash": "0ff77fb16be49842e0f0801d5e5d3df3",
     "semantic_hash": "0ff77fb16be49842e0f0801d5e5d3df3"
   },
   "src/sleipnir/projection.py": {
     "mtime": 1787116005.9586096,
-    "seen": 1787148603.6370647,
+    "seen": 1787164469.7183077,
     "ast_hash": "2becdd99debfd2522b4e877eae8c16ea",
     "semantic_hash": "2becdd99debfd2522b4e877eae8c16ea"
   },
   "src/sleipnir/runlog.py": {
-    "mtime": 1787116450.063887,
-    "seen": 1787148603.6370678,
+    "mtime": 1787149456.5099869,
+    "seen": 1787164469.7183092,
     "ast_hash": "937501d150551787cb390c9bc056038c",
     "semantic_hash": "937501d150551787cb390c9bc056038c"
   },
   "src/sleipnir/schema.py": {
     "mtime": 1787116659.753089,
-    "seen": 1787148603.6370685,
+    "seen": 1787164469.7183096,
     "ast_hash": "bc092a5be34a0e204d55c1aad6094c3b",
     "semantic_hash": "bc092a5be34a0e204d55c1aad6094c3b"
   },
   "tests/fakes.py": {
     "mtime": 1787029541.6545057,
-    "seen": 1787148603.6370728,
+    "seen": 1787164469.718312,
     "ast_hash": "2deb45cde5557cdad8dd155cc2a912b3",
     "semantic_hash": "2deb45cde5557cdad8dd155cc2a912b3"
   },
   "tests/test_adapters.py": {
     "mtime": 1787116902.038393,
-    "seen": 1787148603.637074,
+    "seen": 1787164469.7183125,
     "ast_hash": "43883bf430f57ad90ef9336ebee7e5a7",
     "semantic_hash": "43883bf430f57ad90ef9336ebee7e5a7"
   },
   "tests/test_executor.py": {
     "mtime": 1787117821.3314972,
-    "seen": 1787148603.6370852,
+    "seen": 1787164469.7183156,
     "ast_hash": "197f8f882290ce7c2a854503f673cb49",
     "semantic_hash": "197f8f882290ce7c2a854503f673cb49"
   },
   "tests/test_process.py": {
     "mtime": 1787117609.1792738,
-    "seen": 1787148603.637088,
+    "seen": 1787164469.718318,
     "ast_hash": "91f40bd6ccdf61a9f88cbe0a8b5c1e84",
     "semantic_hash": "91f40bd6ccdf61a9f88cbe0a8b5c1e84"
   },
   "tests/test_schema.py": {
     "mtime": 1787115404.42027,
-    "seen": 1787148603.6370904,
+    "seen": 1787164469.7183197,
     "ast_hash": "4e1454bf9dd753fb7bdac91770f76b6a",
     "semantic_hash": "4e1454bf9dd753fb7bdac91770f76b6a"
   },
@@ -151,182 +151,194 @@
   },
   "src/sleipnir/pricing.py": {
     "mtime": 1787098047.9948967,
-    "seen": 1787148603.6370618,
+    "seen": 1787164469.718306,
     "ast_hash": "8ee4330fdd3d4f77921cb90752dd918a",
     "semantic_hash": "8ee4330fdd3d4f77921cb90752dd918a"
   },
   "src/sleipnir/router.py": {
     "mtime": 1787098048.069897,
-    "seen": 1787148603.6370668,
+    "seen": 1787164469.718309,
     "ast_hash": "e5e757540dca78c949f568f66a7f739b",
     "semantic_hash": "e5e757540dca78c949f568f66a7f739b"
   },
   "tests/test_pricing.py": {
     "mtime": 1787098048.193897,
-    "seen": 1787148603.6370869,
+    "seen": 1787164469.7183175,
     "ast_hash": "b1780c53836501894bc81378a9e4ce6c",
     "semantic_hash": "b1780c53836501894bc81378a9e4ce6c"
   },
   "tests/test_router.py": {
     "mtime": 1787115605.2803593,
-    "seen": 1787148603.6370897,
+    "seen": 1787164469.7183192,
     "ast_hash": "ac3c42594c8469fe3f68dffa604bbabd",
     "semantic_hash": "ac3c42594c8469fe3f68dffa604bbabd"
   },
   "src/sleipnir/budget.py": {
     "mtime": 1787116669.0001006,
-    "seen": 1787148603.6370459,
+    "seen": 1787164469.718296,
     "ast_hash": "98d9bf67f47d2d9206577b3bf9a3ccbb",
     "semantic_hash": "98d9bf67f47d2d9206577b3bf9a3ccbb"
   },
   "src/sleipnir/cli.py": {
-    "mtime": 1787148089.8641186,
-    "seen": 1787148603.637055,
-    "ast_hash": "c9432c769c10a83a649d2911da50281d",
-    "semantic_hash": "c9432c769c10a83a649d2911da50281d"
+    "mtime": 1787149256.7240267,
+    "seen": 1787164469.7183015,
+    "ast_hash": "79ae16cc6aba77d3bb742ac2b3254cf9",
+    "semantic_hash": "79ae16cc6aba77d3bb742ac2b3254cf9"
   },
   "src/sleipnir/config.py": {
     "mtime": 1787115605.2803593,
-    "seen": 1787148603.637056,
+    "seen": 1787164469.7183022,
     "ast_hash": "d40502541ddf5bd7b0e646e58a57b86d",
     "semantic_hash": "d40502541ddf5bd7b0e646e58a57b86d"
   },
   "src/sleipnir/planner.py": {
     "mtime": 1787115875.678528,
-    "seen": 1787148603.6370609,
+    "seen": 1787164469.7183056,
     "ast_hash": "a036ba6f9a609add7e1fc39b69664c89",
     "semantic_hash": "a036ba6f9a609add7e1fc39b69664c89"
   },
   "tests/conftest.py": {
     "mtime": 1787061322.5113924,
-    "seen": 1787148603.6370718,
+    "seen": 1787164469.7183113,
     "ast_hash": "3b207bc953c3925539209c7304591917",
     "semantic_hash": "3b207bc953c3925539209c7304591917"
   },
   "tests/test_budget.py": {
     "mtime": 1787116669.0011005,
-    "seen": 1787148603.6370747,
+    "seen": 1787164469.718313,
     "ast_hash": "5f33cf9f40468826ac2cf66deb84b210",
     "semantic_hash": "5f33cf9f40468826ac2cf66deb84b210"
   },
   "tests/test_cli.py": {
-    "mtime": 1787118357.0240612,
-    "seen": 1787148603.6370819,
-    "ast_hash": "f54b97352a6184f8b3f480898130621a",
-    "semantic_hash": "f54b97352a6184f8b3f480898130621a"
+    "mtime": 1787149392.1041245,
+    "seen": 1787164469.718314,
+    "ast_hash": "6afaf809659e47764cf1912693b2a938",
+    "semantic_hash": "6afaf809659e47764cf1912693b2a938"
   },
   "src/sleipnir/tui.py": {
     "mtime": 1787117992.6596775,
-    "seen": 1787148603.637071,
+    "seen": 1787164469.7183108,
     "ast_hash": "dcdb1ba4155d98544b8cab2e5e409b03",
     "semantic_hash": "dcdb1ba4155d98544b8cab2e5e409b03"
   },
   "tests/test_context.py": {
     "mtime": 1787115404.42127,
-    "seen": 1787148603.637084,
+    "seen": 1787164469.7183151,
     "ast_hash": "1ab77867b4605b8257e8b77605d59daf",
     "semantic_hash": "1ab77867b4605b8257e8b77605d59daf"
   },
   "tests/test_tui.py": {
     "mtime": 1787117997.3866825,
-    "seen": 1787148603.6370926,
+    "seen": 1787164469.7183206,
     "ast_hash": "0c6ca8e509a3ec46e5b253bc73ce64b5",
     "semantic_hash": "0c6ca8e509a3ec46e5b253bc73ce64b5"
   },
   "src/sleipnir/orchestrator.py": {
     "mtime": 1787118463.184173,
-    "seen": 1787148603.63706,
+    "seen": 1787164469.718305,
     "ast_hash": "745499bbc55b5418a8091d3870d2faa0",
     "semantic_hash": "745499bbc55b5418a8091d3870d2faa0"
   },
   "src/sleipnir/revisions.py": {
     "mtime": 1787116450.064887,
-    "seen": 1787148603.6370656,
+    "seen": 1787164469.7183084,
     "ast_hash": "92c7fe5d0b8464287ba940bf8e2bb6d5",
     "semantic_hash": "92c7fe5d0b8464287ba940bf8e2bb6d5"
   },
   "tests/test_orchestrator.py": {
     "mtime": 1787118496.486208,
-    "seen": 1787148603.6370862,
+    "seen": 1787164469.7183168,
     "ast_hash": "12c5fc57e17c03e77ae4680bc9bd3773",
     "semantic_hash": "12c5fc57e17c03e77ae4680bc9bd3773"
   },
   "tests/test_revisions.py": {
     "mtime": 1787116427.5608728,
-    "seen": 1787148603.6370888,
+    "seen": 1787164469.7183187,
     "ast_hash": "a85a5879abf63fe340ee3daf5d39ec7b",
     "semantic_hash": "a85a5879abf63fe340ee3daf5d39ec7b"
   },
   "src/sleipnir/process_guard.py": {
     "mtime": 1787117617.7822828,
-    "seen": 1787148603.6370637,
+    "seen": 1787164469.7183073,
     "ast_hash": "374f4a4726dc46721ecee7ab6f3105c8",
     "semantic_hash": "374f4a4726dc46721ecee7ab6f3105c8"
   },
   "src/sleipnir/capabilities/__init__.py": {
     "mtime": 1787147513.9741008,
-    "seen": 1787148603.6370473,
+    "seen": 1787164469.7182972,
     "ast_hash": "6ed8ad3d2ef5c7c17b811a82d2c74621",
     "semantic_hash": "6ed8ad3d2ef5c7c17b811a82d2c74621"
   },
   "src/sleipnir/capabilities/audit.py": {
     "mtime": 1787147524.7130313,
-    "seen": 1787148603.6370487,
+    "seen": 1787164469.718298,
     "ast_hash": "2df741afaedd228cd6477a239ca07e65",
     "semantic_hash": "2df741afaedd228cd6477a239ca07e65"
   },
   "src/sleipnir/capabilities/browser.py": {
     "mtime": 1787147625.588927,
-    "seen": 1787148603.63705,
+    "seen": 1787164469.7182984,
     "ast_hash": "397b50885adda79b71341207dfc42587",
     "semantic_hash": "397b50885adda79b71341207dfc42587"
   },
   "src/sleipnir/capabilities/computer.py": {
     "mtime": 1787147576.4167895,
-    "seen": 1787148603.637051,
+    "seen": 1787164469.718299,
     "ast_hash": "1defeacf44b176b4f8240d1eab32b970",
     "semantic_hash": "1defeacf44b176b4f8240d1eab32b970"
   },
   "src/sleipnir/capabilities/secrets.py": {
     "mtime": 1787147603.0441647,
-    "seen": 1787148603.637052,
+    "seen": 1787164469.7182996,
     "ast_hash": "e698910147f147c0692134bdb1895ac5",
     "semantic_hash": "e698910147f147c0692134bdb1895ac5"
   },
   "src/sleipnir/chat.py": {
     "mtime": 1787147800.3690162,
-    "seen": 1787148603.6370533,
+    "seen": 1787164469.7183003,
     "ast_hash": "eb8252f72538fe13c39cddb8b317f095",
     "semantic_hash": "eb8252f72538fe13c39cddb8b317f095"
   },
   "src/sleipnir/console.py": {
-    "mtime": 1787148363.5269797,
-    "seen": 1787148603.637057,
-    "ast_hash": "207442a443c4073ce00ade0c61904378",
-    "semantic_hash": "207442a443c4073ce00ade0c61904378"
+    "mtime": 1787149585.171397,
+    "seen": 1787164469.7183027,
+    "ast_hash": "3b661636eb7f7a90e1807b2be458b272",
+    "semantic_hash": "3b661636eb7f7a90e1807b2be458b272"
   },
   "src/sleipnir/theme.py": {
     "mtime": 1787147470.032383,
-    "seen": 1787148603.6370695,
+    "seen": 1787164469.7183104,
     "ast_hash": "79f9925ce39e9143871f9db8b92ba902",
     "semantic_hash": "79f9925ce39e9143871f9db8b92ba902"
   },
   "tests/test_capabilities.py": {
     "mtime": 1787147654.1378028,
-    "seen": 1787148603.6370757,
+    "seen": 1787164469.7183135,
     "ast_hash": "d1b60141ab1e12edbe33ee135f7a818b",
     "semantic_hash": "d1b60141ab1e12edbe33ee135f7a818b"
   },
   "tests/test_console.py": {
-    "mtime": 1787148008.742153,
-    "seen": 1787148603.6370828,
-    "ast_hash": "58c66ebb2a8ef742d2a44be7043f2105",
-    "semantic_hash": "58c66ebb2a8ef742d2a44be7043f2105"
+    "mtime": 1787149598.2469838,
+    "seen": 1787164469.7183144,
+    "ast_hash": "2a4b8645bc02c7ebb310afb009ec4a5e",
+    "semantic_hash": "2a4b8645bc02c7ebb310afb009ec4a5e"
   },
   "tests/test_theme.py": {
     "mtime": 1787147271.8917677,
-    "seen": 1787148603.6370916,
+    "seen": 1787164469.7183201,
     "ast_hash": "64ae680558ed4503d8f4437dab04aa6d",
     "semantic_hash": "64ae680558ed4503d8f4437dab04aa6d"
+  },
+  "src/sleipnir/gate.py": {
+    "mtime": 1787149375.2118187,
+    "seen": 1787164469.7183042,
+    "ast_hash": "16363399b93b67d2224d6a98566fabdf",
+    "semantic_hash": "16363399b93b67d2224d6a98566fabdf"
+  },
+  "tests/test_gate.py": {
+    "mtime": 1787149384.1192784,
+    "seen": 1787164469.7183163,
+    "ast_hash": "15a7014a80caf3e0764691e7d0bdcdaf",
+    "semantic_hash": "15a7014a80caf3e0764691e7d0bdcdaf"
   }
 }
