@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from sleipnir.artifacts import contained_regular_file
 from sleipnir.schema import Task
 
 #: Resolves a dependency id to the artifact directory of its latest successful
@@ -130,7 +131,7 @@ def _artifact_section(
         matches = sorted(base.glob(ref.path)) if ref.is_glob else [base / ref.path]
         found = False
         for match in matches:
-            if not match.is_file():
+            if not contained_regular_file(match, base):
                 continue
             found = True
             text, size, clipped = _read_clipped(match, ref.max_bytes)
@@ -152,7 +153,7 @@ def _file_section(task: Task, run_root: Path, resolved: ResolvedInput) -> list[s
     for pattern in task.inputs.files:
         matches = sorted(run_root.glob(pattern)) if any(c in pattern for c in "*?[") else [run_root / pattern]
         for match in matches:
-            if not match.is_file():
+            if not contained_regular_file(match, run_root):
                 resolved.missing.append(f"file:{pattern}")
                 continue
             if budget <= 0:

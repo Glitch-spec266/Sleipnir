@@ -225,6 +225,21 @@ decision by whoever can actually judge it. `PlanRevision.superseded` and
 `.staled` are computed by the applier rather than supplied by the model, so the
 blast radius is recorded even when the orchestrator did not anticipate it.
 
+### Sparse control cycles (implemented in Phase 7)
+
+The executor does not wake Claude after every task. Workers run through every
+safe automatic retry first; a reason-tier control call happens only when the DAG
+reaches a terminal impasse. That call receives the constant-size `Manifest`
+plus an on-demand drill-down capped at four urgent frontier task specs and
+24,000 characters. It never receives artifacts, transcripts, or the full DAG.
+
+The model returns `continue`, `stop`, or typed revision operations. Full task
+payloads are required for add/retarget/respec, edge payloads are explicit, and
+all changes are applied to a copy and revalidated as a complete DAG. The model
+does not calculate which work became invalid: Sleipnir compares semantic hashes
+and revision history locally, fsyncs the audit, then atomically replaces the
+plan view. A maximum control-cycle count prevents an autonomous revision loop.
+
 ---
 
 ## Q4 — What if the process dies at task 40 of 60?
@@ -462,13 +477,38 @@ reads the number as economic truth.
 
 ## Other decisions worth overruling
 
-- **`codex` was verified against CLI 0.148.0 on 2026-08-18.** `exec`,
-  `--model`, `--json`, and stdin prompt delivery match `CodexInvocation`. A
+- **`codex` was verified against CLI 0.148.0 on 2026-08-18.** `exec`, optional
+  `--model`, `--json`, and stdin prompt delivery match `CodexInvocation`.
+  Configuring `@cli-default` omits the model override and lets the authenticated
+  CLI choose an account-supported default; this avoids turning a deprecated
+  alias into an outage while still permitting explicit pins. A
   live JSONL smoke call also established that `cached_input_tokens` is a subset
   of `input_tokens`; the adapter normalizes those into disjoint `TokenUsage`
   channels so the governor does not double-count cache reads. The parser still
   recurses rather than depending on an event envelope, and explicitly reports
   missing usage rather than pretending an unmeasured call was free.
+- **Subscription pools are not interchangeable.** Codex outcomes carry
+  `quota_pool="codex"` and aggregate into `codex_tokens`; they contribute zero
+  to Claude's five-hour `window_tokens` projection and zero metered dollars. A
+  live file-producing gate observed 48,456 Codex tokens while both other axes
+  remained zero.
+- **A hard-killed executor must not leave a spending orphan.** A live drill
+  showed that `start_new_session=True` helps normal cancellation but lets the
+  provider CLI survive when the executor itself receives `SIGKILL`. On Linux,
+  real subprocesses now pass through `process_guard.py`, which installs
+  `PR_SET_PDEATHSIG` and forwards parent death to the provider process group.
+- **Revision invalidation must cause execution.** `SUPERSEDED` means the task's
+  own contract changed; `STALE` means an upstream contract changed. The
+  executor schedules both as work and requires freshly `DONE` dependencies,
+  preventing a stale descendant chain from racing on pre-revision artifacts.
+- **One terminal surface owns both worker and brain modes.** `tui --run` owns
+  ordinary execution; `tui --orchestrate` owns the sparse control loop. Static
+  and watch-only views do no catalogue/network work, and every untrusted value
+  is reduced to printable characters before terminal rendering.
+- **Sparse does not mean unaccounted.** Completed control calls append a
+  `sleipnir-control` terminal record to the ordinary result log, including
+  usage, quota pool, notional cost, and the decision artifact hash. Projection
+  ignores that non-plan id; aggregate budget views intentionally include it.
 - **OpenRouter models have no filesystem**, so they cannot write the files an
   `OutputContract` demands. The adapter appends a `file:<path>` fenced-block
   protocol to the prompt and materialises what comes back, confined to the

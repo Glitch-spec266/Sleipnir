@@ -15,6 +15,7 @@ record.
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -142,6 +143,23 @@ class BaseAdapter(ABC):
         return {
             key: ("***" if any(marker in key.upper() for marker in secret) else value)
             for key, value in env.items()
+        }
+
+    @staticmethod
+    def _subprocess_env(env: Mapping[str, str]) -> dict[str, str]:
+        """Environment for an agent CLI, stripped of unrelated credentials.
+
+        The official CLIs use their own credential stores. Passing the entire
+        parent environment would also hand a delegated coding agent every API
+        key and CI token in the operator's shell. Empty request environments
+        mean "use the parent environment safely", not raw inheritance.
+        """
+        source = env or os.environ
+        secret = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH", "CREDENTIAL")
+        return {
+            key: value
+            for key, value in source.items()
+            if not any(marker in key.upper() for marker in secret)
         }
 
 

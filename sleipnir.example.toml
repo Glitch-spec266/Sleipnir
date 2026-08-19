@@ -39,11 +39,15 @@ dispatch_overhead_tokens = 0
 # Empty models list = every model in the live catalogue is a candidate.
 models = []
 
-# [[backends]]
-# name = "codex-sub"
-# adapter = "codex"
-# billing = "subscription"
-# models = [{ id = "gpt-5-codex" }]
+[[backends]]
+name = "codex-sub"
+adapter = "codex"
+billing = "subscription"
+# Bulk code goes here before Claude so the scarce Claude window is reserved for
+# decomposition and control. This sentinel deliberately omits `--model`, so
+# the authenticated Codex CLI uses the account's current supported default.
+# Pin a concrete model id here instead when reproducibility matters more.
+models = [{ id = "@cli-default" }]
 
 # --- tiers -----------------------------------------------------------------
 # `prefer` is an ordered list of backends. The first backend with a candidate
@@ -57,20 +61,20 @@ require_parameters = ["reasoning"]
 output_ratio = 0.35
 
 [tiers.code]
-prefer = ["claude-sub", "openrouter"]
+prefer = ["codex-sub", "openrouter", "claude-sub"]
 min_context = 64000
 output_ratio = 0.30
 
 [tiers.mechanical]
 # Deliberately NOT claude-sub first: the ~30k fixed spawn overhead dwarfs the
 # work for renames and formatting. Metered models have no such floor.
-prefer = ["openrouter", "claude-sub"]
+prefer = ["openrouter", "codex-sub", "claude-sub"]
 min_context = 16000
 max_price_per_mtok = 0.60
 output_ratio = 0.25
 
 [tiers.extract]
-prefer = ["openrouter", "claude-sub"]
+prefer = ["openrouter", "codex-sub", "claude-sub"]
 min_context = 32000
 max_price_per_mtok = 1.50
 output_ratio = 0.15

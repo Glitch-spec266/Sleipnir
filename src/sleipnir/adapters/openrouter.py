@@ -40,6 +40,7 @@ from sleipnir.schema import (
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 API_KEY_ENV = "OPENROUTER_API_KEY"
+DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 
 #: ```file:relative/path.py   ... ```
 _FILE_BLOCK = re.compile(
@@ -65,6 +66,10 @@ class _HttpFailure(Exception):
         self.text = text
 
 
+class _ResponseTooLarge(Exception):
+    """A provider response exceeded the operator-independent safety ceiling."""
+
+
 class OpenRouterAdapter(BaseAdapter):
     name = Adapter.OPENROUTER
 
@@ -77,6 +82,7 @@ class OpenRouterAdapter(BaseAdapter):
         referer: str = "https://github.com/sleipnir",
         title: str = "Sleipnir",
         stream: bool = True,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._api_key = api_key
@@ -84,6 +90,9 @@ class OpenRouterAdapter(BaseAdapter):
         self.referer = referer
         self.title = title
         self.stream = stream
+        if max_response_bytes < 1:
+            raise ValueError("max_response_bytes must be positive")
+        self.max_response_bytes = max_response_bytes
 
     @property
     def api_key(self) -> str | None:
@@ -140,6 +149,13 @@ class OpenRouterAdapter(BaseAdapter):
             raise
         except _HttpFailure as exc:
             return self._classify_status(exc.status_code, exc.text)
+        except _ResponseTooLarge as exc:
+            return DispatchOutcome(
+                status=AttemptStatus.FAILED,
+                failure_kind=FailureKind.PROVIDER_ERROR,
+                billing_mode=BillingMode.METERED,
+                stderr_tail=str(exc),
+            )
         except httpx.HTTPError as exc:
             return DispatchOutcome(
                 status=AttemptStatus.FAILED,
@@ -188,6 +204,10 @@ class OpenRouterAdapter(BaseAdapter):
                 content, payload = await self._stream(client, url, body, workspace.stdout_path)
             else:
                 response = await client.post(url, headers=self._headers(), json=body)
+                if len(response.content) > self.max_response_bytes:
+                    raise _ResponseTooLarge(
+                        f"provider response exceeded {self.max_response_bytes:,} bytes"
+                    )
                 workspace.stdout_path.write_bytes(response.content)
                 if response.status_code >= 400:
                     return self._http_error(response)
@@ -251,29 +271,41 @@ class OpenRouterAdapter(BaseAdapter):
         """
         parts: list[str] = []
         payload: dict[str, Any] = {}
+        wire_bytes = 0
         stdout_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with stdout_path.open("w", encoding="utf-8") as sink:
+        with stdout_path.open("wb") as sink:
             async with client.stream(
                 "POST", url, headers=self._headers(), json=body
             ) as response:
                 if response.status_code >= 400:
-                    raw = await response.aread()
+                    raw_parts: list[bytes] = []
+                    async for chunk in response.aiter_bytes():
+                        wire_bytes += len(chunk)
+                        if wire_bytes > self.max_response_bytes:
+                            raise _ResponseTooLarge(
+                                f"provider error response exceeded {self.max_response_bytes:,} bytes"
+                            )
+                        raw_parts.append(chunk)
+                    raw = b"".join(raw_parts)
                     text = raw.decode("utf-8", errors="replace")
-                    sink.write(text)
+                    sink.write(raw)
                     sink.flush()
                     raise _HttpFailure(response.status_code, text)
-                async for line in response.aiter_lines():
-                    sink.write(line + "\n")
+                pending = bytearray()
+
+                def consume(raw_line: bytes) -> None:
+                    nonlocal payload
+                    line = raw_line.rstrip(b"\r").decode("utf-8", errors="replace")
                     if not line.startswith("data:"):
-                        continue
+                        return
                     data = line[5:].strip()
                     if not data or data == "[DONE]":
-                        continue
+                        return
                     try:
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
-                        continue
+                        return
                     for choice in chunk.get("choices") or []:
                         delta = (choice.get("delta") or {}).get("content")
                         if delta:
@@ -286,6 +318,20 @@ class OpenRouterAdapter(BaseAdapter):
                         payload["usage"] = chunk["usage"]
                     payload.setdefault("id", chunk.get("id"))
                     payload.setdefault("model", chunk.get("model"))
+
+                async for chunk_bytes in response.aiter_bytes():
+                    wire_bytes += len(chunk_bytes)
+                    if wire_bytes > self.max_response_bytes:
+                        raise _ResponseTooLarge(
+                            f"provider stream exceeded {self.max_response_bytes:,} bytes"
+                        )
+                    sink.write(chunk_bytes)
+                    pending.extend(chunk_bytes)
+                    while (newline := pending.find(b"\n")) >= 0:
+                        consume(bytes(pending[:newline]))
+                        del pending[: newline + 1]
+                if pending:
+                    consume(bytes(pending))
         return "".join(parts), payload
 
     def _http_error(self, response: httpx.Response) -> DispatchOutcome:
@@ -385,4 +431,7 @@ def materialize_file_blocks(content: str, target_dir: Path) -> list[str]:
     return written
 
 
-__all__ = ["API_KEY_ENV", "DEFAULT_BASE_URL", "OpenRouterAdapter", "materialize_file_blocks"]
+__all__ = [
+    "API_KEY_ENV", "DEFAULT_BASE_URL", "DEFAULT_MAX_RESPONSE_BYTES",
+    "OpenRouterAdapter", "materialize_file_blocks",
+]

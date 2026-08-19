@@ -289,6 +289,29 @@ def test_unknown_tier_name_is_rejected():
         SleipnirConfig.from_dict(raw, source="<test>")
 
 
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"concurrency": 0}, "concurrency"),
+        ({"catalog_ttl_s": float("nan")}, "catalog_ttl_s"),
+        ({"reserve_fraction": 1.0}, "reserve_fraction"),
+        ({"window_tokens_limit": -1}, "window_tokens_limit"),
+        ({"metered_budget_usd": float("inf")}, "metered_budget_usd"),
+    ],
+)
+def test_dangerous_numeric_config_is_rejected(override, message):
+    with pytest.raises(ConfigError, match=message):
+        config(**override)
+
+
+def test_non_finite_operator_model_price_is_rejected():
+    import tomllib
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"][0]["models"][0]["price_per_mtok"] = float("nan")
+    with pytest.raises(ConfigError, match="price must be finite"):
+        SleipnirConfig.from_dict(raw, source="<test>")
+
+
 def test_shipped_example_config_is_valid():
     from pathlib import Path
     path = Path(__file__).resolve().parents[1] / "sleipnir.example.toml"

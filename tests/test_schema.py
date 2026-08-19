@@ -71,6 +71,26 @@ def make_task(task_id: str, *, deps: list[str] | None = None, **kwargs) -> Task:
     return Task(**defaults)
 
 
+@pytest.mark.parametrize("path", ["../secret", "a/../../secret", "/etc/passwd"])
+def test_repository_input_paths_cannot_escape_the_run_root(path: str):
+    with pytest.raises(ValueError, match="must not escape|relative"):
+        InputContract(files=[path])
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["summary.md", "prompt.txt", "stdout.log", "stderr.log", ".checks/result.out"],
+)
+def test_outputs_cannot_overwrite_harness_owned_files(path: str):
+    with pytest.raises(ValueError, match="harness-owned"):
+        ExpectedOutput(
+            name="result",
+            kind=OutputKind.FILE,
+            path=path,
+            description="A result that must not collide with harness state.",
+        )
+
+
 def _plan(tasks: list[Task]) -> Plan:
     return Plan(
         plan_id="demo",

@@ -48,6 +48,32 @@ RESERVED_FILENAMES = frozenset(
 _HASH_CHUNK = 1 << 20
 
 
+class WorkspaceCollisionError(RuntimeError):
+    """An attempt path existed before the harness claimed this attempt."""
+
+
+def contained_regular_file(path: Path, root: Path) -> bool:
+    """True only for a non-symlinked file physically beneath ``root``.
+
+    Subagents control their workspace.  Following a symlink they created would
+    let a claimed output or ``summary.md`` read an arbitrary host file and send
+    it to the orchestrator or a downstream provider.
+    """
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(resolved_root) or not resolved.is_file():
+            return False
+        current = path
+        while current != root:
+            if current.is_symlink():
+                return False
+            current = current.parent
+        return True
+    except (OSError, RuntimeError):
+        return False
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -93,7 +119,28 @@ class AttemptWorkspace:
         return self.dir / SUMMARY_FILENAME
 
     def prepare(self) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
+        """Ensure an already-claimed workspace remains a real local directory."""
+        if self.dir.exists():
+            if self.dir.is_symlink() or not self.dir.is_dir():
+                raise WorkspaceCollisionError(f"unsafe attempt workspace: {self.dir}")
+            return
+        self.prepare_fresh()
+
+    def prepare_fresh(self) -> None:
+        """Atomically claim a new attempt directory; never reuse old contents."""
+        parent = self.dir.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        artifacts_root = self.run_root / "artifacts"
+        if artifacts_root.is_symlink() or parent.is_symlink():
+            raise WorkspaceCollisionError(
+                f"attempt workspace parent is a symlink: {parent}"
+            )
+        try:
+            self.dir.mkdir()
+        except FileExistsError as exc:
+            raise WorkspaceCollisionError(
+                f"refusing to reuse pre-existing attempt workspace: {self.dir}"
+            ) from exc
 
     def write_text(self, filename: str, text: str) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -104,7 +151,7 @@ class AttemptWorkspace:
 
     def read_summary(self) -> str | None:
         """The subagent's self-written summary, if it produced one."""
-        if not self.summary_path.exists():
+        if not contained_regular_file(self.summary_path, self.dir):
             return None
         text = self.summary_path.read_text(encoding="utf-8", errors="replace").strip()
         return text or None
@@ -123,7 +170,7 @@ class AttemptWorkspace:
 
         for expected in contract.outputs:
             path = self.dir / expected.path
-            if path.is_file() and path.stat().st_size > 0:
+            if contained_regular_file(path, self.dir) and path.stat().st_size > 0:
                 claimed.add(path.resolve())
                 produced.append(
                     ProducedArtifact(
@@ -150,7 +197,7 @@ class AttemptWorkspace:
         if not self.dir.exists():
             return extras
         for path in sorted(self.dir.rglob("*")):
-            if not path.is_file() or path.resolve() in claimed:
+            if not contained_regular_file(path, self.dir) or path.resolve() in claimed:
                 continue
             if path.parent == self.dir and path.name in RESERVED_FILENAMES:
                 continue
@@ -188,6 +235,8 @@ __all__ = [
     "STDOUT_FILENAME",
     "SUMMARY_FILENAME",
     "AttemptWorkspace",
+    "WorkspaceCollisionError",
     "clip_summary",
+    "contained_regular_file",
     "sha256_file",
 ]

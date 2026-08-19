@@ -19,7 +19,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from sleipnir.adapters.base import BaseAdapter, DispatchRequest
-from sleipnir.artifacts import AttemptWorkspace
+from sleipnir.artifacts import AttemptWorkspace, contained_regular_file
 from sleipnir.schema import (
     Adapter,
     ExpectedOutput,
@@ -172,7 +172,7 @@ async def generate_plan(
         raise PlanningError(f"no adapter registered for {routing.adapter.value!r}")
 
     workspace = AttemptWorkspace(run_root, task.id, attempt)
-    workspace.prepare()
+    workspace.prepare_fresh()
     request = DispatchRequest(
         task=task,
         attempt=attempt,
@@ -189,7 +189,7 @@ async def generate_plan(
 
     written = workspace.dir / PLAN_OUTPUT
     payload: dict | None = None
-    if written.is_file():
+    if contained_regular_file(written, workspace.dir):
         payload = extract_plan_json(written.read_text(encoding="utf-8", errors="replace"))
     if payload is None:
         payload = extract_plan_json(outcome.response_text)
