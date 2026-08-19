@@ -619,36 +619,44 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
             if state.fast_model:
                 state.status = "checking · fast lane"
                 assessment_error: chat.ChatError | None = None
+                # Classification is deliberately isolated from the durable chat
+                # session. Reusing the action session lets gate instructions
+                # poison the subsequent model turn. The protocol is the CLI's
+                # system prompt, while the operator request remains untrusted
+                # stdin data. Exact one-turn telemetry still fails closed if
+                # Haiku tries to continue after its verdict.
+                assessment_session = str(uuid.uuid4())
                 try:
                     assessment = await chat.ask_claude(
-                        f"{chat.FAST_LANE_ASSESSMENT}\n\n{base_prompt}{queued}",
-                        state.session_id,
-                        resume=not first_turn[0],
+                        base_prompt + queued,
+                        assessment_session,
+                        resume=False,
                         permission_mode=state.permission_mode,
                         model=state.fast_model,
                         tools=(),
-                        add_dirs=_claude_dirs(state),
+                        system_prompt=chat.FAST_LANE_ASSESSMENT,
                     )
                 except chat.ChatError as error:
                     # This turn had physically no tools, so retrying the original
-                    # request cannot duplicate a side effect. A first-turn CLI
-                    # failure may have reserved its session id without creating
-                    # resumable state; rotate before opening the strong lane.
+                    # request cannot duplicate a side effect.  Its ephemeral
+                    # session is discarded, leaving the action session pristine.
                     assessment_error = error
                     assessment = None
-                    if first_turn[0]:
-                        state.session_id = str(uuid.uuid4())
                 if assessment is None:
                     state.status = "escalating · strong lane"
+                    action_resume = not first_turn[0]
+                    # The assessment was powerless, but the fallback is not.
+                    # Reserve its durable session before Sonnet may touch the
+                    # host, just as we do after a successful verdict.
+                    first_turn[0] = False
                     reply = await chat.ask_claude(
                         base_prompt + queued,
                         state.session_id,
-                        resume=not first_turn[0],
+                        resume=action_resume,
                         permission_mode=state.permission_mode,
                         model=state.model,
                         add_dirs=_claude_dirs(state),
                     )
-                    first_turn[0] = False
                     if assessment_error is not None:
                         state.add(
                             "sleipnir",
@@ -657,6 +665,10 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
                         )
                     state.add("claude", reply.text)
                     return
+                action_resume = not first_turn[0]
+                # Reserve the durable action session before a tool-capable turn:
+                # if it fails after changing the host, the next message must not
+                # try to create the same session id again.
                 first_turn[0] = False
                 if chat.fast_lane_capable(assessment):
                     state.status = "acting · fast lane"
@@ -665,10 +677,9 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
                         f"Fast lane approved; {state.fast_model or 'fast model'} is acting.",
                     )
                     reply = await chat.ask_claude(
-                        "The tool-free capability check passed. Complete the operator's "
-                        "preceding request now.",
+                        base_prompt + queued,
                         state.session_id,
-                        resume=True,
+                        resume=action_resume,
                         permission_mode=state.permission_mode,
                         model=state.fast_model,
                         add_dirs=_claude_dirs(state),
@@ -681,10 +692,9 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
                         f"request to {state.model or 'the strong model'}.",
                     )
                     reply = await chat.ask_claude(
-                        "The tool-free fast-lane check declined or failed closed. "
-                        "Complete the operator's preceding request now.",
+                        base_prompt + queued,
                         state.session_id,
-                        resume=True,
+                        resume=action_resume,
                         permission_mode=state.permission_mode,
                         model=state.model,
                         add_dirs=_claude_dirs(state),

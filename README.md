@@ -54,7 +54,7 @@ src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
 src/sleipnir/console.py      guarded chat + `/project` multi-model front door
 src/sleipnir/chat.py         Claude session transport + tool-free fast-lane gate
 src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate
-tests/                       419 tests, including the executable form of the
+tests/                       423 tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -102,12 +102,14 @@ All untrusted display values are stripped of terminal control characters.
 ## Interactive console
 
 Bare `sleipnir` opens the full-screen console. Ordinary messages first receive
-a tool-free Haiku capability check. The check process is launched with no tools,
-so it cannot touch the desktop while deciding; only an exact affirmative verdict
-lets a second Haiku turn act. Declines and malformed verdicts go to Sonnet. A
-failed action is never automatically replayed because it may already have had a
-side effect. `--fast-model` and `--model` override the two aliases, and an empty
-`--fast-model` disables the gate.
+a tool-free Haiku capability check in a disposable session. Built-in tools are
+disabled and MCP discovery is replaced by an explicit empty configuration, so
+the classifier cannot touch the host; the binary protocol replaces its default
+agent system prompt. Only an exact one-turn affirmative lets Haiku act in the
+separate durable session. Declines and malformed verdicts go to Sonnet with the
+untouched request. A failed action is never automatically replayed because it
+may already have had a side effect. `--fast-model` and `--model` override the
+two aliases, and an empty `--fast-model` disables the gate.
 
 `/project <goal>` is the explicit boundary for larger work. It bypasses ordinary
 chat and runs the existing `plan` then `orchestrate` commands, so decomposition,

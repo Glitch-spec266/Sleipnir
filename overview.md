@@ -1,6 +1,6 @@
 # Sleipnir — Overview
 
-_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 419 tests passing._
+_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 423 tests passing._
 
 ## What this is
 
@@ -82,7 +82,7 @@ different scarce resources and they do not convert into each other, which is why
 | File | What it does |
 |---|---|
 | `theme.py` | Green phosphor palette, flickering border, the logo, and GSAP's easing curves ported as pure functions of a frame number. |
-| `console.py` | Full-screen renderer + raw-mode input loop. Owns the terminal, never composes a reply. |
+| `console.py` | Full-screen renderer + raw-mode input loop, isolated fast-lane classification, and durable action sessions. |
 | `chat.py` | Where a message goes: `claude` with session continuity when the brain is awake, a cheap duty officer reading the bounded manifest when it is asleep. |
 | `capabilities/computer.py` | Keyboard, mouse, screen, and an operator shell. Wayland-correct via `ydotool`. |
 | `capabilities/clipboard.py` | Reads Wayland text/image MIME; images become private model-readable attachments. |
@@ -131,7 +131,7 @@ Sleipnir/
 │       ├── claude.py     # `claude -p`      (verified against real output)
 │       ├── codex.py      # `codex exec`     (verified against CLI 0.148.0)
 │       └── openrouter.py # plain HTTP
-├── tests/                # 419 tests, including the manifest and verdict size bounds
+├── tests/                # 423 tests, including the manifest and verdict size bounds
 ├── DESIGN.md             # the reasoning, tradeoffs and open decisions
 ├── project.md            # living state — current phase, decisions, next steps
 └── overview.md           # this file
@@ -354,12 +354,13 @@ new login session is needed afterwards for the group change to apply.
 Bare `sleipnir` — no subcommand — opens the interactive console: a boot
 animation, then a green frame that flickers while you type. What you type is
 **not** answered by Sleipnir. Ordinary messages enter a guarded fast lane. A
-tool-free Haiku turn first returns a strict capability verdict; because its CLI
-invocation has `--tools ""`, it cannot click, type, browse, or edit while making
-that decision. An exact affirmative lets Haiku handle the request. Anything
-else goes to Sonnet. A failed action is not replayed automatically because it
-may already have changed the host. Both turns retain conversation continuity
-through `--session-id` and `--resume`.
+tool-free Haiku process first returns a strict capability verdict. Its built-in
+tools are disabled, plugin MCP discovery is replaced by an explicit empty
+configuration, and the gate protocol replaces the default agent system prompt.
+The classifier uses a disposable session. An exact one-turn affirmative lets
+Haiku handle the untouched request in the durable action session; anything else
+goes to Sonnet. A failed action is not replayed automatically because it may
+already have changed the host. Only action turns retain conversation continuity.
 
 `/project <goal>` bypasses chat and launches Sleipnir's existing planner and
 orchestrator. That means large work uses the same task DAG, model-tier routing,
@@ -488,16 +489,17 @@ credential was supplied. Nothing is stored, logged, or returned.
   rankings. A real per-task estimate should come from the planner in Phase 4.
 - **`code`-tier work starts on Codex subscription.** The default then falls back
   to metered OpenRouter and finally Claude, preserving the scarce Claude window.
-- **Two host-capability joins remain unverified.** Console→Claude→screenshot is
-  live-proven. Browser navigation and focus-independent secret/CDP submission
-  are live-proven standalone but have not yet been invoked by Claude from inside
-  the real console.
+- **All host-capability joins are live-proven.** Console→Claude→screenshot was
+  followed by a real console turn in which Claude opened headless Chromium,
+  initiated focus-independent secret/CDP submission, observed only
+  `SUBMITTED_LENGTH_25`, and closed the browser.
 - **The phase gate is live-verified.** A seeded terminal module failure produced
   one finite routing-only escalation; real Codex then completed and hashed the
   accepted retry without waking or charging the Claude brain.
-- **`/project` is live-verified through two tiers.** A real PTY command planned
-  independent reason/code modules and completed both declared proof artifacts.
-  Only the ordinary Haiku-pass and Haiku-decline→Sonnet branches await quota.
+- **`/project` and ordinary routing are live-verified.** A real PTY command
+  planned independent reason/code modules and completed both proof artifacts.
+  Separate real sessions proved exact tool-free Haiku approval, Haiku action,
+  failed-closed Sonnet fallback, and browser/secret action.
 - **Playwright is optional and unpinned to a browser build.** `sleipnir setup`
   fetches Chromium; a machine that skips setup gets a clear
   `CapabilityError`, not a crash.
