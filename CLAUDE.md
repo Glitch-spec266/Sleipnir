@@ -360,6 +360,10 @@ non-plan task id, while quota/notional accounting must include it.
 - **Bare `/project` never uses the current source directory as a run.** Allocate
   a fresh sibling under the console's `runs/` base and carry discovered config;
   preserve an exact path only when `--run-root` was explicitly supplied.
+- **The live gate fixtures are evidence, not reusable state.** The verified
+  behavior is: one failed module, one routing-only tier/attempt revision, then
+  a real accepted provider artifact. `/project` was separately typed through a
+  PTY and completed reason/code tasks; keep future smoke runs disposable too.
 
 ## Checkpoint discipline
 

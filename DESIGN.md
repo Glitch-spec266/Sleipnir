@@ -527,6 +527,11 @@ reads the number as economic truth.
   allocates a fresh timestamped directory beneath the console's `runs/` base
   and carries discovered configuration into it. An exact run root is used only
   when the operator supplied `--run-root` explicitly.
+- **Gate escalation has crossed a real provider boundary.** A seeded terminal
+  module was the only failed ID in the verdict; the gate persisted a one-tier,
+  one-attempt revision and real Codex produced the declared proof on attempt
+  two. A separate PTY `/project` run planned and completed reason/code modules,
+  proving the interactive command reaches the routed executor rather than chat.
 - **Revision invalidation must cause execution.** `SUPERSEDED` means the task's
   own contract changed; `STALE` means an upstream contract changed. The
   executor schedules both as work and requires freshly `DONE` dependencies,
