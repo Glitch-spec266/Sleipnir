@@ -50,6 +50,7 @@ from sleipnir.pricing import (
     CatalogUnavailableError,
     ModelCatalog,
 )
+from sleipnir.gate import escalation_changes, evaluate_gate
 from sleipnir.projection import build_manifest, fold_results
 from sleipnir.router import RoutingError, TierRouter
 from sleipnir.runlog import ResultLog, RunLock, RunLockError, run_is_active
@@ -648,6 +649,35 @@ async def cmd_orchestrate(args: argparse.Namespace) -> int:
                 )
                 return 0
 
+            # The phase gate. Workers have stopped; before paying for a
+            # reason-tier spawn, see whether the failure is one the harness can
+            # answer itself by re-running the failed modules with a better
+            # agent. Escalation is routing-only, so it cannot change what the
+            # work means — and it walks a finite ladder, so it cannot loop.
+            verdict = evaluate_gate(plan, states)
+            _orchestration_event(args, f"phase gate, cycle {cycle}:\n{verdict.render()}")
+            if verdict.failed_groups and not args.no_auto_escalate:
+                escalations = escalation_changes(plan, verdict, states)
+                if escalations:
+                    reason = (
+                        f"gate escalation: {len(verdict.failed_groups)} failed module(s), "
+                        f"retrying {len(escalations)} task(s) one tier stronger"
+                    )
+                    try:
+                        plan, audit = apply_revision(
+                            plan, escalations, reason=reason, records=log.read()
+                        )
+                    except RevisionError as exc:  # pragma: no cover - defensive
+                        raise CliError(f"gate escalation was not applicable: {exc}") from exc
+                    persist_revision(
+                        run_root / PLAN_FILENAME,
+                        run_root / "revisions.jsonl",
+                        plan,
+                        audit,
+                    )
+                    _orchestration_event(args, f"{reason} (revision {audit.revision})")
+                    continue  # rebuild the failed modules without waking the brain
+
             records = log.read()
             metered = sum(
                 record.cost.amount_usd
@@ -1138,6 +1168,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="permit control to route through a non-Claude adapter",
     )
+    tui_parser.add_argument(
+        "--no-auto-escalate",
+        action="store_true",
+        help="wake the brain on a failed module instead of retrying it one tier stronger",
+    )
     tui_parser.set_defaults(func=cmd_tui)
 
     orchestrate_parser = subparsers.add_parser(
@@ -1156,6 +1191,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-non-claude-brain",
         action="store_true",
         help="permit the control brain to route through a non-Claude adapter",
+    )
+    orchestrate_parser.add_argument(
+        "--no-auto-escalate",
+        action="store_true",
+        help="wake the brain on a failed module instead of first retrying it "
+             "one tier stronger (routing-only, so it cannot change task meaning)",
     )
     orchestrate_parser.set_defaults(func=cmd_orchestrate)
 

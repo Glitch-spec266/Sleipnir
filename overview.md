@@ -1,6 +1,6 @@
 # Sleipnir — Overview
 
-_Last updated: 2026-08-18 · Status: Phase 6 security gate and Phase 7 TUI in progress._
+_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 349 tests passing._
 
 ## What this is
 
@@ -88,6 +88,7 @@ different scarce resources and they do not convert into each other, which is why
 | `capabilities/browser.py` | Playwright Chromium with a persistent, logged-in profile. |
 | `capabilities/secrets.py` | One-shot credentials that cannot be printed and wipe on use. |
 | `capabilities/audit.py` | Append-only, fsynced record of every privileged action, redacted at the boundary. |
+| `gate.py` | The phase gate: folds a run into a constant-size verdict, and escalates failed modules one tier without waking the brain. |
 
 ## File structure & modularity
 
@@ -109,14 +110,24 @@ Sleipnir/
 │   ├── planner.py        # turns your prompt into a task DAG
 │   ├── revisions.py      # validates/applies/audits mid-run plan changes
 │   ├── orchestrator.py   # sparse bounded-manifest Claude control cycles
+│   ├── gate.py           # phase gate: constant-size verdict + module escalation
 │   ├── tui.py            # bounded, dependency-free live terminal dashboard
+│   ├── theme.py          # green chrome, flicker, logo, ported easing curves
+│   ├── console.py        # the interactive console you type into
+│   ├── chat.py           # routes a message: brain, or cheap duty officer
+│   ├── process_guard.py  # forwards executor death to provider process groups
 │   ├── cli.py            # the `sleipnir` command
+│   ├── capabilities/     # host control — the operator lane, never the worker lane
+│   │   ├── computer.py   # keyboard, mouse, screen, operator shell
+│   │   ├── browser.py    # Playwright Chromium, persistent logged-in profile
+│   │   ├── secrets.py    # one-shot credentials that wipe on use
+│   │   └── audit.py      # append-only record of every privileged action
 │   └── adapters/
 │       ├── base.py       # the one interface every provider must implement
 │       ├── claude.py     # `claude -p`      (verified against real output)
 │       ├── codex.py      # `codex exec`     (verified against CLI 0.148.0)
 │       └── openrouter.py # plain HTTP
-├── tests/                # 277 tests, including the manifest size bound
+├── tests/                # 349 tests, including the manifest and verdict size bounds
 ├── DESIGN.md             # the reasoning, tradeoffs and open decisions
 ├── project.md            # living state — current phase, decisions, next steps
 └── overview.md           # this file
@@ -318,7 +329,7 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-Last verified run: **319 passed** on Python 3.14.6. `pip check`, `compileall`,
+Last verified run: **349 passed** on Python 3.14.6. `pip check`, `compileall`,
 `git diff --check`, and Bandit are also clean.
 
 Host control needs a third runtime dependency and one privileged install:
@@ -355,6 +366,28 @@ most consequential fact about a session, so it is stated in the footer for as
 long as it is true — `FULL HOST CONTROL` — rather than behind a launch prompt
 that gets dismissed once. `sleipnir console --ask-first` narrows it back to
 `acceptEdits`, which confirms each action and confines the model to the repo.
+
+### The phase gate
+
+When `orchestrate` finishes an executor pass and the run is not complete, the
+gate runs before anything expensive. `evaluate_gate` folds the plan and the
+result log into one verdict per group: how many tasks are done, how many failed,
+and which ids. It is the same size for a 5-task run and a 500-task run, which is
+the point — this is what the brain is allowed to know.
+
+If a group failed, the harness tries to fix it without help: each genuinely
+failed task is re-run one tier stronger, with exactly one extra attempt. That is
+a `retarget_task` revision touching only `tier` and `retry`, both outside
+`spec_hash`, so completed work in the group survives and the change auto-applies
+without operator review. Only then, if the gate cannot fix it, is the brain
+woken. `--no-auto-escalate` skips straight to the brain.
+
+The console reads the same machinery from the other side. An owned run lock
+means an executor is mid-build, so the brain is asleep; a message then goes to a
+cheap OpenRouter duty officer along with the gate digest and nothing else. If
+the message asks for a *change* rather than information, the duty officer
+refuses to act and returns a `QUEUE:` line, which is shown to you and handed to
+the brain as text on its next turn.
 
 ### Host control, in one paragraph
 
@@ -440,7 +473,7 @@ credential was supplied. Nothing is stored, logged, or returned.
   officer, its manifest-only prompt and its `QUEUE:` parsing are implemented and
   tested, but nothing flips `ConsoleState.brain_awake` from the orchestrator
   yet, so the path is reachable only by setting the flag by hand.
-- **The phase-gate loop is not built.** `orchestrate` fans workers out and wakes
+- **The phase gate is not yet live-verified.** `orchestrate` fans workers out and wakes
   the brain at an impasse. It does not yet merge modules at a phase gate,
   re-spawn only the failed module loops at a stronger tier, and advance to the
   next phase.

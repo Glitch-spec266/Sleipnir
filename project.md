@@ -34,6 +34,7 @@ and the tests.
 | 6 | final gate: end-to-end live run, review, heavy pentest | complete |
 | 7 | live TUI dashboard + sparse-control console | complete |
 | 8 | interactive console, host control, browser control | complete |
+| 9 | phase gate, module escalation, duty-officer routing | complete |
 
 ## Current phase/stage
 
@@ -56,6 +57,15 @@ Live-verified on this machine: pointer injection under Wayland, `spectacle`
 screen capture, Chromium navigation + text extraction + screenshot, operator
 shell, and a two-turn `claude` round trip proving session continuity
 (`SLEIPNIR-LINK-OK`, then correct recall on turn two).
+
+Phase 9 closed the loop between workers and the brain. When workers go quiet,
+`gate.py` folds the run into a constant-size verdict — per-group counts and the
+ids of what failed — and the harness tries to answer the failure itself before
+paying for a reason-tier spawn: a failed module is re-run one tier stronger,
+routing-only, so it cannot change what the work means. The brain is woken only
+when work has genuinely stopped *and* the harness cannot fix it. The console's
+asleep path is live too: an owned run lock means the brain is mid-build, and a
+cheap duty officer answers from the same bounded verdict.
 
 ## The parallel-build merge (2026-08-18)
 
@@ -220,6 +230,28 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   explicit frame number, so the splash and the border flicker are deterministic
   and testable with no terminal attached.
 
+- 2026-08-19 — **The gate is a verdict, not a review.** The tempting version of
+  "the brain comes back and reviews all the reports" is quadratic: its context
+  grows with the number of modules. `evaluate_gate` returns per-group counts and
+  failed ids only, so a 5-task run and a 500-task run produce the same-sized
+  object. Verification stays where it belongs — acceptance checks decide pass or
+  fail, and the brain sees the verdict.
+- 2026-08-19 — **Escalation must grant an attempt, not only a tier.** A task is
+  FAILED precisely because `attempts >= retry.max_attempts`. Raising only the
+  tier produces a better-routed task the executor will never dispatch — the
+  escalation silently does nothing. Both fields are outside `spec_hash`, so the
+  change stays routing-only and auto-appliable; granting exactly one more
+  attempt rather than resetting the counter keeps the ladder finite.
+- 2026-08-19 — **Only a task that actually lost is escalated.** SKIPPED means a
+  dependency failed and this task never got a turn; CANCELLED means the operator
+  or the budget stopped the run. Escalating either re-routes a whole downstream
+  subtree on one upstream failure, spending money on models that were never the
+  problem. Both still stop a group passing.
+- 2026-08-19 — **Brain wakefulness is derived, like task status.** The console
+  reads the run lock: an owned run directory means an executor is mid-build and
+  the brain is asleep between decisions. Nothing is stored, so there is no
+  wake-state file to go stale or to repair after a crash.
+
 ## Open questions
 
 - **Codex usage pricing remains notional.** The adapter surface, account-default
@@ -241,9 +273,10 @@ lookback. Both are preserved on the `parallel-build-local` branch.
    is live-verified, but the join could not be tested from inside a Claude Code
    session — nesting a `bypassPermissions` spawn is blocked there. One message
    into a real `sleipnir` console settles it.
-2. Wire the console's asleep path to a live run: `ConsoleState.brain_awake`
-   is honoured by the renderer and the handler, but nothing yet flips it from
-   the orchestrator, so the duty-officer path is reachable only by setting it.
+2. **Live-verify the gate against a real provider run.** Its logic is covered by
+   24 unit tests plus an end-to-end CLI test proving the brain is never called,
+   but every phase here has ended with a live run, and this one has not had
+   one yet.
 3. Continue the adversarial review of config values, workspace pre-creation and
    hard-kill orphan process groups; the concurrent-executor and filesystem-read
    findings are fixed.
