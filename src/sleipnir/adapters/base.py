@@ -117,6 +117,10 @@ class BaseAdapter(ABC):
     """
 
     name: ClassVar[Adapter]
+    # Concrete subscription adapters override this on the instance. Keeping a
+    # metered default makes crash-recovery records conservative for adapters
+    # that do not need a configurable billing mode (notably OpenRouter).
+    billing_mode: BillingMode = BillingMode.METERED
 
     @abstractmethod
     async def dispatch(self, request: DispatchRequest) -> DispatchOutcome:

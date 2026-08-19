@@ -1,6 +1,6 @@
 # Sleipnir — Project State
 
-_Started: 2026-08-18 · Last checkpoint: 2026-08-18, parallel builds merged_
+_Started: 2026-08-18 · Last checkpoint: 2026-08-18, Phase 6 local gate_
 
 ## Goal
 
@@ -31,12 +31,14 @@ and the tests.
 | 3 | tier router + live pricing + config | complete |
 | 4 | budget governor + usage parser + real utilisation | complete |
 | 5 | planner + CLI | complete |
-| 6 | final gate: end-to-end live run, review, heavy pentest | **next** |
+| 6 | final gate: end-to-end live run, review, heavy pentest | **in progress** |
 | 7 | live TUI dashboard (optional, post-release) | not started |
 
 ## Current phase/stage
 
-Phases 1–5 complete. **217 tests passing.** Next: **Phase 6, the final gate.**
+Phases 1–5 complete. Phase 6 local review is in progress with **221 tests
+passing**. Provider-backed work is paused because the five-hour meter reached
+100%; the genuine killed-and-resumed run remains the release gate.
 
 ## The parallel-build merge (2026-08-18)
 
@@ -102,11 +104,18 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   a handful of rapid calls). TTL raised to 300s and failures cached as hard as
   successes, so a 429 cannot start a retry storm against the endpoint that
   reports throttling.
+- 2026-08-18 — **Unknown context is not insufficient context.** A live-priced
+  catalogue entry without context metadata stays eligible and is surfaced as
+  uncertain; only a known-too-small window is rejected.
+- 2026-08-18 — **Open attempts are durable crash markers.** Resume closes an
+  orphan as `INTERRUPTED`, preserves its billing axis, and retries in a fresh
+  workspace. It refuses recovery while the recorded executor PID is alive.
 
 ## Open questions
 
-- **`codex` adapter flags are still unverified.** `codex` is installed here, so
-  this is the last UNVERIFIED caveat in `DESIGN.md` and is cheap to clear.
+- **Codex usage pricing remains notional.** The adapter surface and JSONL usage
+  shape are now live-verified against CLI 0.148.0; mapping a subscription call
+  to a dollar-equivalent price still depends on operator-supplied model data.
 - **`llm_judge` acceptance checks raise at executor construction**, deliberately.
   Revisit only if a plan needs them.
 - **`server_tool_use` is captured but not yet priced.** Web search and fetch
@@ -116,9 +125,12 @@ lookback. Both are preserved on the `parallel-build-local` branch.
 
 ## Next steps
 
-1. **Phase 6 final gate:** one real end-to-end run — a genuine prompt, planned,
-   dispatched, killed and resumed — then a full review and heavy pentest.
-2. Verify the `codex` adapter's flags against the installed CLI.
+1. After the five-hour meter resets, run the prepared Phase 6 genuine prompt,
+   hard-kill one in-flight task, wait for the orphan provider process to exit,
+   then `resume`; verify attempt rotation, artifacts, status, and accounting.
+2. Finish the security/pentest review that the prior Claude session could not
+   complete after its 429, with special attention to hard-kill orphan processes
+   and concurrent executors.
 3. Price `server_tool_use` requests into the cost model.
 4. **Re-run semantic graphify extraction.** The graph is structurally accurate
    (909 nodes, AST-derived, rebuilt post-merge) but the doc↔code rationale links
@@ -130,10 +142,30 @@ lookback. Both are preserved on the `parallel-build-local` branch.
 | Thing | State |
 |---|---|
 | `claude` CLI | present; `--model` takes `opus`/`sonnet`/`haiku` aliases |
-| `codex` CLI | present, adapter flags unverified |
+| `codex` CLI | present; flags and JSONL usage verified against 0.148.0 |
 | `uv` | **not installed** — use `python3 -m venv` + `pip` |
 | `.venv` | present, Python 3.14.6 |
 | `OPENROUTER_API_KEY` | set in `~/.bashrc`, live-verified against a `:free` model |
 | `ANTHROPIC_API_KEY` | deliberately unset — keeps billing on subscription |
 | git identity | set **locally** to `Claude <noreply@anthropic.com>`, matching prior commits |
 | branches | `parallel-build-local` preserves the superseded local build |
+
+## Phase 6 progress (2026-08-18)
+
+- Baseline suite: 217 tests passing before Phase 6 changes.
+- Codex CLI 0.148.0 flags verified from installed `--help`.
+- Isolated live JSONL smoke call completed. It exposed and fixed cached-input
+  double-counting in the Codex adapter; the observed usage payload is pinned by
+  a regression test.
+- Phase 6 review found and fixed a catalogue-policy regression: models with an
+  unknown context window were being dropped even though unknown is not evidence
+  of insufficiency. They are now retained, surfaced as uncertain, and covered
+  at both catalogue and router layers.
+- Phase 6 recovery review found that `resume` detected open attempts but left
+  them projected as `running` forever. The executor now closes each orphan as
+  `INTERRUPTED` and retries in a new attempt workspace; a regression test starts
+  from a fsynced `AttemptStarted` with no terminal record.
+- A live planner invocation was prepared but made no provider call because the
+  first local module invocation failed before dispatch. The meter then reported
+  `five_hour=100.0%` with reset at 2026-08-19 03:39:59 UTC, so all further live
+  dispatch was stopped per the usage guard.

@@ -79,11 +79,11 @@ def test_models_with_no_pricing_block_are_dropped():
     assert any("no pricing block" in w for w in warnings)
 
 
-def test_models_without_context_length_are_dropped():
+def test_models_without_context_length_are_retained_as_unknown():
     broken = entry(model_id="c", context=0)
     broken["top_provider"] = {}
     models, warnings = parse_models({"data": [broken]})
-    assert models == {}
+    assert models["c"].context_length is None
     assert any("no context_length" in w for w in warnings)
 
 
