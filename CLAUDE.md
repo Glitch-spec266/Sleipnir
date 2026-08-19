@@ -262,6 +262,31 @@ non-plan task id, while quota/notional accounting must include it.
   without a terminal, and `theme._fit` measures *visible* width so a coloured
   line cannot silently break the border.
 
+## The phase gate (Phase 9)
+
+- **A gate verdict is counts, never content.** `evaluate_gate` returns per-group
+  totals and the ids of what failed. If a field is ever added that grows with
+  the plan — a summary, a path, a report excerpt — the brain's context becomes
+  linear in module count and the run's cost becomes quadratic.
+  `test_verdict_size_does_not_grow_with_task_count` is the executable form.
+- **The brain is woken only when work stopped *and* something is wrong.**
+  Quiescent-and-complete needs no decision, and a spawn to confirm success is a
+  spawn wasted. `needs_brain` encodes both halves; do not relax it to "quiescent".
+- **Escalation changes tier *and* `retry.max_attempts`.** Only the pair works: a
+  FAILED task will not be dispatched again without a fresh attempt, so a
+  tier-only escalation is a silent no-op. Both are outside `spec_hash`, which is
+  what keeps the retarget routing-only and auto-appliable.
+- **Never escalate a SKIPPED or CANCELLED task.** Neither lost on merit, and
+  escalating a skipped task re-routes its whole downstream subtree because one
+  upstream task failed.
+- **The escalation ladder must stay finite.** It walks up `DOWNSHIFT_LADDER`,
+  stops at the top tier, and stops at the schema's six-attempt ceiling.
+  `test_the_ladder_terminates` pins it. A wrap-around or a counter reset turns
+  the gate into an infinite spend loop.
+- **Console brain-wakefulness is derived from the run lock**, never stored. It
+  is the same rule as task status, for the same reason: no derived state on disk
+  means crash recovery is an ordinary read.
+
 ## Checkpoint discipline
 
 At the end of every stage or phase, in this order: refresh graphify if structure

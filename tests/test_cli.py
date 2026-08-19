@@ -328,7 +328,11 @@ def test_orchestrate_applies_brain_revision_and_resumes_failed_work(
         Adapter.CLAUDE: harness, Adapter.OPENROUTER: harness
     })
     capsys.readouterr()
-    assert invoke(workspace, "orchestrate") == 0
+    # --no-auto-escalate keeps this test on the path it was written for: the
+    # phase gate would otherwise retry the failed module one tier stronger and
+    # the brain would never be consulted. The gate's own path is covered by
+    # test_phase_gate_escalates_a_failed_module_without_waking_the_brain.
+    assert invoke(workspace, "orchestrate", "--no-auto-escalate") == 0
     assert harness.control_calls == 1
     assert [item for item in harness.dispatched if item[0] == "schema"] == [
         ("schema", 1), ("schema", 2), ("schema", 3)
@@ -345,6 +349,53 @@ def test_orchestrate_applies_brain_revision_and_resumes_failed_work(
     assert control_records[0].cost.window_tokens == 100
     assert control_records[0].cost.quota_pool == "claude"
     assert control_records[0].artifacts[0].name == "decision"
+
+
+def test_phase_gate_escalates_a_failed_module_without_waking_the_brain(
+    workspace: Path, monkeypatch, capsys
+):
+    """The gate exists to keep the expensive brain asleep.
+
+    A module that failed on a weak tier is the common case, and it has a
+    mechanical answer: run it again with a better agent. Paying for a
+    reason-tier spawn to be told that is the cost the whole design avoids.
+    """
+    seed_plan(workspace, monkeypatch)
+    # The seeded `schema` task is reason-tier, which is the top of the ladder —
+    # the gate rightly refuses to "escalate" it, since there is no better agent
+    # to give it. Drop it a rung so this test exercises the escalation path.
+    payload = json.loads((workspace / "plan.json").read_text())
+    for entry in payload["tasks"]:
+        if entry["id"] == "schema":
+            entry["tier"] = "code"
+    (workspace / "plan.json").write_text(json.dumps(payload))
+
+    class NeverConsulted(ScriptedAdapter):
+        name = Adapter.CLAUDE
+
+        def __init__(self):
+            super().__init__(fail_first=2)
+            self.control_calls = 0
+
+        async def dispatch(self, request):
+            if request.task.id == "sleipnir-control":
+                self.control_calls += 1
+            return await super().dispatch(request)
+
+    harness = NeverConsulted()
+    monkeypatch.setattr(cli, "build_adapters", lambda config: {
+        Adapter.CLAUDE: harness, Adapter.OPENROUTER: harness
+    })
+    capsys.readouterr()
+    assert invoke(workspace, "orchestrate") == 0
+    assert harness.control_calls == 0, "the gate must not need the brain for this"
+
+    output = capsys.readouterr().out
+    assert "phase gate" in output
+    assert "gate escalation" in output
+    # The escalation is a real, audited plan revision — not a hidden retry.
+    assert (workspace / "revisions.jsonl").exists()
+    assert cli.load_plan(workspace).revision >= 1
 
 
 def test_apply_revision_requires_explicit_operator_command_for_semantic_change(
