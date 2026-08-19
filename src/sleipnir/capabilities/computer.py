@@ -230,6 +230,20 @@ def run(command: str, *, cwd: str | Path | None = None, timeout_s: float = 300.0
     worker spawn.  It exists so the console can install packages, provision
     hosting and drive CLIs the way a person at this keyboard would — and it is
     audited for exactly that reason.
+
+    **This function is not a trust boundary, and narrowing it would not create
+    one.**  Static analysis flags ``shell=True`` here; the flag is correct about
+    the pattern and wrong about the consequence.  The only caller is a session
+    that already holds full host control and its own shell, so anything that
+    could be "smuggled" through this argument can simply be executed one line
+    earlier.  Replacing this with an argv list would delete pipes, redirection
+    and globbing — the reason an operator shell exists — while removing no
+    capability from an attacker who is, by construction, already inside.
+
+    The boundary that does exist is the worker lane: dispatched tasks keep the
+    stripped environment and the confined workspace, and never reach this
+    module at all.  If you are tempted to harden this function, check that
+    separation instead; it is the one that carries weight.
     """
     audit.record("shell.run", {"command": command, "cwd": str(cwd or Path.cwd())})
     return subprocess.run(  # noqa: S602 - operator-authorised shell, by design
