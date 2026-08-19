@@ -11,9 +11,10 @@ context that the run needs later.  So while workers are building, a cheap model
 answers from the bounded manifest — the same constant-size object the brain
 itself is allowed to see, and nothing more.
 
-No model name appears here.  ``claude`` is invoked without ``--model`` so the
-authenticated account picks its own default, and the asleep-path model is
-resolved from the operator's TOML policy, exactly as dispatch routing is.
+Interactive model aliases come from console state (and therefore CLI options),
+while the asleep-path model is resolved from the operator's TOML policy,
+exactly as dispatch routing is.  The capability gate only chooses between those
+supplied aliases; it never invents a provider model id.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ class Reply:
     speaker: str
     session_id: str | None = None
     cost_usd: float | None = None
+    turns: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +53,7 @@ def claude_argv(
     executable: str = "claude",
     permission_mode: str = "acceptEdits",
     model: str | None = None,
+    tools: tuple[str, ...] | None = None,
     add_dirs: tuple[Path, ...] = (),
 ) -> list[str]:
     """Build the headless invocation.
@@ -70,6 +73,8 @@ def claude_argv(
     argv += ["--permission-mode", permission_mode]
     if model:
         argv += ["--model", model]
+    if tools is not None:
+        argv += ["--tools", ",".join(tools)]
     for directory in add_dirs:
         argv += ["--add-dir", str(directory)]
     return argv
@@ -121,7 +126,45 @@ async def ask_claude(
         speaker="claude",
         session_id=payload.get("session_id") or session_id,
         cost_usd=payload.get("total_cost_usd"),
+        turns=(
+            payload.get("num_turns")
+            if isinstance(payload.get("num_turns"), int)
+            else None
+        ),
     )
+
+
+# ---------------------------------------------------------------------------
+# The fast-lane capability gate
+# ---------------------------------------------------------------------------
+
+CAPABLE = "SLEIPNIR_CAPABLE"
+DECLINE_PREFIX = "SLEIPNIR_DECLINE:"
+
+FAST_LANE_ASSESSMENT = f"""\
+You are Sleipnir's capability gate. You have no tools in this turn and cannot
+take any action. Assess whether Haiku can reliably complete the operator's
+request using the host capabilities described below.
+
+Reply with exactly one line. Use `{CAPABLE}` only when the task is clear and
+you are confident Haiku can finish it safely. Otherwise use:
+{DECLINE_PREFIX} <short reason>
+
+Decline ambiguity, missing information, high-stakes judgement, destructive or
+irreversible actions, complex debugging, and any desktop/browser flow where a
+misread screen or wrong click would be consequential. The `/project` command
+is handled elsewhere and will never be sent here.
+"""
+
+
+def fast_lane_capable(reply: Reply) -> bool:
+    """True only for an exact, tool-free affirmative verdict.
+
+    The assessment process is launched with ``--tools ''``, so even a badly
+    behaved assessor cannot touch the host. Malformed, verbose, or missing-turn
+    responses fail closed to the stronger model.
+    """
+    return reply.turns == 1 and reply.text.strip() == CAPABLE
 
 
 # ---------------------------------------------------------------------------
@@ -209,11 +252,15 @@ def extract_queued_instruction(text: str) -> str | None:
 
 __all__ = [
     "ChatError",
+    "CAPABLE",
+    "DECLINE_PREFIX",
+    "FAST_LANE_ASSESSMENT",
     "Reply",
     "ROUTER_SYSTEM",
     "ask_claude",
     "ask_router",
     "claude_argv",
     "extract_queued_instruction",
+    "fast_lane_capable",
     "router_model",
 ]

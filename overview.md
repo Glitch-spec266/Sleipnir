@@ -1,6 +1,6 @@
 # Sleipnir — Overview
 
-_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 360 tests passing._
+_Last updated: 2026-08-19 · Status: Phases 1–9 complete; 380 tests passing._
 
 ## What this is
 
@@ -85,6 +85,7 @@ different scarce resources and they do not convert into each other, which is why
 | `console.py` | Full-screen renderer + raw-mode input loop. Owns the terminal, never composes a reply. |
 | `chat.py` | Where a message goes: `claude` with session continuity when the brain is awake, a cheap duty officer reading the bounded manifest when it is asleep. |
 | `capabilities/computer.py` | Keyboard, mouse, screen, and an operator shell. Wayland-correct via `ydotool`. |
+| `capabilities/clipboard.py` | Reads Wayland text/image MIME; images become private model-readable attachments. |
 | `capabilities/browser.py` | Playwright Chromium with a persistent, logged-in profile. |
 | `capabilities/secrets.py` | One-shot credentials that cannot be printed and wipe on use. |
 | `capabilities/audit.py` | Append-only, fsynced record of every privileged action, redacted at the boundary. |
@@ -120,6 +121,7 @@ Sleipnir/
 │   ├── cli.py            # the `sleipnir` command
 │   ├── capabilities/     # host control — the operator lane, never the worker lane
 │   │   ├── computer.py   # keyboard, mouse, screen, operator shell
+│   │   ├── clipboard.py  # Wayland text paste + private image attachments
 │   │   ├── browser.py    # Playwright Chromium, persistent logged-in profile
 │   │   ├── secrets.py    # one-shot credentials that wipe on use
 │   │   ├── audit.py      # append-only record of every privileged action
@@ -129,7 +131,7 @@ Sleipnir/
 │       ├── claude.py     # `claude -p`      (verified against real output)
 │       ├── codex.py      # `codex exec`     (verified against CLI 0.148.0)
 │       └── openrouter.py # plain HTTP
-├── tests/                # 360 tests, including the manifest and verdict size bounds
+├── tests/                # 380 tests, including the manifest and verdict size bounds
 ├── DESIGN.md             # the reasoning, tradeoffs and open decisions
 ├── project.md            # living state — current phase, decisions, next steps
 └── overview.md           # this file
@@ -331,8 +333,8 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-Last verified run: **360 passed** on Python 3.14.6. `pip check`, `compileall`,
-`git diff --check`, and Bandit are also clean.
+Last verified run: **380 passed** on Python 3.14.6. `pip check`, `compileall`,
+and `git diff --check` are also clean.
 
 Host control needs a third runtime dependency and one privileged install:
 
@@ -342,19 +344,37 @@ Host control needs a third runtime dependency and one privileged install:
 .venv/bin/sleipnir doctor    # reports what this machine can actually do
 ```
 
-`setup` installs `ydotool`, writes a udev rule granting the user `/dev/uinput`,
-adds the user to the `input` group, and fetches the Chromium build Playwright
-drives. It exists so nobody hand-runs sudo out of a README. A new login session
-is needed afterwards for the group change to apply.
+`setup` installs `ydotool` and `wl-clipboard`, writes a udev rule granting the
+user `/dev/uinput`, adds the user to the `input` group, and fetches the Chromium
+build Playwright drives. It exists so nobody hand-runs sudo out of a README. A
+new login session is needed afterwards for the group change to apply.
 
 ### The console
 
 Bare `sleipnir` — no subcommand — opens the interactive console: a boot
 animation, then a green frame that flickers while you type. What you type is
-**not** answered by Sleipnir. It is handed to the real `claude` CLI over stdin,
-with `--session-id` on the first turn and `--resume` on every turn after, so the
-conversation continues instead of restarting. On the first turn only, Sleipnir
-prepends a capability brief listing the host commands the model can now call.
+**not** answered by Sleipnir. Ordinary messages enter a guarded fast lane. A
+tool-free Haiku turn first returns a strict capability verdict; because its CLI
+invocation has `--tools ""`, it cannot click, type, browse, or edit while making
+that decision. An exact affirmative lets Haiku handle the request. Anything
+else goes to Sonnet. A failed action is not replayed automatically because it
+may already have changed the host. Both turns retain conversation continuity
+through `--session-id` and `--resume`.
+
+`/project <goal>` bypasses chat and launches Sleipnir's existing planner and
+orchestrator. That means large work uses the same task DAG, model-tier routing,
+budget governor, acceptance checks, phase gate, and human review boundary as
+the batch CLI rather than a console-specific imitation. `--fast-model` and
+`--model` select the two aliases; an empty fast alias disables the check.
+
+The console explicitly enables bracketed paste, so Ctrl+Shift+V text—including
+multiple lines—arrives as one edit rather than escape-sequence debris or partial
+submissions. A terminal PTY cannot carry pixels. For an image paste event,
+Sleipnir asks the Wayland clipboard for its offered MIME, writes the selected
+image to a private `0600` file under `~/.sleipnir/clipboard`, and adds that
+directory to Claude's allowed roots. Agent-driven copy/paste uses
+`sleipnir computer copy|paste`, which injects Ctrl+Shift+C/V into the focused
+application and therefore leaves text-versus-image ownership to the desktop.
 
 The batch subcommands are all still there: `plan`, `run`, `resume`, `status`,
 `explain`, `tui`, `orchestrate`, `apply-revision`, plus the new `setup`,
@@ -393,7 +413,8 @@ the brain as text on its next turn.
 
 ### Host control, in one paragraph
 
-`sleipnir computer` types, clicks, moves the pointer and captures the screen.
+`sleipnir computer` types, clicks, moves the pointer, captures the screen, and
+sends Ctrl+Shift+C/V without flattening the clipboard payload.
 Under Wayland none of that can be done the X11 way, so input is injected into
 `/dev/uinput` through `ydotool` — the events are indistinguishable from a
 physical keyboard, which is why every call is written to

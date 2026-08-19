@@ -885,14 +885,18 @@ async def cmd_console(args: argparse.Namespace) -> int:
     state = ConsoleState()
     run_dir = Path(getattr(args, "run_root", ".")).resolve()
     state.run_dir = run_dir if run_dir.exists() else None
+    config_arg = getattr(args, "config", None)
+    state.config_path = Path(config_arg).resolve() if config_arg else None
+    state.cache_read_weight = getattr(args, "cache_read_weight", 1.0)
     if getattr(args, "ask_first", False):
         state.permission_mode = "acceptEdits"
     state.model = getattr(args, "model", "sonnet") or None
+    state.fast_model = getattr(args, "fast_model", "haiku") or None
     return await run_console(state, splash=not getattr(args, "no_splash", False))
 
 
 async def cmd_doctor(args: argparse.Namespace) -> int:
-    from sleipnir.capabilities import browser, computer
+    from sleipnir.capabilities import browser, clipboard, computer
 
     probe = computer.probe()
     rows = [
@@ -901,6 +905,7 @@ async def cmd_doctor(args: argparse.Namespace) -> int:
         ("/dev/uinput writable", "yes" if probe.uinput_writable else "NO"),
         ("input daemon running", "yes" if probe.daemon_running else "not yet (starts on demand)"),
         ("screenshot tool", probe.screenshot_tool or "NONE"),
+        ("Wayland clipboard", "yes" if clipboard.available() else "NO"),
         ("browser control", "yes" if browser.available() else "NO"),
     ]
     for label, value in rows:
@@ -909,7 +914,9 @@ async def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"  ! {note}")
     if not browser.available():
         print("  ! playwright is not installed — run `sleipnir setup`")
-    ready = probe.ready and browser.available()
+    if not clipboard.available():
+        print("  ! wl-clipboard is not installed — run `sleipnir setup`")
+    ready = probe.ready and browser.available() and clipboard.available()
     print("\nhost control:", "ready" if ready else "incomplete — run `sleipnir setup`")
     return 0 if ready else 1
 
@@ -934,6 +941,17 @@ def _setup_steps() -> list[tuple[str, str, bool]]:
     steps: list[tuple[str, str, bool]] = []
     if install and not shutil.which("ydotool"):
         steps.append(("install ydotool (kernel-level input injection)", install, True))
+    if not shutil.which("wl-paste"):
+        if shutil.which("dnf"):
+            clipboard_install = "dnf install -y wl-clipboard"
+        elif shutil.which("apt-get"):
+            clipboard_install = "apt-get install -y wl-clipboard"
+        elif shutil.which("pacman"):
+            clipboard_install = "pacman -S --needed --noconfirm wl-clipboard"
+        else:
+            clipboard_install = ""
+        if clipboard_install:
+            steps.append(("install Wayland text/image clipboard support", clipboard_install, True))
     if not os.access("/dev/uinput", os.W_OK):
         steps.append(
             (
@@ -1009,6 +1027,10 @@ async def cmd_computer(args: argparse.Namespace) -> int:
             # Accept both `ctrl shift t` and `ctrl+shift+t`.
             combo = [part for chunk in rest for part in chunk.split("+") if part]
             computer.key(*combo)
+        elif action == "copy":
+            computer.copy()
+        elif action == "paste":
+            computer.paste()
         elif action == "click":
             computer.click(rest[0] if rest else "left")
         elif action == "move":
@@ -1106,9 +1128,14 @@ def build_parser() -> argparse.ArgumentParser:
     console_parser.add_argument(
         "--model",
         default="sonnet",
-        help="model alias for console turns (default: sonnet — the account "
-             "default is slower and costs a full spawn per message); pass an "
-             "empty string to let the account choose",
+        help="model alias for conversational and judgement-heavy console turns "
+             "(default: sonnet); pass an empty string to let the account choose",
+    )
+    console_parser.add_argument(
+        "--fast-model",
+        default="haiku",
+        help="model alias for ordinary requests after a tool-free capability check "
+             "(default: haiku); pass an empty string to disable the fast lane",
     )
     console_parser.set_defaults(func=cmd_console)
 
@@ -1125,7 +1152,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     computer_parser = subparsers.add_parser("computer", help="control keyboard, mouse and screen")
     computer_parser.add_argument(
-        "action", choices=["screenshot", "type", "key", "click", "move", "scroll"]
+        "action",
+        choices=["screenshot", "type", "key", "copy", "paste", "click", "move", "scroll"],
     )
     computer_parser.add_argument("args", nargs="*")
     computer_parser.set_defaults(func=cmd_computer)

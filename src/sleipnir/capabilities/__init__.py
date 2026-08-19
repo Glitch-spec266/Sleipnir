@@ -16,4 +16,4 @@ explicit rather than incidental:
 
 from __future__ import annotations
 
-__all__ = ["audit", "computer", "secrets"]
+__all__ = ["audit", "clipboard", "computer", "secrets"]

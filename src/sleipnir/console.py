@@ -8,9 +8,10 @@ to widen what the receiver can do, not to answer for it.
 Routing is the interesting part.  The brain is expensive and context-bound, so
 it is not always listening:
 
-* **Brain awake** (no run in flight, or the run has hit a gate): the message
-  goes straight to ``claude`` with session continuity, so a conversation is a
-  conversation.
+* **Brain awake** (no run in flight, or the run has hit a gate): ordinary
+  messages pass through a tool-free Haiku capability check. A confident check
+  lets Haiku act; anything else fails closed to Sonnet. ``/project`` instead
+  launches the planner and routed multi-model orchestration pipeline.
 * **Brain asleep** (workers are building): waking the brain for "how's it
   going?" would burn the exact context the whole design protects.  A cheap
   OpenRouter model reads the message instead and either answers it from the
@@ -25,8 +26,11 @@ because ``input()`` owns the cursor and cannot coexist with a redraw loop.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import contextlib
 import os
+import re
+import signal
 import shutil
 import sys
 import termios
@@ -49,6 +53,8 @@ These are real shell commands available to you via Bash:
   {exe} computer screenshot <path>     capture the screen to a PNG you can read
   {exe} computer type <text>           type into the focused window
   {exe} computer key <combo>           press a chord, e.g. ctrl+shift+t
+  {exe} computer copy                  press ctrl+shift+c; preserves text/image MIME
+  {exe} computer paste                 press ctrl+shift+v into the focused app
   {exe} computer click [left|right]    click at the pointer
   {exe} computer move <x> <y>          move the pointer
   {exe} computer scroll <amount>       scroll the focused window
@@ -103,6 +109,8 @@ class ConsoleState:
     status: str = "ready"
     busy: bool = False
     run_dir: Path | None = None
+    config_path: Path | None = None
+    cache_read_weight: float = 1.0
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     frame: int = 0
     #: Host control is the product, so the console does not stop to ask before
@@ -113,11 +121,16 @@ class ConsoleState:
     #: Instructions the duty officer took while the brain slept. Text only —
     #: handed to the brain on its next turn, never executed here.
     queued_for_brain: list[str] = field(default_factory=list)
-    #: Alias passed to `claude --model`. A console message is usually small and
-    #: conversational; letting the account default answer it means the slowest,
-    #: most expensive model handles "how's it going?" and every turn pays a full
-    #: spawn for the privilege. The operator can raise it per session.
+    #: Directories containing clipboard images explicitly attached by the
+    #: operator. Added to Claude's allowed roots; never available to workers.
+    attachment_dirs: set[Path] = field(default_factory=set)
+    #: Default alias passed to `claude --model` for conversation and judgement.
+    #: The operator can replace it per session.
     model: str | None = "sonnet"
+    #: Alias for ordinary requests after a separate tool-free capability check.
+    #: A false negative costs a stronger turn; a false positive can act
+    #: incorrectly on the live desktop, so uncertainty falls back to ``model``.
+    fast_model: str | None = "haiku"
     #: Set while a credential is being typed: the buffer is not echoed and is
     #: never added to the transcript.
     secret_request: object | None = None
@@ -177,9 +190,8 @@ def render(state: ConsoleState, *, width: int, height: int, colour: bool = True)
     body_height = max(6, height - 6)
     lines: list[str] = []
 
-    # The banner is all-or-nothing. Drawing the top row of a five-row wordmark
-    # renders as broken debris, which is what shipped: `art[:1]` looked like a
-    # tidy truncation and is not one.
+    # The banner is all-or-nothing. Drawing one row of a multi-row emblem
+    # renders as broken debris; `art[:1]` looks like tidy truncation and is not.
     art = theme.logo_lines(width)
     if height >= len(art) + 12:
         lines.extend(theme.paint(line, theme.NORMAL + 1, colour=colour) for line in art)
@@ -250,12 +262,19 @@ def raw_terminal():
     saved = termios.tcgetattr(stream)
     try:
         tty.setcbreak(stream.fileno())
-        sys.stdout.write(theme.ENTER_FULLSCREEN + theme.HIDE_CURSOR)
+        sys.stdout.write(
+            theme.ENTER_FULLSCREEN + theme.ENABLE_BRACKETED_PASTE + theme.HIDE_CURSOR
+        )
         sys.stdout.flush()
         yield True
     finally:
         termios.tcsetattr(stream, termios.TCSADRAIN, saved)
-        sys.stdout.write(theme.SHOW_CURSOR + theme.RESET + theme.EXIT_FULLSCREEN)
+        sys.stdout.write(
+            theme.DISABLE_BRACKETED_PASTE
+            + theme.SHOW_CURSOR
+            + theme.RESET
+            + theme.EXIT_FULLSCREEN
+        )
         sys.stdout.flush()
 
 
@@ -278,6 +297,99 @@ async def play_splash(*, colour: bool = True) -> None:
 BACKSPACE = ("\x7f", "\x08")
 INTERRUPT = "\x03"
 ENTER = ("\r", "\n")
+CLIPBOARD_PASTE = "\x16"  # Ctrl+V when the terminal forwards Ctrl+Shift+V
+BRACKETED_PASTE_START = "\x1b[200~"
+BRACKETED_PASTE_END = "\x1b[201~"
+_CSI = re.compile(r"^\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+@dataclass(frozen=True)
+class PastedText:
+    text: str
+
+
+class TerminalInputDecoder:
+    """Turn a byte stream into keys and atomic bracketed-paste events."""
+
+    def __init__(self) -> None:
+        self._utf8 = codecs.getincrementaldecoder("utf-8")("ignore")
+        self._buffer = ""
+        self._paste: list[str] | None = None
+
+    @staticmethod
+    def _partial_suffix(value: str, marker: str) -> int:
+        return max(
+            (length for length in range(1, min(len(value), len(marker) - 1) + 1)
+             if marker.startswith(value[-length:])),
+            default=0,
+        )
+
+    def feed(self, data: bytes) -> list[str | PastedText]:
+        self._buffer += self._utf8.decode(data)
+        events: list[str | PastedText] = []
+        while self._buffer:
+            if self._paste is not None:
+                end = self._buffer.find(BRACKETED_PASTE_END)
+                if end >= 0:
+                    self._paste.append(self._buffer[:end])
+                    events.append(PastedText("".join(self._paste)))
+                    self._paste = None
+                    self._buffer = self._buffer[end + len(BRACKETED_PASTE_END):]
+                    continue
+                held = self._partial_suffix(self._buffer, BRACKETED_PASTE_END)
+                self._paste.append(self._buffer[:-held] if held else self._buffer)
+                self._buffer = self._buffer[-held:] if held else ""
+                break
+
+            if self._buffer.startswith(BRACKETED_PASTE_START):
+                self._buffer = self._buffer[len(BRACKETED_PASTE_START):]
+                self._paste = []
+                continue
+            if BRACKETED_PASTE_START.startswith(self._buffer):
+                break
+            if self._buffer.startswith("\x1b"):
+                match = _CSI.match(self._buffer)
+                if match:
+                    self._buffer = self._buffer[match.end():]
+                    continue
+                # Hold a split CSI sequence, but discard an unsupported escape
+                # once another complete byte proves it is not bracketed paste.
+                if self._buffer.startswith("\x1b[") and not re.search(
+                    r"[@-~]$", self._buffer[2:]
+                ):
+                    break
+                self._buffer = self._buffer[1:]
+                continue
+            events.append(self._buffer[0])
+            self._buffer = self._buffer[1:]
+        return events
+
+
+def _clean_paste(text: str) -> str:
+    """Keep human text and line structure; drop terminal control bytes."""
+    normalised = text.replace("\r\n", "\n").replace("\r", "\n")
+    return "".join(char for char in normalised if char in "\n\t" or char.isprintable())
+
+
+def paste_system_clipboard(state: ConsoleState, *, allow_images: bool = True) -> str:
+    """Insert clipboard text, or attach an image by private filesystem path."""
+    from sleipnir.capabilities import clipboard
+
+    try:
+        payload = clipboard.read()
+    except clipboard.ClipboardError as error:
+        state.add("error", str(error))
+        return "failed"
+    if payload.kind == "text":
+        state.input_buffer += _clean_paste(payload.text or "")
+        return "text"
+    if not allow_images or payload.path is None:
+        state.add("error", "An image cannot be pasted into a credential field.")
+        return "failed"
+    state.attachment_dirs.add(payload.path.parent)
+    spacer = "\n" if state.input_buffer else ""
+    state.input_buffer += f"{spacer}[Attached clipboard image: {payload.path}]"
+    return "image"
 
 
 def apply_key(state: ConsoleState, char: str) -> str | None:
@@ -359,6 +471,77 @@ def run_digest(run_dir: Path) -> str:
     )
 
 
+def project_goal(text: str) -> str | None:
+    """Return the goal for an exact ``/project`` command, else ``None``."""
+    command, separator, remainder = text.strip().partition(" ")
+    if command != "/project":
+        return None
+    return remainder.strip() if separator else ""
+
+
+def _project_argv(state: ConsoleState, *command: str) -> list[str]:
+    """Build a child CLI invocation using the console's own workspace policy."""
+    run_root = state.run_dir or Path.cwd()
+    argv = [
+        sys.executable,
+        "-m",
+        "sleipnir.cli",
+        "--run-root",
+        str(run_root),
+        "--cache-read-weight",
+        str(state.cache_read_weight),
+    ]
+    if state.config_path is not None:
+        argv += ["--config", str(state.config_path)]
+    return [*argv, *command]
+
+
+async def _run_project_stage(state: ConsoleState, *command: str) -> str:
+    """Run one project stage without letting its output corrupt the console."""
+    process = await asyncio.create_subprocess_exec(
+        *_project_argv(state, *command),
+        cwd=state.run_dir or Path.cwd(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = await process.communicate()
+    except asyncio.CancelledError:
+        # Ctrl-C closes the console. The project owns a process group so that
+        # its provider grandchildren do not continue spending after the UI is
+        # gone.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGTERM)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+        raise
+
+    out = stdout.decode("utf-8", "replace").strip()
+    err = stderr.decode("utf-8", "replace").strip()
+    if process.returncode != 0:
+        detail = (err or out or "no diagnostic output")[-2_000:]
+        raise RuntimeError(f"project stage {command[0]!r} exited {process.returncode}: {detail}")
+    return "\n".join(part for part in (out, err) if part)
+
+
+async def _run_project(state: ConsoleState, goal: str) -> None:
+    """Plan and execute a goal through Sleipnir's real multi-model pipeline."""
+    state.status = "project · planning"
+    plan_output = await _run_project_stage(state, "plan", goal)
+    state.add(
+        "sleipnir",
+        f"Project plan created. Starting routed execution.\n{plan_output[-2_000:]}",
+    )
+    state.status = "project · orchestrating"
+    run_output = await _run_project_stage(state, "orchestrate")
+    state.add("sleipnir", f"Project workflow finished.\n{run_output[-4_000:]}")
+
+
 async def _ask_duty_officer(state: ConsoleState, text: str) -> None:
     """Answer from bounded run state without spending a reason-tier spawn."""
     from sleipnir import chat
@@ -383,6 +566,13 @@ async def _ask_duty_officer(state: ConsoleState, text: str) -> None:
         state.add("sleipnir", f"Queued for the orchestrator: {queued}")
 
 
+def _claude_dirs(state: ConsoleState) -> tuple[Path, ...]:
+    directories = set(state.attachment_dirs)
+    if state.run_dir is not None:
+        directories.add(state.run_dir)
+    return tuple(sorted(directories))
+
+
 async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> None:
     """Send one operator message to whoever is on duty."""
     from sleipnir import chat
@@ -391,6 +581,13 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
     state.busy = True
     state.status = "thinking" if state.brain_awake else "routing"
     try:
+        goal = project_goal(text)
+        if goal is not None:
+            if not goal:
+                state.add("error", "Usage: /project <goal>")
+                return
+            await _run_project(state, goal)
+            return
         if state.brain_awake:
             queued = ""
             if state.queued_for_brain:
@@ -399,16 +596,51 @@ async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> 
                     + "\n".join(f"- {item}" for item in state.queued_for_brain)
                 )
                 state.queued_for_brain.clear()
-            prompt = f"{capability_brief()}\n\n{text}" if first_turn[0] else text
-            reply = await chat.ask_claude(
-                prompt + queued,
-                state.session_id,
-                resume=not first_turn[0],
-                permission_mode=state.permission_mode,
-                model=state.model,
-                add_dirs=(state.run_dir,) if state.run_dir else (),
-            )
-            first_turn[0] = False
+            base_prompt = f"{capability_brief()}\n\n{text}" if first_turn[0] else text
+            if state.fast_model:
+                state.status = "checking · fast lane"
+                assessment = await chat.ask_claude(
+                    f"{chat.FAST_LANE_ASSESSMENT}\n\n{base_prompt}{queued}",
+                    state.session_id,
+                    resume=not first_turn[0],
+                    permission_mode=state.permission_mode,
+                    model=state.fast_model,
+                    tools=(),
+                    add_dirs=_claude_dirs(state),
+                )
+                first_turn[0] = False
+                if chat.fast_lane_capable(assessment):
+                    state.status = "acting · fast lane"
+                    reply = await chat.ask_claude(
+                        "The tool-free capability check passed. Complete the operator's "
+                        "preceding request now.",
+                        state.session_id,
+                        resume=True,
+                        permission_mode=state.permission_mode,
+                        model=state.fast_model,
+                        add_dirs=_claude_dirs(state),
+                    )
+                else:
+                    state.status = "escalating · strong lane"
+                    reply = await chat.ask_claude(
+                        "The tool-free fast-lane check declined or failed closed. "
+                        "Complete the operator's preceding request now.",
+                        state.session_id,
+                        resume=True,
+                        permission_mode=state.permission_mode,
+                        model=state.model,
+                        add_dirs=_claude_dirs(state),
+                    )
+            else:
+                reply = await chat.ask_claude(
+                    base_prompt + queued,
+                    state.session_id,
+                    resume=not first_turn[0],
+                    permission_mode=state.permission_mode,
+                    model=state.model,
+                    add_dirs=_claude_dirs(state),
+                )
+                first_turn[0] = False
             state.add("claude", reply.text)
         else:
             await _ask_duty_officer(state, text)
@@ -479,21 +711,23 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
             return 0
 
         loop = asyncio.get_running_loop()
-        keys: asyncio.Queue[str] = asyncio.Queue()
+        keys: asyncio.Queue[str | PastedText] = asyncio.Queue()
+        decoder = TerminalInputDecoder()
 
         def _on_readable() -> None:
-            data = os.read(sys.stdin.fileno(), 1024).decode("utf-8", "ignore")
-            for char in data:
-                keys.put_nowait(char)
+            data = os.read(sys.stdin.fileno(), 8192)
+            for event in decoder.feed(data):
+                keys.put_nowait(event)
 
         loop.add_reader(sys.stdin.fileno(), _on_readable)
         state.add(
             "sleipnir",
-            "Ready. Your message goes to Claude Code with host control attached — "
-            "keyboard, mouse, screen, browser and shell. Run with --ask-first to "
-            "confirm each action instead."
+            "Ready. Ordinary requests use the guarded fast lane; /project <goal> "
+            "starts the multi-model workflow. Claude Code has keyboard, mouse, "
+            "screen, browser and shell. Run with --ask-first to confirm each action."
             if state.permission_mode == "bypassPermissions"
-            else "Ready. Host actions will be confirmed with you before they run.",
+            else "Ready. Host actions will be confirmed with you before they run; "
+            "/project <goal> starts the multi-model workflow.",
         )
         try:
             while True:
@@ -503,11 +737,27 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
                 if state.frame % 8 == 0:
                     poll_secret_request(state)
                 try:
-                    char = await asyncio.wait_for(keys.get(), timeout=FRAME_INTERVAL_S)
+                    event = await asyncio.wait_for(keys.get(), timeout=FRAME_INTERVAL_S)
                 except TimeoutError:
                     continue  # no key this frame; the border still flickers
+                if isinstance(event, PastedText):
+                    if event.text:
+                        state.input_buffer += _clean_paste(event.text)
+                    else:
+                        # Some terminals emit an empty bracketed paste when the
+                        # clipboard owns an image rather than text.
+                        paste_system_clipboard(
+                            state, allow_images=state.secret_request is None
+                        )
+                    continue
+                char = event
                 if char == INTERRUPT:
                     return 0
+                if char == CLIPBOARD_PASTE:
+                    paste_system_clipboard(
+                        state, allow_images=state.secret_request is None
+                    )
+                    continue
                 if state.secret_request is not None:
                     # While a credential is being typed the buffer is a secret,
                     # not a message: it must not reach the transcript or a model.
@@ -535,9 +785,13 @@ __all__ = [
     "ConsoleState",
     "FRAME_INTERVAL_S",
     "Message",
+    "PastedText",
+    "TerminalInputDecoder",
     "apply_key",
     "capability_brief",
     "play_splash",
+    "paste_system_clipboard",
+    "project_goal",
     "raw_terminal",
     "render",
     "run_console",

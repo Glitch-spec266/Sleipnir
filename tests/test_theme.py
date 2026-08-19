@@ -69,6 +69,13 @@ def test_splash_ends_fully_revealed():
     assert "orchestrator" in final
 
 
+def test_logo_is_an_eight_legged_horse_emblem_not_a_nameplate():
+    emblem = "\n".join(theme.LOGO)
+    assert "SLEIPNIR" not in emblem
+    assert emblem.count("│") == 8
+    assert emblem.count("╱╲") == 4
+
+
 def test_colour_is_suppressed_when_no_color_is_set(monkeypatch):
     monkeypatch.setenv("NO_COLOR", "1")
     assert theme.supports_colour() is False

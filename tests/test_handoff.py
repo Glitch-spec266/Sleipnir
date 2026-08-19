@@ -127,10 +127,12 @@ def test_the_console_uses_the_alternate_screen():
     the program launched itself dozens of times."""
     assert theme.ENTER_FULLSCREEN == "\x1b[?1049h"
     assert theme.EXIT_FULLSCREEN == "\x1b[?1049l"
+    assert theme.ENABLE_BRACKETED_PASTE == "\x1b[?2004h"
+    assert theme.DISABLE_BRACKETED_PASTE == "\x1b[?2004l"
 
 
 def test_the_banner_is_all_or_nothing():
-    """Drawing the top row of a five-row wordmark renders as debris."""
+    """Drawing only one row of the horse emblem renders as debris."""
     state = console.ConsoleState()
     tall = console.render(state, width=90, height=40, colour=False)
     assert all(line in tall for line in theme.LOGO)

@@ -38,7 +38,7 @@ and the tests.
 
 ## Current phase/stage
 
-Phases 1–8 are complete with **319 tests passing**.
+Phases 1–9 are complete with **380 tests passing**.
 
 Phases 1–7 gave the orchestrator: `sleipnir tui` is an offline/read-only
 dashboard, `tui --run` safely owns/resumes workers, and `tui --orchestrate`
@@ -109,6 +109,35 @@ behaved correctly in isolation.
 
 The console header was also drawing `art[:1]` — the top row of a five-row
 wordmark — which renders as debris rather than a logo.
+
+The wordmark has now been replaced outright by a letter-free horse emblem. Its
+four visible leg pairs are the identity of Sleipnir; the surrounding frame
+already carries the readable product name.
+
+## Guarded fast lane and `/project` (2026-08-19)
+
+Ordinary console requests now default to Haiku, but Haiku is not trusted to
+decide and act in one step. Sleipnir first invokes it with `--tools ""` and a
+binary capability protocol. Only an exact one-turn `SLEIPNIR_CAPABLE` verdict
+allows a second Haiku turn to use tools. A decline, extra prose, missing turn
+telemetry, or any malformed answer fails closed to Sonnet. Sleipnir never
+replays a failed action automatically: once a model may have touched the host,
+retrying the same request could duplicate an irreversible side effect.
+
+`/project <goal>` is the explicit complex-work boundary. It never enters the
+chat lane. The console launches the existing `plan` command followed by
+`orchestrate`, preserving the real planner, tier router, budget governor,
+acceptance checks, phase gate, and semantic-revision review. The child owns a
+process group; leaving the console terminates provider descendants rather than
+letting an abandoned project continue spending.
+
+Clipboard behavior is now explicit on both sides of the console. Agent commands
+`computer copy` and `computer paste` inject Ctrl+Shift+C/V, so the focused Linux
+application owns and preserves text or image MIME. Operator text paste uses
+bracketed-paste framing and cannot submit a multiline prompt halfway through.
+Image pixels cannot cross a PTY, so `clipboard.py` reads the Wayland MIME and
+materialises a private `0600` attachment for Claude instead. Clipboard content
+is never written to the audit log; only its type and length/path are recorded.
 
 ## The parallel-build merge (2026-08-18)
 
@@ -294,6 +323,21 @@ lookback. Both are preserved on the `parallel-build-local` branch.
   reads the run lock: an owned run directory means an executor is mid-build and
   the brain is asleep between decisions. Nothing is stored, so there is no
   wake-state file to go stale or to repair after a crash.
+- 2026-08-19 — **Capability classification gets no tools.** Asking a model to
+  promise it will decline before acting is not enforcement. The fast-lane check
+  runs with an empty tool set, and only a strict affirmative opens Haiku's
+  action turn; uncertainty and protocol drift go to Sonnet.
+- 2026-08-19 — **Complexity is an operator command, not a prose heuristic.**
+  Ordinary messages are small requests; `/project <goal>` invokes the existing
+  multi-model plan/orchestrate pipeline. This boundary is visible, predictable,
+  and cannot silently classify a casual desktop command as a full project.
+- 2026-08-19 — **Clipboard MIME stays with the desktop.** Ctrl+Shift+C/V are
+  injected as physical chords for agent-driven app interaction. Console text
+  paste is bracketed; console image paste is a private file attachment because
+  a terminal byte stream cannot represent pixels.
+- 2026-08-19 — **The mark is a horse, not typography.** The border already says
+  SLEIPNIR. The animated art is now the eight-legged emblem itself, including a
+  compact form that keeps all four leg pairs at narrow widths.
 
 ## Open questions
 
@@ -326,14 +370,9 @@ lookback. Both are preserved on the `parallel-build-local` branch.
    hard-kill orphan process groups; the concurrent-executor and filesystem-read
    findings are fixed.
 4. Price `server_tool_use` requests into the cost model.
-5. **Finish the Graphify refresh with a semantic pass.** The structural graph
-   was rebuilt on 2026-08-19 and is current at **1,225 nodes / 3,709 edges /
-   45 labelled communities**, all AST-derived. Five changed docs (`CLAUDE.md`,
-   `project.md`, `overview.md`, `README.md`, `DESIGN.md`) were deliberately left
-   unstamped rather than dispatched to extraction subagents, so a later full
-   build re-queues them. Until then the graph carries no doc-derived nodes,
-   which is why the health check reports 233 dangling and 314 collapsed edges —
-   prose endpoints the code half still references.
+5. Live-verify both new console branches: one ordinary request that passes the
+   tool-free Haiku gate, one that declines to Sonnet, and one disposable
+   `/project` workspace that completes through at least two routed tiers.
 
 ## Environment on this machine
 
