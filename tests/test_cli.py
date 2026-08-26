@@ -614,3 +614,33 @@ def test_the_direct_console_never_touches_orchestration_machinery():
         source = package.joinpath(module_name).read_text(encoding="utf-8")
         for forbidden in ("load_plan", "build_manifest", "apply_revision", "RunLock("):
             assert forbidden not in source, f"{module_name} references {forbidden}"
+
+
+def test_the_planner_is_told_how_to_declare_a_dependency_artifact():
+    """The schema has always supported artifact reads; the prompt hid them.
+
+    A live run planned a test task whose acceptance command imported the
+    library task's output, but declared only that task's summary. Each task
+    runs in its own directory, so the file was simply absent and all three
+    attempts failed identically.
+    """
+    from sleipnir.planner import build_planner_task
+
+    instructions = build_planner_task("build something").inputs.instructions or ""
+    assert "inputs.artifacts" in instructions
+    assert "not on PATH" in instructions
+
+
+def test_a_long_goal_is_clipped_instead_of_truncating_the_planner_rules():
+    """The goal sits near the top of the prompt, the rules below it.
+
+    Clipping the assembled prompt therefore threw away the output contract and
+    every rule while keeping the goal, and did it silently — the planner would
+    be asked for a plan with no description of what a plan is.
+    """
+    from sleipnir.planner import build_planner_task
+
+    instructions = build_planner_task("Y" * 5_000).inputs.instructions or ""
+    assert "inputs.artifacts" in instructions
+    assert "Write only" in instructions
+    assert "truncated" in instructions

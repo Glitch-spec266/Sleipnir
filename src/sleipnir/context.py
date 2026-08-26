@@ -36,6 +36,11 @@ class ResolvedInput:
     prompt: str
     included: list[IncludedInput] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    #: Declared dependency artifacts to copy into the attempt workspace, as
+    #: (source, destination relative to the workspace). Inlining the text in
+    #: the prompt lets a worker read a dependency; only a real file lets an
+    #: acceptance command execute one.
+    staged: list[tuple[Path, str]] = field(default_factory=list)
 
     @property
     def total_bytes(self) -> int:
@@ -43,6 +48,7 @@ class ResolvedInput:
 
     def manifest(self) -> dict[str, object]:
         return {
+            "staged": [dest for _, dest in self.staged],
             "total_bytes": self.total_bytes,
             "prompt_bytes": len(self.prompt.encode()),
             "missing": self.missing,
@@ -123,6 +129,10 @@ def _artifact_section(
     if not task.inputs.artifacts:
         return []
     lines = ["", "# Full outputs of prior tasks"]
+    # A dependency file is never staged over one of this task's own declared
+    # outputs: the worker's work and its input would then be the same path,
+    # and `collect_outputs` could not tell which is which.
+    own_outputs = {out.path for out in task.outputs.outputs}
     for ref in task.inputs.artifacts:
         base = artifact_dir_for(ref.task_id)
         if base is None:
@@ -137,6 +147,8 @@ def _artifact_section(
             text, size, clipped = _read_clipped(match, ref.max_bytes)
             rel = match.relative_to(base)
             lines += [f"## {ref.task_id}/{rel}", "```", text, "```"]
+            if rel.as_posix() not in own_outputs:
+                resolved.staged.append((match, rel.as_posix()))
             resolved.included.append(
                 IncludedInput("artifact", f"{ref.task_id}/{rel}", size, clipped)
             )

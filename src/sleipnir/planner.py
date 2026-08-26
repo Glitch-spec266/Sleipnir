@@ -62,7 +62,9 @@ Each task object has these fields:
   description   one clear paragraph. This is the ONLY instruction the worker gets.
   tier          exactly one of: reason, code, mechanical, extract, longctx
   depends_on    list of task ids this task needs finished first
-  inputs        {{"summaries": [ids whose ~200-token summary suffices]}}
+  inputs        {{"summaries": [ids whose ~200-token summary suffices],
+                 "artifacts": [{{"task_id": id, "path": "relative/path",
+                               "reason": "why a summary is not enough"}}]}}
   outputs       {{"outputs": [{{"name": slug, "kind": "file"|"patch"|"json"|"text",
                               "path": "relative/path", "required": true,
                               "description": "..."}}]}}
@@ -85,9 +87,32 @@ Each task object has these fields:
   whose description a `code`-tier model cannot follow alone is too big.
 - Depend on summaries, not full artifacts. A summary is ~200 tokens and is all
   most consumers need.
+- But a task whose acceptance command EXECUTES a dependency's output — importing
+  it, compiling it, linking it — needs the file itself, not a description of it.
+  Declare it under inputs.artifacts. Each task runs in its own directory, so an
+  undeclared file is simply absent and no attempt at that task can ever pass.
+- Only name an acceptance command that will be installed on the machine running
+  the plan. A plan naming a program that is not on PATH is refused before any
+  task is dispatched.
 - Give every task at least one required output with a concrete file path.
 
 Write only `{PLAN_OUTPUT}`. No commentary."""
+
+
+#: The schema's ceiling for a task's instructions.
+_INSTRUCTION_LIMIT = 4_000
+_CLIPPED = " …[goal truncated]"
+
+
+def _fit_goal(goal: str) -> str:
+    """Clip the goal, never the rules that follow it.
+
+    The goal is interpolated near the top of the prompt, so clipping the
+    assembled string kept the goal and discarded the output contract and every
+    rule — leaving the planner asked for a plan with no definition of one.
+    """
+    budget = _INSTRUCTION_LIMIT - len(planning_instructions("")) - len(_CLIPPED)
+    return goal if len(goal) <= budget else goal[:budget] + _CLIPPED
 
 
 def build_planner_task(goal: str) -> Task:
@@ -95,7 +120,7 @@ def build_planner_task(goal: str) -> Task:
         id=PLANNER_TASK_ID,
         description="Decompose the project prompt into a validated task DAG.",
         tier=Tier.REASON,
-        inputs=InputContract(instructions=planning_instructions(goal)[:4_000]),
+        inputs=InputContract(instructions=planning_instructions(_fit_goal(goal))),
         outputs=OutputContract(
             outputs=[
                 ExpectedOutput(
