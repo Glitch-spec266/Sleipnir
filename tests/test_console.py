@@ -119,6 +119,14 @@ def test_use_switches_the_provider_and_keeps_sessions_separate():
     assert claude_session.session_id != codex_session.session_id
 
 
+def test_console_shutdown_closes_a_codex_session_without_a_live_process():
+    import asyncio
+
+    state = console.ConsoleState()
+    state.transport_for("codex")
+    asyncio.run(state.aclose())
+
+
 def test_model_command_targets_the_active_provider():
     state = console.ConsoleState()
     console.apply_slash(state, "/model opus")
