@@ -137,3 +137,22 @@ def test_the_banner_is_all_or_nothing():
 
     short = console.render(state, width=90, height=16, colour=False)
     assert theme.LOGO[1] not in short  # no partial art
+
+
+def test_the_console_notices_a_request_raised_while_a_turn_is_running(requests_dir):
+    """A credential is only ever needed *during* a model turn.
+
+    The tool subprocess that asks was spawned by the provider CLI, so the
+    console is busy streaming a reply for the whole time the request is
+    pending. Skipping the poll while busy meant the prompt never appeared and
+    the subprocess blocked until its handoff timeout — found live, from the
+    console, on 2026-08-26.
+    """
+    state = console.ConsoleState()
+    state.busy = True
+    handoff.request_secret("mid-turn sign-in")
+
+    console.poll_secret_request(state)
+
+    assert state.secret_request is not None
+    assert state.secret_request.label == "mid-turn sign-in"

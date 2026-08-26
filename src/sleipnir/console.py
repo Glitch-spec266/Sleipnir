@@ -543,10 +543,15 @@ def submit_secret(state: ConsoleState, typed: str) -> str:
 
 
 def poll_secret_request(state: ConsoleState) -> None:
-    """Notice a tool subprocess asking for a credential."""
+    """Notice a tool subprocess asking for a credential.
+
+    Deliberately runs while the console is busy: the subprocess that asks was
+    spawned by the provider CLI mid-turn, so busy is the only state in which a
+    request can exist. Gating on it hid the prompt entirely.
+    """
     from sleipnir.capabilities import handoff
 
-    if state.secret_request is not None or state.busy:
+    if state.secret_request is not None:
         return
     request = handoff.pending()
     if request is not None:
