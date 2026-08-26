@@ -87,8 +87,29 @@ class ChatSession:
             raise ChatError(f"unknown provider {self.provider!r}")
 
 
+#: Stream buffer for one provider event line. asyncio defaults to 64 KiB, and a
+#: single JSONL event carrying a file the agent read goes past that easily —
+#: observed live, where it ended the turn with
+#: "Separator is found, but chunk is longer than limit".
+STREAM_LIMIT = 16 * 1024 * 1024
+
+
 async def _default_spawn(*argv: str, **kwargs: Any) -> Any:
     return await asyncio.create_subprocess_exec(*argv, **kwargs)
+
+
+async def _readline(stream: Any) -> bytes | None:
+    """One event line, or None when an oversized one had to be dropped.
+
+    ``readline`` has already consumed past the separator when it raises, so
+    continuing reads the next event cleanly. Dropping one unreadable event is
+    what already happens to a line that will not parse as JSON; ending the
+    operator's turn is not.
+    """
+    try:
+        return await stream.readline()  # type: ignore[no-any-return]
+    except ValueError:
+        return None
 
 
 async def _terminate_group(proc: Any, grace_s: float = 3.0) -> None:
@@ -198,6 +219,7 @@ class ClaudeTransport:
         )
         self._proc = await self._spawn(
             *argv,
+            limit=STREAM_LIMIT,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -244,7 +266,9 @@ class ClaudeTransport:
         try:
             async with asyncio.timeout(self.timeout_s):
                 while True:
-                    line = await proc.stdout.readline()
+                    line = await _readline(proc.stdout)
+                    if line is None:
+                        continue
                     if not line:
                         raise ChatError(
                             "claude closed its output before finishing the turn"
@@ -391,6 +415,7 @@ class CodexTransport:
         )
         proc = await self.spawn(
             *argv,
+            limit=STREAM_LIMIT,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -415,7 +440,9 @@ class CodexTransport:
         try:
             async with asyncio.timeout(self.timeout_s):
                 while True:
-                    line = await proc.stdout.readline()
+                    line = await _readline(proc.stdout)
+                    if line is None:
+                        continue
                     if not line:
                         break
                     try:
