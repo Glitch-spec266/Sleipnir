@@ -37,10 +37,12 @@ class ResolvedInput:
     included: list[IncludedInput] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     #: Declared dependency artifacts to copy into the attempt workspace, as
-    #: (source, destination relative to the workspace). Inlining the text in
-    #: the prompt lets a worker read a dependency; only a real file lets an
-    #: acceptance command execute one.
-    staged: list[tuple[Path, str]] = field(default_factory=list)
+    #: (source, destination relative to the workspace, maximum bytes). The
+    #: prompt refers to the staged path rather than duplicating the file's
+    #: contents. Artifacts remain IncludedInput entries so their actual bytes
+    #: still consume the task input budget and remain visible in the attempt
+    #: manifest.
+    staged: list[tuple[Path, str, int]] = field(default_factory=list)
 
     @property
     def total_bytes(self) -> int:
@@ -48,7 +50,7 @@ class ResolvedInput:
 
     def manifest(self) -> dict[str, object]:
         return {
-            "staged": [dest for _, dest in self.staged],
+            "staged": [dest for _, dest, _ in self.staged],
             "total_bytes": self.total_bytes,
             "prompt_bytes": len(self.prompt.encode()),
             "missing": self.missing,
@@ -144,11 +146,22 @@ def _artifact_section(
             if not contained_regular_file(match, base):
                 continue
             found = True
-            text, size, clipped = _read_clipped(match, ref.max_bytes)
             rel = match.relative_to(base)
-            lines += [f"## {ref.task_id}/{rel}", "```", text, "```"]
             if rel.as_posix() not in own_outputs:
-                resolved.staged.append((match, rel.as_posix()))
+                resolved.staged.append((match, rel.as_posix(), ref.max_bytes))
+                lines.append(
+                    f"- `{ref.task_id}/{rel}` is staged at `{rel}` in your working "
+                    "directory; read the file there."
+                )
+                size = min(match.stat().st_size, ref.max_bytes)
+                clipped = match.stat().st_size > ref.max_bytes
+            else:
+                # There is no safe workspace destination: staging over an
+                # output would make an untouched input look like completed
+                # work. This is not a duplicate delivery, so retain the only
+                # usable form for this rare self-rewrite contract.
+                text, size, clipped = _read_clipped(match, ref.max_bytes)
+                lines += [f"## {ref.task_id}/{rel}", "```", text, "```"]
             resolved.included.append(
                 IncludedInput("artifact", f"{ref.task_id}/{rel}", size, clipped)
             )

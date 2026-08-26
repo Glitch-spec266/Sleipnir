@@ -121,6 +121,23 @@ orchestrator's context is unaffected by how much a subtask reads. So an
 artifact ref cannot violate the core invariant — it can only cost subagent
 input tokens. That reframes the defence from "prevent it" to "price it".
 
+### Phase 15 delivery decision: stage once, reference by path
+
+A declared dependency artifact is copied into the consumer attempt workspace,
+then the worker prompt names that local path instead of pasting the file a
+second time. This is the right division of responsibility: a worker can open
+or execute its declared input, while a prompt should contain only the small
+instruction needed to find it. The saved bytes are real provider input-token
+headroom on every dependency-consuming attempt.
+
+`ResolvedInput.total_bytes` deliberately still includes the actual staged
+artifact bytes. It is the task's resolved-input budget, not a measurement of
+prompt bytes; otherwise moving an artifact from the prompt to disk would make
+the same declared dependency look artificially cheap. `prompt_bytes` records
+the distinct, lower provider payload. A rare ref that would overwrite one of
+the consumer's own outputs cannot be staged safely, so it remains inline as
+the sole delivery path rather than becoming a false pre-existing output.
+
 Four mechanisms, in order of how much work they do:
 
 1. **It cannot reach the orchestrator.** `EvidenceEntry` carries
@@ -143,6 +160,15 @@ Plus an invariant worth more than it looks: **you may not read from a task you
 do not declare as a dependency.** Both `summaries` and `artifacts` are
 cross-checked against `depends_on`. Without this a task could race its own
 input producer, and the failure would be nondeterministic and infuriating.
+
+### Phase 15 graph scope decision
+
+Do **not** point graphify explicitly at `CLAUDE.md`, `project.md`, or
+`overview.md`. They are local operator working documents, not repository
+source, and keeping them outside the graph preserves the same publication
+boundary that keeps them out of Git. Durable architecture belongs in this
+tracked design document and remains graphable; the local documents can change
+without making private operational context part of the project knowledge graph.
 
 ---
 
