@@ -467,6 +467,10 @@ class CodexTransport:
             session_id=self.session.session_id,
         )
 
+    async def close(self) -> None:
+        """Match the shared transport lifecycle; Codex has no persistent process."""
+        return None
+
 
 def _is_assistant_item(item: dict[str, Any]) -> bool:
     # Two shapes exist across CLI versions: the documented
