@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -141,6 +142,22 @@ class AttemptWorkspace:
             raise WorkspaceCollisionError(
                 f"refusing to reuse pre-existing attempt workspace: {self.dir}"
             ) from exc
+
+    def stage_inputs(self, staged: Sequence[tuple[Path, str]]) -> None:
+        """Copy declared dependency artifacts in before the worker starts.
+
+        The source has already been checked as a contained regular file, so
+        this copies bytes rather than following anything; the destination is
+        re-checked because a workspace is agent-controlled.
+        """
+        for source, relative in staged:
+            destination = self.dir / relative
+            if not destination.resolve().is_relative_to(self.dir.resolve()):
+                raise WorkspaceCollisionError(
+                    f"staged input {relative!r} escapes the attempt workspace"
+                )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
 
     def write_text(self, filename: str, text: str) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)

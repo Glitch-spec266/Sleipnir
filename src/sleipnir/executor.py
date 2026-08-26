@@ -332,6 +332,7 @@ class Executor:
         )
         if not dry_run:
             workspace.prepare_fresh()
+            workspace.stage_inputs(resolved.staged)
             workspace.write_json(INPUT_MANIFEST_FILENAME, resolved.manifest())
 
         return DispatchRequest(
