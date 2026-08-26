@@ -227,3 +227,77 @@ time.sleep(30)
         if provider_pid is not None:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(provider_pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux prctl contract")
+def test_parent_death_guard_escalates_to_sigkill_for_a_provider_that_ignores_sigterm(
+    tmp_path: Path,
+):
+    """A provider that traps SIGTERM must still stop spending.
+
+    On the ordinary cancellation path ``ProcessRunner`` escalates the group to
+    SIGKILL after a grace period. After a hard parent SIGKILL no runner is left
+    alive to do that, so the guard itself is the only thing standing between an
+    ignored SIGTERM and a provider CLI that keeps burning quota unattended.
+    """
+    guard = Path(__file__).parents[1] / "src" / "sleipnir" / "process_guard.py"
+    ready = tmp_path / "trapped"
+    stubborn = (
+        "import signal, pathlib, time; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        f"pathlib.Path({str(ready)!r}).write_text('x'); "
+        "time.sleep(30)"
+    )
+    supervisor_code = f"""
+import subprocess, sys, time
+child = subprocess.Popen([
+    sys.executable, {str(guard)!r}, '--', sys.executable, '-c', {stubborn!r}
+])
+print(child.pid, flush=True)
+time.sleep(30)
+"""
+    supervisor = subprocess.Popen(
+        [sys.executable, "-c", supervisor_code],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    assert supervisor.stdout is not None
+    child_pid = int(supervisor.stdout.readline().strip())
+    provider_pid: int | None = None
+
+    def stopped(pid: int) -> bool:
+        try:
+            return Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z"
+        except (FileNotFoundError, ProcessLookupError, IndexError):
+            return True
+
+    try:
+        children = Path(f"/proc/{child_pid}/task/{child_pid}/children")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            values = children.read_text().split() if children.exists() else []
+            # Only meaningful once the provider has actually trapped SIGTERM;
+            # killing it before that measures interpreter startup, not the guard.
+            if values and ready.exists():
+                provider_pid = int(values[0])
+                break
+            time.sleep(0.02)
+        assert provider_pid is not None
+        os.kill(supervisor.pid, signal.SIGKILL)
+        supervisor.wait(timeout=2)
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if stopped(provider_pid):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail(
+                "a provider ignoring SIGTERM outlived its orphaned guard "
+                f"(pid {provider_pid} still running)"
+            )
+    finally:
+        for pid in (child_pid, provider_pid):
+            if pid is not None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)

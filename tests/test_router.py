@@ -383,3 +383,52 @@ def test_successive_attempts_rotate_through_accepted_candidates():
         r.resolve(task, attempt=n, tier=Tier.MECHANICAL).model for n in (1, 2, 3, 4)
     ]
     assert picks == ["a/cheap", "b/mid", "c/dear", "a/cheap"]
+
+
+def test_a_string_pattern_list_is_rejected_rather_than_split_into_letters():
+    """`deny = "gpt-4"` must not become five one-character patterns.
+
+    Router matching is substring-based, so a bare string silently degrades into
+    a per-character pattern list. As a deny list that rejects every model; as an
+    allow list it accepts almost every model, which is the dangerous direction —
+    the allow list is what keeps a tier off models the operator excluded.
+    """
+    import tomllib
+
+    for field in ("allow", "deny", "require_parameters", "prefer"):
+        raw = tomllib.loads(CONFIG_TOML)
+        raw["tiers"]["code"][field] = "meter"
+        with pytest.raises(ConfigError, match="list of strings"):
+            SleipnirConfig.from_dict(raw, source="<test>")
+
+
+def test_pattern_lists_reject_non_string_and_empty_entries():
+    import tomllib
+
+    for value in ([""], ["ok", 3], [["nested"]]):
+        raw = tomllib.loads(CONFIG_TOML)
+        raw["tiers"]["code"]["deny"] = value
+        with pytest.raises(ConfigError, match="list of strings"):
+            SleipnirConfig.from_dict(raw, source="<test>")
+
+
+def test_non_finite_numeric_config_is_a_config_error_not_a_crash():
+    """TOML 1.0 can express `nan` and `inf`.
+
+    `int(float("nan"))` raises ValueError and `int(float("inf"))` raises
+    OverflowError; neither is a ConfigError, so an operator typo would surface
+    as an unhandled traceback instead of a refusal naming the offending key.
+    """
+    import tomllib
+
+    for literal in ("nan", "inf", "-inf"):
+        raw = tomllib.loads(CONFIG_TOML)
+        raw["backends"][1]["models"] = [{"id": "x/y", "context": float(literal)}]
+        with pytest.raises(ConfigError, match="context"):
+            SleipnirConfig.from_dict(raw, source="<test>")
+
+    for literal in ("nan", "inf"):
+        raw = tomllib.loads(CONFIG_TOML)
+        raw["tiers"]["code"]["min_context"] = float(literal)
+        with pytest.raises(ConfigError, match="min_context"):
+            SleipnirConfig.from_dict(raw, source="<test>")
