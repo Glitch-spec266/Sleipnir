@@ -225,7 +225,8 @@ def _parse_models(raw: Any, backend: str, source: str) -> tuple[ModelOption, ...
             price = _opt_float(item.get("price_per_mtok"))
             if item.get("context") is not None and (context is None or context <= 0):
                 raise ConfigError(
-                    f"{source}: backend {backend!r} model {item['id']!r} context must be positive"
+                    f"{source}: backend {backend!r} model {item['id']!r} context must be "
+                    f"a positive finite number"
                 )
             if item.get("price_per_mtok") is not None and (
                 price is None or not math.isfinite(price) or price < 0
@@ -278,7 +279,7 @@ def _parse_tiers(
             f"{source}: [tiers.{key}]",
         )
 
-        prefer = tuple(entry.get("prefer", ()) or ())
+        prefer = _pattern_list(entry.get("prefer"), f"{source}: [tiers.{key}]", "prefer")
         unknown = [name for name in prefer if name not in backends]
         if unknown:
             raise ConfigError(
@@ -288,11 +289,16 @@ def _parse_tiers(
         if not prefer:
             raise ConfigError(f"{source}: [tiers.{key}] must name at least one backend")
 
-        try:
-            min_context = int(entry.get("min_context", 0))
-            output_ratio = float(entry.get("output_ratio", 0.25))
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ConfigError(f"{source}: [tiers.{key}] numeric policy fields are invalid") from exc
+        min_context = _opt_int(entry.get("min_context", 0))
+        if min_context is None:
+            raise ConfigError(
+                f"{source}: [tiers.{key}] min_context must be a finite number"
+            )
+        output_ratio = _opt_float(entry.get("output_ratio", 0.25))
+        if output_ratio is None:
+            raise ConfigError(
+                f"{source}: [tiers.{key}] output_ratio must be a finite number"
+            )
         max_price = _opt_float(entry.get("max_price_per_mtok"))
         if min_context < 0:
             raise ConfigError(f"{source}: [tiers.{key}] min_context cannot be negative")
@@ -306,20 +312,48 @@ def _parse_tiers(
             prefer=prefer,
             min_context=min_context,
             max_price_per_mtok=max_price,
-            require_parameters=tuple(entry.get("require_parameters", ()) or ()),
-            allow=tuple(entry.get("allow", ()) or ()),
-            deny=tuple(entry.get("deny", ()) or ()),
+            require_parameters=_pattern_list(
+                entry.get("require_parameters"), f"{source}: [tiers.{key}]", "require_parameters"
+            ),
+            allow=_pattern_list(entry.get("allow"), f"{source}: [tiers.{key}]", "allow"),
+            deny=_pattern_list(entry.get("deny"), f"{source}: [tiers.{key}]", "deny"),
             output_ratio=output_ratio,
         )
     return tiers
 
 
 def _opt_int(value: Any) -> int | None:
-    return int(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return None
+    # TOML 1.0 spells `nan` and `inf`; int() answers those with ValueError and
+    # OverflowError, neither of which the callers translate into a ConfigError.
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return int(value)
 
 
 def _opt_float(value: Any) -> float | None:
     return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def _pattern_list(value: Any, where: str, field: str) -> tuple[str, ...]:
+    """Read a list of match patterns, refusing a bare string.
+
+    Router matching is substring-based, so `tuple("gpt-4")` would silently
+    become five one-character patterns: as a deny list that rejects every
+    model, and as an allow list it accepts nearly every model — which is the
+    direction that matters, since the allow list is what holds a tier off the
+    models the operator excluded.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise ConfigError(
+            f"{where}: {field} must be a list of strings, each non-empty; got {value!r}"
+        )
+    return tuple(value)
 
 
 def _only_keys(raw: dict[str, Any], allowed: set[str], where: str) -> None:

@@ -12,11 +12,18 @@ from __future__ import annotations
 import ctypes
 import os
 import signal
+import time
 # Exact argv execution is this module's sole purpose.
 import subprocess  # nosec B404
 import sys
 
 _PR_SET_PDEATHSIG = 1
+
+#: How long a provider gets to exit on SIGTERM before the group is SIGKILLed.
+#: After a hard parent kill no ``ProcessRunner`` survives to escalate, so this
+#: is the only remaining backstop against a CLI that traps SIGTERM and keeps
+#: spending.
+_GRACE_S = 5.0
 
 
 def _install_parent_death_signal() -> None:
@@ -60,15 +67,31 @@ def main(argv: list[str] | None = None) -> int:
         """Forward parent death/cancellation to every provider descendant."""
         # Ignore our own group broadcast while provider descendants receive it.
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        if child is None:
-            os._exit(128 + signum)
         try:
+            # Broadcast even with no child recorded yet: Popen may already have
+            # forked into this group between spawn and the assignment below.
             os.killpg(os.getpgrp(), signal.SIGTERM)
         except ProcessLookupError:
             pass
+        if child is None:
+            os._exit(128 + signum)
         # Popen.wait may hold an internal lock when the signal arrives, so no
-        # Popen method is signal-safe here. The ordinary ProcessRunner path
-        # still escalates the whole group to SIGKILL after its grace period.
+        # Popen method is signal-safe here; waitpid is.
+        pid = child.pid
+        deadline = time.monotonic() + _GRACE_S
+        while time.monotonic() < deadline:
+            try:
+                if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                    os._exit(128 + signum)
+            except (ChildProcessError, OSError):
+                os._exit(128 + signum)
+            time.sleep(0.05)
+        # A provider that ignored SIGTERM is still holding quota open, and
+        # nothing upstream is left alive to escalate for us.
+        try:
+            os.killpg(os.getpgrp(), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         os._exit(128 + signum)
 
     signal.signal(signal.SIGTERM, terminate_group)
