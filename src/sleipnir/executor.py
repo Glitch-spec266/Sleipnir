@@ -169,16 +169,21 @@ class RunReport:
     notional_usd: float = 0.0
     window_tokens: int = 0
     codex_tokens: int = 0
+    server_tool_use: dict[str, int] = field(default_factory=dict)
     previews: list[DispatchPreview] = field(default_factory=list)
     final_states: dict[str, TaskState] = field(default_factory=dict)
 
     def render(self) -> str:
+        tools = " ".join(
+            f"{name}={count}" for name, count in sorted(self.server_tool_use.items())
+        )
         return (
             f"dispatched={self.dispatched} ok={self.succeeded} partial={self.partial} "
             f"failed={self.failed} cancelled={self.cancelled} "
             f"metered=${self.cost_usd:.4f} notional=${self.notional_usd:.4f} "
             f"window_tokens={self.window_tokens}"
             f" codex_tokens={self.codex_tokens}"
+            + (f" server_tools={tools}" if tools else "")
         )
 
 
@@ -725,6 +730,8 @@ class Executor:
         self._report.window_tokens += record.cost.window_tokens
         if record.cost.quota_pool == Adapter.CODEX.value:
             self._report.codex_tokens += record.usage.total_tokens
+        for name, count in record.usage.server_tool_use.items():
+            self._report.server_tool_use[name] = self._report.server_tool_use.get(name, 0) + count
 
 
 __all__ = [

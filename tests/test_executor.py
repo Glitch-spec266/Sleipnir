@@ -65,6 +65,7 @@ class ScriptedAdapter(BaseAdapter):
         summary: str = "did the thing",
         billing_mode: BillingMode = BillingMode.METERED,
         cost: float | None = 0.01,
+        server_tool_use: dict[str, int] | None = None,
         raises: Exception | None = None,
         fail_first: int = 0,
         write_only: set[str] | None = None,
@@ -77,6 +78,7 @@ class ScriptedAdapter(BaseAdapter):
         self.summary = summary
         self.billing_mode = billing_mode
         self.cost = cost
+        self.server_tool_use = server_tool_use or {}
         self.raises = raises
         self.fail_first = fail_first
         self.dispatched: list[tuple[str, int]] = []
@@ -115,7 +117,11 @@ class ScriptedAdapter(BaseAdapter):
                 status=self.status,
                 failure_kind=self.failure_kind,
                 billing_mode=self.billing_mode,
-                usage=TokenUsage(input_tokens=100, output_tokens=50),
+                usage=TokenUsage(
+                    input_tokens=100,
+                    output_tokens=50,
+                    server_tool_use=self.server_tool_use,
+                ),
                 reported_cost_usd=self.cost,
                 exit_code=0,
             )
@@ -432,6 +438,22 @@ def test_reported_cost_marks_the_estimate_as_authoritative(tmp_path: Path):
     run(executor2.run())
     record2 = [r for r in log2.read() if isinstance(r, AttemptFinished)][-1]
     assert record2.cost.is_estimate is True
+
+
+def test_report_preserves_server_tool_counts_with_the_authoritative_total(tmp_path: Path):
+    plan = plan_of(make_task("a"))
+    executor, log = build(
+        tmp_path,
+        plan,
+        ScriptedAdapter(cost=0.017, server_tool_use={"web_search_requests": 2}),
+    )
+    report = run(executor.run())
+    record = [item for item in log.read() if isinstance(item, AttemptFinished)][-1]
+
+    assert record.cost.amount_usd == pytest.approx(0.017)
+    assert record.usage.server_tool_use == {"web_search_requests": 2}
+    assert report.server_tool_use == {"web_search_requests": 2}
+    assert "server_tools=web_search_requests=2" in report.render()
 
 
 # ---------------------------------------------------------------------------

@@ -113,6 +113,10 @@ def render_dashboard(
         if isinstance(record, AttemptFinished)
         and record.cost.quota_pool == "codex"
     )
+    server_tools: Counter[str] = Counter()
+    for record in records:
+        if isinstance(record, AttemptFinished):
+            server_tools.update(record.usage.server_tool_use)
     routes = _latest_routes(records)
 
     if active:
@@ -153,6 +157,10 @@ def render_dashboard(
         )
     if proposed_revisions:
         budget += f"  REVIEW {proposed_revisions} PROPOSAL(S)"
+    if server_tools:
+        budget += "  tools " + ", ".join(
+            f"{name}={count}" for name, count in sorted(server_tools.items())
+        )
     lines.extend([_clip(budget, width), "─" * width])
     if activity:
         lines.extend([_clip(f"control: {activity}", width), "─" * width])
