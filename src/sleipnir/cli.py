@@ -1,14 +1,19 @@
 """Command line interface.
 
-    sleipnir plan "<prompt>"   decompose into plan.json, then exit
-    sleipnir run               execute the DAG within deps, concurrency, budget
-    sleipnir status            DAG state, spend, headroom
-    sleipnir resume            recover a partial run
-    sleipnir explain <id>      routing rationale and artifact paths
+Two top-level modes:
 
-`run` and `resume` are the same operation. Status is a fold of the append-only
-log, so re-running simply finds the completed work already done — recovery is
-the normal path, not a special mode.
+    sleipnir chat              the direct harness — talk to claude or codex
+                               with host capabilities attached (/help inside)
+    sleipnir project plan "<prompt>"   decompose into plan.json
+    sleipnir project run       execute the DAG within deps, concurrency, budget
+
+The bare command is the chat console, the way bare `claude` is a session.
+Project commands also remain at top level as aliases during migration, so
+existing scripts keep working.
+
+Within project mode, `run` and `resume` are the same operation: status is a
+fold of the append-only log, so re-running simply finds the completed work
+already done — recovery is the normal path, not a special mode.
 """
 
 from __future__ import annotations
@@ -880,6 +885,7 @@ async def cmd_apply_revision(args: argparse.Namespace) -> int:
 
 
 async def cmd_console(args: argparse.Namespace) -> int:
+    from sleipnir.chat import PROVIDERS
     from sleipnir.console import ConsoleState, run_console
 
     state = ConsoleState()
@@ -887,6 +893,10 @@ async def cmd_console(args: argparse.Namespace) -> int:
     state.run_dir = run_dir if run_dir.exists() else None
     if getattr(args, "ask_first", False):
         state.permission_mode = "acceptEdits"
+    provider = getattr(args, "provider", "claude") or "claude"
+    if provider not in PROVIDERS:
+        raise CliError(f"unknown provider {provider!r}; choose one of {', '.join(PROVIDERS)}")
+    state.provider = provider
     state.model = getattr(args, "model", "sonnet") or None
     return await run_console(state, splash=not getattr(args, "no_splash", False))
 
@@ -1077,77 +1087,15 @@ async def cmd_secret(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="sleipnir",
-        description="Budget-aware agentic orchestrator.",
-    )
-    parser.add_argument("--config", help="path to sleipnir.toml (default: discover in cwd)")
-    parser.add_argument("--run-root", default=".", help="run directory (default: .)")
-    parser.add_argument(
-        "--cache-read-weight",
-        type=nonnegative_float,
-        default=1.0,
-        help="weight of a cache-read token against the window (default 1.0, "
-             "which deliberately over-estimates; see DESIGN.md)",
-    )
-    # Not required: bare `sleipnir` opens the console, which is the front door.
-    subparsers = parser.add_subparsers(dest="command", required=False)
+def _register_project_commands(subparsers: argparse._ActionsContainer) -> None:
+    """Register every orchestration subcommand on one subparsers action.
 
-    console_parser = subparsers.add_parser("console", help="interactive Sleipnir console")
-    console_parser.add_argument(
-        "--no-splash", action="store_true", help="skip the boot animation"
-    )
-    console_parser.add_argument(
-        "--ask-first",
-        action="store_true",
-        help="confirm each tool use instead of granting full host control",
-    )
-    console_parser.add_argument(
-        "--model",
-        default="sonnet",
-        help="model alias for console turns (default: sonnet — the account "
-             "default is slower and costs a full spawn per message); pass an "
-             "empty string to let the account choose",
-    )
-    console_parser.set_defaults(func=cmd_console)
-
-    setup_parser = subparsers.add_parser(
-        "setup", help="install and check host-control prerequisites"
-    )
-    setup_parser.add_argument(
-        "--yes", action="store_true", help="do not ask before running privileged steps"
-    )
-    setup_parser.set_defaults(func=cmd_setup)
-
-    doctor_parser = subparsers.add_parser("doctor", help="report host capability status")
-    doctor_parser.set_defaults(func=cmd_doctor)
-
-    computer_parser = subparsers.add_parser("computer", help="control keyboard, mouse and screen")
-    computer_parser.add_argument(
-        "action", choices=["screenshot", "type", "key", "click", "move", "scroll"]
-    )
-    computer_parser.add_argument("args", nargs="*")
-    computer_parser.set_defaults(func=cmd_computer)
-
-    browser_parser = subparsers.add_parser("browser", help="drive a real browser")
-    browser_parser.add_argument(
-        "action", choices=["open", "text", "click", "fill", "screenshot", "close"]
-    )
-    browser_parser.add_argument("args", nargs="*")
-    browser_parser.add_argument("--headless", action="store_true")
-    browser_parser.set_defaults(func=cmd_browser)
-
-    secret_parser = subparsers.add_parser(
-        "secret", help="ask the operator for a credential and inject it without storing it"
-    )
-    secret_parser.add_argument("action", choices=["prompt"])
-    secret_parser.add_argument("label")
-    secret_parser.add_argument(
-        "--submit", action="store_true", help="press enter after typing the value"
-    )
-    secret_parser.set_defaults(func=cmd_secret)
-
+    Called twice — once at the root, once under `project` — so `sleipnir run`
+    keeps working as an alias while the canonical home becomes
+    `sleipnir project run`. The global options are repeated on the nested
+    parser with SUPPRESS defaults so `sleipnir project --run-root X plan`
+    parses without clobbering values given at the root.
+    """
     plan_parser = subparsers.add_parser("plan", help="decompose a prompt into plan.json")
     plan_parser.add_argument("prompt")
     plan_parser.add_argument("--force", action="store_true", help="overwrite an existing plan")
@@ -1235,14 +1183,106 @@ def build_parser() -> argparse.ArgumentParser:
     revision_parser.add_argument("proposal", help="path to a saved proposal JSON file")
     revision_parser.set_defaults(func=cmd_apply_revision)
 
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sleipnir",
+        description="Budget-aware agentic harness and orchestrator.",
+    )
+    parser.add_argument("--config", help="path to sleipnir.toml (default: discover in cwd)")
+    parser.add_argument("--run-root", default=".", help="run directory (default: .)")
+    parser.add_argument(
+        "--cache-read-weight",
+        type=nonnegative_float,
+        default=1.0,
+        help="weight of a cache-read token against the window (default 1.0, "
+             "which deliberately over-estimates; see DESIGN.md)",
+    )
+    # Not required: bare `sleipnir` opens the chat console, which is the door.
+    subparsers = parser.add_subparsers(dest="command", required=False)
+
+    console_parser = subparsers.add_parser(
+        "chat", aliases=["console"], help="interactive console (claude or codex)"
+    )
+    console_parser.add_argument(
+        "--provider", choices=["claude", "codex"], default="claude",
+        help="which agent CLI receives your messages (switchable mid-session with /use)",
+    )
+    console_parser.add_argument(
+        "--no-splash", action="store_true", help="skip the boot animation"
+    )
+    console_parser.add_argument(
+        "--ask-first",
+        action="store_true",
+        help="confirm each tool use instead of granting full host control",
+    )
+    console_parser.add_argument(
+        "--model",
+        default="sonnet",
+        help="model alias for the initial provider (default: sonnet for claude; "
+             "/model switches later, 'default' defers to the account choice)",
+    )
+    console_parser.set_defaults(func=cmd_console)
+
+    setup_parser = subparsers.add_parser(
+        "setup", help="install and check host-control prerequisites"
+    )
+    setup_parser.add_argument(
+        "--yes", action="store_true", help="do not ask before running privileged steps"
+    )
+    setup_parser.set_defaults(func=cmd_setup)
+
+    doctor_parser = subparsers.add_parser("doctor", help="report host capability status")
+    doctor_parser.set_defaults(func=cmd_doctor)
+
+    computer_parser = subparsers.add_parser("computer", help="control keyboard, mouse and screen")
+    computer_parser.add_argument(
+        "action", choices=["screenshot", "type", "key", "click", "move", "scroll"]
+    )
+    computer_parser.add_argument("args", nargs="*")
+    computer_parser.set_defaults(func=cmd_computer)
+
+    browser_parser = subparsers.add_parser("browser", help="drive a real browser")
+    browser_parser.add_argument(
+        "action", choices=["open", "text", "click", "fill", "screenshot", "close"]
+    )
+    browser_parser.add_argument("args", nargs="*")
+    browser_parser.add_argument("--headless", action="store_true")
+    browser_parser.set_defaults(func=cmd_browser)
+
+    secret_parser = subparsers.add_parser(
+        "secret", help="ask the operator for a credential and inject it without storing it"
+    )
+    secret_parser.add_argument("action", choices=["prompt"])
+    secret_parser.add_argument("label")
+    secret_parser.add_argument(
+        "--submit", action="store_true", help="press enter after typing the value"
+    )
+    secret_parser.set_defaults(func=cmd_secret)
+
+    # The canonical namespace for orchestration...
+    project_parser = subparsers.add_parser(
+        "project", help="plan and orchestrate a multi-task project run"
+    )
+    project_parser.add_argument("--config", default=argparse.SUPPRESS)
+    project_parser.add_argument("--run-root", default=argparse.SUPPRESS)
+    project_parser.add_argument("--cache-read-weight", type=nonnegative_float,
+                                default=argparse.SUPPRESS)
+    project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
+    _register_project_commands(project_subparsers)
+
+    # ...with the legacy top-level names kept as aliases during migration.
+    _register_project_commands(subparsers)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if getattr(args, "func", None) is None:
-        # Bare `sleipnir` is the console, the way bare `claude` is a session.
+        # Bare `sleipnir` is the chat console, the way bare `claude` is a session.
         args.func = cmd_console
+        args.provider = "claude"
         args.no_splash = False
     try:
         return asyncio.run(args.func(args))

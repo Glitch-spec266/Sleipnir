@@ -88,18 +88,143 @@ def test_first_turn_carries_the_capability_brief_and_later_turns_do_not():
 
 
 def test_claude_argv_opens_a_session_then_resumes_it():
-    opening = chat.claude_argv("abc-123", resume=False)
+    opening = chat.claude_stream_argv("abc-123", resume=False)
     assert "--session-id" in opening and "abc-123" in opening
     assert "--resume" not in opening
+    assert "--input-format" in opening and "stream-json" in opening
 
-    continuing = chat.claude_argv("abc-123", resume=True)
+    continuing = chat.claude_stream_argv("abc-123", resume=True)
     assert continuing[continuing.index("--resume") + 1] == "abc-123"
     assert "--session-id" not in continuing
 
 
 def test_no_model_is_pinned_in_the_console_invocation():
     # Same rule as the router: model choice is data, never source.
-    assert "--model" not in chat.claude_argv("s", resume=False)
+    argv = chat.claude_stream_argv("s", resume=False)
+    assert "--model" not in argv
+    assert "--model" not in chat.codex_exec_argv()
+
+
+# --- provider switching ---------------------------------------------------
+
+
+def test_use_switches_the_provider_and_keeps_sessions_separate():
+    state = console.ConsoleState()
+    assert console.apply_slash(state, "/use codex") is True
+    assert state.provider == "codex"
+
+    claude_session = state.session_for("claude")
+    codex_session = state.session_for("codex")
+    assert claude_session is not codex_session
+    assert claude_session.session_id != codex_session.session_id
+
+
+def test_model_command_targets_the_active_provider():
+    state = console.ConsoleState()
+    console.apply_slash(state, "/model opus")
+    assert state.models["claude"] == "opus"
+    console.apply_slash(state, "/use codex")
+    console.apply_slash(state, "/model @default")
+    assert state.models["codex"] is None
+    assert state.models["claude"] == "opus"
+
+
+def test_local_commands_are_consumed_not_dispatched():
+    state = console.ConsoleState()
+    for line in ("/help", "/use codex", "/model haiku", "/frobnicate"):
+        assert console.apply_slash(state, line) is True
+    assert state.provider == "codex"
+
+
+def test_plain_text_is_never_consumed_by_the_slash_handler():
+    assert console.apply_slash(console.ConsoleState(), "build the thing") is False
+
+
+# --- submission routing ----------------------------------------------------
+
+
+def test_input_typed_while_busy_is_queued_and_never_dropped():
+    state = console.ConsoleState()
+    state.busy = True
+    sent: list[str] = []
+    console.handle_submitted(state, "first", sent.append)
+    assert sent == [] and list(state.pending_submissions) == ["first"]
+
+    state.busy = False
+    console.drain_pending(state, sent.append)
+    assert sent == ["first"] and not state.pending_submissions
+
+
+def test_queued_lines_show_in_the_prompt_rather_than_vanishing():
+    state = console.ConsoleState()
+    state.pending_submissions.append("x")
+    rendered = console.render(state, width=60, height=14, colour=False)
+    assert "(+1 queued)" in rendered
+
+
+# --- streaming --------------------------------------------------------------
+
+
+class FakeTransport:
+    def __init__(self, events):
+        self.events = list(events)
+        self.prompts: list[str] = []
+
+    async def turn(self, prompt):
+        self.prompts.append(prompt)
+        for event in self.events:
+            yield event
+
+    async def close(self):
+        return None
+
+
+async def _stream_into_state(events, opened=False):
+    from sleipnir.chat import ChatEvent
+
+    state = console.ConsoleState()
+    session = state.session_for("claude")
+    session.opened = opened
+    transport = FakeTransport([ChatEvent(kind=k, text=t) for k, t in events])
+    session._transport = transport  # noqa: SLF001 - test seam
+    await console._handle(state, "hello")
+    return state, transport
+
+
+def test_deltas_render_into_one_growing_message_then_final_replaces_them():
+    import asyncio
+
+    state, transport = asyncio.run(
+        _stream_into_state([("delta", "hel"), ("delta", "lo"), ("final", "hello world")])
+    )
+    replies = [m for m in state.messages if m.role == "claude"]
+    assert len(replies) == 1, "deltas must fold into one message, not one per chunk"
+    assert replies[0].text == "hello world"
+
+
+def test_the_capability_brief_is_prepended_once_per_provider_session():
+    import asyncio
+
+    _, first = asyncio.run(_stream_into_state([("final", "ok")], opened=False))
+    assert "computer screenshot" in first.prompts[0]
+    _, second = asyncio.run(_stream_into_state([("final", "ok")], opened=True))
+    assert "computer screenshot" not in second.prompts[0]
+
+
+def test_a_direct_conversation_writes_nothing_into_the_run_directory(tmp_path):
+    """The invariant, executable: direct-mode chat never touches project
+    state — no results.jsonl append, no artifact workspace, nothing."""
+    import asyncio
+    from sleipnir.runlog import ResultLog
+
+    (tmp_path / "results.jsonl").write_text("", encoding="utf-8")
+    state = console.ConsoleState(run_dir=tmp_path)
+    session = state.session_for("claude")
+    session._transport = FakeTransport([__import__("sleipnir").chat.ChatEvent(kind="final", text="hi")])  # noqa: SLF001
+    asyncio.run(console._handle(state, "hello"))
+
+    assert ResultLog(tmp_path / "results.jsonl").read() == []
+    assert not (tmp_path / "artifacts").exists()
 
 
 def test_queue_instruction_is_parsed_from_a_duty_officer_reply():
