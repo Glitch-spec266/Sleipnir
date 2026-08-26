@@ -372,3 +372,66 @@ def test_extract_codex_thread_reads_only_the_real_shape():
 def test_unknown_providers_are_refused_at_session_construction():
     with pytest.raises(ChatError, match="unknown provider"):
         ChatSession(provider="gemini")
+
+
+def test_codex_survives_an_event_line_longer_than_the_stream_limit():
+    """Live, 2026-08-26: this killed a real handoff turn outright.
+
+    `asyncio.StreamReader.readline` raises ValueError when a line exceeds its
+    limit, and a Codex event carrying a read file easily does. The reader has
+    already consumed past the separator by then, so the only sane response is
+    to drop that one event and keep reading — the same thing already done with
+    a line that will not parse as JSON.
+    """
+    async def spawn(*argv, **kwargs):
+        proc = ScriptedProcess()
+        events = codex_success_events()
+        proc.feed(events[0])
+        proc.feed('{"type": "item.completed", "junk": "' + "x" * 200_000 + '"}')
+        for event in events[1:]:
+            proc.feed(event)
+        proc.end()
+        return proc
+
+    session = ChatSession(provider="codex")
+    transport = CodexTransport(session, spawn=spawn)
+    events = asyncio.run(collect(transport.turn("go")))
+
+    assert events[-1].kind == "final" and events[-1].text == "gamma"
+
+
+def test_claude_survives_an_event_line_longer_than_the_stream_limit():
+    async def spawn(*argv, **kwargs):
+        proc = ScriptedProcess()
+        proc.feed('{"type": "stream_event", "junk": "' + "x" * 200_000 + '"}')
+        for event in claude_events():
+            proc.feed(event)
+        return proc
+
+    session = ChatSession(provider="claude")
+    transport = ClaudeTransport(session, spawn=spawn, permission_mode="acceptEdits")
+    events = asyncio.run(collect(transport.turn("go")))
+
+    assert events[-1].kind == "final"
+
+
+def test_a_real_spawn_asks_for_a_stream_limit_the_default_would_not_give():
+    """The skip above is the backstop, not the plan.
+
+    A dropped event is lost information — a final message, a thread id. The
+    limit is raised at the spawn so that ordinary large events never reach the
+    backstop at all.
+    """
+    seen: list[dict] = []
+
+    async def spawn(*argv, **kwargs):
+        seen.append(kwargs)
+        proc = ScriptedProcess()
+        for event in codex_success_events():
+            proc.feed(event)
+        proc.end()
+        return proc
+
+    session = ChatSession(provider="codex")
+    asyncio.run(collect(CodexTransport(session, spawn=spawn).turn("go")))
+    assert seen[0]["limit"] >= 8 * 1024 * 1024
