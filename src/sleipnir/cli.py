@@ -63,6 +63,7 @@ from sleipnir.schema import (
     Adapter,
     AttemptFinished,
     AttemptStatus,
+    BillingMode,
     FailureKind,
     Plan,
     ProducedArtifact,
@@ -266,8 +267,20 @@ async def cmd_run(args: argparse.Namespace) -> int:
 
     governor: BudgetGovernor | None = None
     if not args.no_budget:
-        governor = BudgetGovernor(config, router, cache_read_weight=args.cache_read_weight)
-        states = fold_results(plan, log.read(), staled_at=revision_staleness(run_root))
+        records = log.read()
+        metered_spend = sum(
+            record.cost.amount_usd
+            for record in records
+            if isinstance(record, AttemptFinished)
+            and record.cost.billing_mode is BillingMode.METERED
+        )
+        governor = BudgetGovernor(
+            config,
+            router,
+            cache_read_weight=args.cache_read_weight,
+            metered_spent_usd=metered_spend,
+        )
+        states = fold_results(plan, records, staled_at=revision_staleness(run_root))
         governor.plan_tiers(plan, states)
         if governor.decisions:
             print(f"budget downshifts ({len(governor.decisions)}):", file=sys.stderr)

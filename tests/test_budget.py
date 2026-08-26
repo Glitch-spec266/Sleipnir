@@ -315,10 +315,27 @@ def test_exhausted_window_denies_dispatch(tmp_path: Path):
 def test_spent_metered_budget_denies_dispatch(tmp_path: Path):
     cfg = config(metered_budget_usd=1.0)
     router = TierRouter(cfg, catalog(model("cheap/x", price=0.05, context=200_000)))
+    gov = BudgetGovernor(
+        cfg, router, projects_dir=tmp_path / "none", now=NOW, metered_spent_usd=5.0
+    )
+    allowed, why = gov.should_dispatch(make_task("a"), Tier.MECHANICAL)
+    assert not allowed
+    assert "metered budget" in why
+
+
+def test_metered_reservations_prevent_concurrent_dispatches_from_exceeding_budget(tmp_path: Path):
+    cfg = config()
+    router = TierRouter(cfg, catalog(model("cheap/x", price=0.05, context=200_000)))
     gov = BudgetGovernor(cfg, router, projects_dir=tmp_path / "none", now=NOW)
-    gov._snapshot_cache = None
-    snapshot = gov.snapshot(metered_spent_usd=5.0)
-    assert snapshot.will_exhaust_budget is False or snapshot.metered_spend_usd == 5.0
+    first = make_task("a", tier=Tier.MECHANICAL)
+    second = make_task("b", tier=Tier.MECHANICAL)
+    cfg.metered_budget_usd = gov.estimate_task(first, Tier.MECHANICAL)[1] * 1.5
+
+    allowed, _ = gov.should_dispatch(first, Tier.MECHANICAL)
+    assert allowed
+    allowed, why = gov.should_dispatch(second, Tier.MECHANICAL)
+    assert not allowed
+    assert "would be exceeded" in why
 
 
 def test_snapshot_surfaces_parse_warnings(tmp_path: Path):

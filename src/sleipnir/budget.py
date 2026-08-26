@@ -35,6 +35,7 @@ from sleipnir.schema import (
     DOWNSHIFT_LADDER,
     Adapter,
     BudgetSnapshot,
+    CostEstimate,
     Plan,
     Task,
     TaskStatus,
@@ -429,6 +430,7 @@ class BudgetGovernor:
         cache_read_weight: float = 1.0,
         now: datetime | None = None,
         read_real_utilization: bool = True,
+        metered_spent_usd: float = 0.0,
     ) -> None:
         self.config = config
         self.router = router
@@ -442,6 +444,8 @@ class BudgetGovernor:
         self.decisions: list[DownshiftDecision] = []
         self._plan_tiers: dict[str, Tier] = {}
         self._snapshot_cache: tuple[BudgetSnapshot, datetime] | None = None
+        self._metered_spent_usd = metered_spent_usd
+        self._metered_reservations: dict[str, float] = {}
         #: Tasks the router could not resolve. Their cost is omitted from the
         #: projection, so the projection is a floor — recorded here rather than
         #: silently folded in as zero.
@@ -457,7 +461,7 @@ class BudgetGovernor:
         plan: Plan | None = None,
         states: dict[str, TaskState] | None = None,
         *,
-        metered_spent_usd: float = 0.0,
+        metered_spent_usd: float | None = None,
     ) -> BudgetSnapshot:
         now = self.now()
         scan = scan_usage(self.projects_dir)
@@ -490,8 +494,10 @@ class BudgetGovernor:
             window_end=end,
             observed_at=now,
             window_tokens_used=used,
-            window_tokens_limit=self.config.window_tokens_limit,
-            metered_spend_usd=metered_spent_usd,
+            window_tokens_limit=limit,
+            metered_spend_usd=(
+                self._metered_spent_usd if metered_spent_usd is None else metered_spent_usd
+            ),
             metered_budget_usd=self.config.metered_budget_usd,
             projected_plan_cost_usd=round(projection.metered_usd, 6),
             projected_plan_window_tokens=projection.window_tokens,
@@ -652,7 +658,7 @@ class BudgetGovernor:
                 best = (cost, task, DOWNSHIFT_LADDER[index + 1])
         return (best[1], best[2]) if best else None
 
-    def should_dispatch(self, task: Task) -> tuple[bool, str]:
+    def should_dispatch(self, task: Task, tier: Tier | None = None) -> tuple[bool, str]:
         """Refuse only when the window is provably gone.
 
         Denial is a blunt instrument — the plan stops and BUDGET_DENIED is
@@ -675,7 +681,23 @@ class BudgetGovernor:
                 f"metered budget of ${snapshot.metered_budget_usd:.2f} is spent "
                 f"(${snapshot.metered_spend_usd:.2f})"
             )
+        if snapshot.metered_budget_usd is not None and tier is not None:
+            estimate = self.estimate_task(task, tier)[1]
+            reserved = sum(self._metered_reservations.values())
+            if snapshot.metered_spend_usd + reserved + estimate > snapshot.metered_budget_usd:
+                return False, (
+                    f"metered budget of ${snapshot.metered_budget_usd:.2f} would be exceeded "
+                    f"by the ${estimate:.4f} reserved dispatch"
+                )
+            self._metered_reservations[task.id] = estimate
         return True, ""
+
+    def settle_dispatch(self, task: Task, cost: CostEstimate) -> None:
+        """Replace a pre-dispatch reservation with the durable actual charge."""
+        self._metered_reservations.pop(task.id, None)
+        if cost.billing_mode.value == "metered":
+            self._metered_spent_usd += cost.amount_usd
+        self._snapshot_cache = None
 
     def _recent_snapshot(self, max_age_s: float = 30.0) -> BudgetSnapshot:
         """Cached briefly: should_dispatch runs per task, and a full rescan of
