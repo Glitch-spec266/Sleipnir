@@ -219,7 +219,7 @@ class Executor:
         governor: Governor | None = None,
         staled_at: Mapping[str, int] | None = None,
     ) -> None:
-        assert_checks_supported(plan.tasks)
+        assert_checks_supported(plan.tasks, env=config.resolved_env())
         self.plan = plan
         self.adapters = adapters
         self.router = router

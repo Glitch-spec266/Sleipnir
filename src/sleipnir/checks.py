@@ -10,6 +10,8 @@ work it already got wrong is how you spend twice for one failure.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -38,7 +40,38 @@ class UnsupportedCheckError(RuntimeError):
     """
 
 
-def assert_checks_supported(tasks: list[Task]) -> None:
+#: `sh` runs these itself, so PATH says nothing about whether they work.
+_SHELL_BUILTINS = frozenset(
+    """: . [ break cd continue echo eval exec exit export false hash pwd read
+    return set shift test times trap true type ulimit umask unset wait""".split()
+)
+
+#: Any of these means the command is a shell program rather than one
+#: invocation, and its program cannot be resolved without running it.
+_SHELL_SYNTAX = frozenset("|&;<>()$`\n*?[]{}~!#'\\\"")
+
+
+def _static_program(command: str) -> str | None:
+    """The one program this command will run, when that is knowable statically.
+
+    Returns None whenever the answer needs a shell to decide. Guessing there
+    would refuse working plans, which is a worse failure than the one this
+    guards against.
+    """
+    if any(character in _SHELL_SYNTAX for character in command):
+        return None
+    parts = command.split()
+    if not parts:
+        return None
+    program = parts[0]
+    if "=" in program or "/" in program:
+        return None  # an env assignment, or a path the operator spelled out
+    return None if program in _SHELL_BUILTINS else program
+
+
+def assert_checks_supported(
+    tasks: list[Task], *, env: Mapping[str, str] | None = None
+) -> None:
     unsupported = sorted(
         {
             f"{task.id}:{check.type}"
@@ -51,6 +84,26 @@ def assert_checks_supported(tasks: list[Task]) -> None:
         raise UnsupportedCheckError(
             "llm_judge checks need a router to resolve a judge model and are not "
             f"available until Phase 3; offending tasks: {', '.join(unsupported)}"
+        )
+
+    # A command check whose program is not installed can never pass, so every
+    # attempt at that task is spend with no possible outcome. Refuse the plan
+    # while refusing is still free.
+    search_path = (env or os.environ).get("PATH")
+    missing = sorted(
+        {
+            f"{task.id}: {program}"
+            for task in tasks
+            for check in task.acceptance
+            if isinstance(check, CommandCheck)
+            for program in [_static_program(check.command)]
+            if program is not None and shutil.which(program, path=search_path) is None
+        }
+    )
+    if missing:
+        raise UnsupportedCheckError(
+            "these acceptance checks name a program that is not on PATH, so no "
+            f"attempt at those tasks could ever pass: {'; '.join(missing)}"
         )
 
 

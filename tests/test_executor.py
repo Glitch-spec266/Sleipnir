@@ -740,6 +740,44 @@ def test_plan_with_unimplemented_check_is_rejected_before_dispatch(tmp_path: Pat
         build(tmp_path, plan, ScriptedAdapter())
 
 
+def test_plan_whose_command_check_names_a_missing_program_is_rejected(tmp_path: Path):
+    """A check that cannot run must refuse the plan, not fail every attempt.
+
+    Found live on 2026-08-26: a generated plan asked for
+    `pytest -q tests/test_roman_numerals.py` on a machine with no `pytest` on
+    PATH. Nothing could ever satisfy it, so the task burned three full Codex
+    dispatches and took its whole downstream subtree down with it.
+    """
+    plan = plan_of(
+        make_task(
+            "a",
+            acceptance=[CommandCheck(command="definitely-not-a-real-program --version")],
+        )
+    )
+    with pytest.raises(UnsupportedCheckError, match="definitely-not-a-real-program"):
+        build(tmp_path, plan, ScriptedAdapter())
+
+
+def test_a_command_check_using_shell_syntax_is_not_second_guessed(tmp_path: Path):
+    """Only the unambiguous case is refused.
+
+    Once a command contains shell syntax its program cannot be resolved
+    statically, and refusing on a guess would reject working plans.
+    """
+    plan = plan_of(
+        make_task(
+            "a",
+            acceptance=[CommandCheck(command="definitely-not-real || true")],
+        )
+    )
+    build(tmp_path, plan, ScriptedAdapter())
+
+
+def test_shell_builtins_are_not_looked_up_on_path(tmp_path: Path):
+    plan = plan_of(make_task("a", acceptance=[CommandCheck(command="cd tests")]))
+    build(tmp_path, plan, ScriptedAdapter())
+
+
 def test_unregistered_adapter_raises(tmp_path: Path):
     plan = plan_of(make_task("a"))
     log = ResultLog(tmp_path / "results.jsonl")
