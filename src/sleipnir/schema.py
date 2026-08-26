@@ -824,12 +824,33 @@ class TokenUsage(BaseModel):
     cache_read_tokens: int = Field(default=0, ge=0)
     cache_write_5m_tokens: int = Field(default=0, ge=0)
     cache_write_1h_tokens: int = Field(default=0, ge=0)
+    server_tool_use: dict[str, int] = Field(
+        default_factory=dict,
+        description="Bounded server-side tool call counts reported by the provider.",
+    )
 
     @model_validator(mode="after")
     def _thinking_within_output(self) -> Self:
         if self.thinking_tokens > self.output_tokens:
             raise ValueError("thinking_tokens cannot exceed output_tokens")
         return self
+
+    @field_validator("server_tool_use", mode="before")
+    @classmethod
+    def _server_tool_counts_are_bounded(cls, value: Any) -> dict[str, int]:
+        if not isinstance(value, dict) or len(value) > 16:
+            raise ValueError("server_tool_use must contain at most 16 counters")
+        counts: dict[str, int] = {}
+        for name, count in value.items():
+            if (
+                not isinstance(name, str)
+                or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) is None
+                or type(count) is not int
+                or count < 0
+            ):
+                raise ValueError("server_tool_use must contain named non-negative integer counters")
+            counts[name] = count
+        return counts
 
     @property
     def total_input_tokens(self) -> int:
@@ -900,7 +921,13 @@ class PriceSnapshot(BaseModel):
 
 
 class CostEstimate(BaseModel):
-    """Dollars *and* window quota. Both are scarce; they are not interchangeable."""
+    """Dollars *and* window quota. Both are scarce; they are not interchangeable.
+
+    ``amount_usd`` is the provider's complete reported charge when available,
+    including server-side tool calls. The individual tool counts remain on the
+    accompanying :class:`TokenUsage`; OpenRouter does not report a reliable
+    per-tool cost breakdown, so inventing one would make a budget less honest.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

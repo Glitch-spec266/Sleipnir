@@ -463,6 +463,14 @@ def test_thinking_tokens_cannot_exceed_output():
         TokenUsage(output_tokens=10, thinking_tokens=11)
 
 
+def test_server_tool_counts_are_bounded_and_non_negative():
+    usage = TokenUsage(server_tool_use={"web_search_requests": 2, "web_fetch_requests": 1})
+    assert usage.server_tool_use == {"web_search_requests": 2, "web_fetch_requests": 1}
+
+    with pytest.raises(ValidationError, match="named non-negative"):
+        TokenUsage(server_tool_use={"web_search_requests": -1})
+
+
 def test_metered_calls_do_not_consume_the_window():
     with pytest.raises(ValidationError, match="do not consume the subscription window"):
         CostEstimate(billing_mode=BillingMode.METERED, window_tokens=100)

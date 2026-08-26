@@ -424,6 +424,7 @@ def test_openrouter_streams_content_usage_and_cost(tmp_path: Path):
         {"usage": {
             "prompt_tokens": 100, "completion_tokens": 20, "cost": 0.0012,
             "prompt_tokens_details": {"cached_tokens": 40},
+            "server_tool_use": {"web_search_requests": 2, "web_fetch_requests": 1},
         }},
         "[DONE]",
     )
@@ -438,6 +439,7 @@ def test_openrouter_streams_content_usage_and_cost(tmp_path: Path):
     # Cached tokens are a SUBSET of prompt_tokens; counting both doubles input.
     assert outcome.usage.input_tokens == 60
     assert outcome.usage.cache_read_tokens == 40
+    assert outcome.usage.server_tool_use == {"web_search_requests": 2, "web_fetch_requests": 1}
     # The raw stream landed on disk as it arrived.
     assert b"data:" in req.workspace.stdout_path.read_bytes()
 

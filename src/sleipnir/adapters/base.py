@@ -65,8 +65,9 @@ class DispatchOutcome:
     failure_kind: FailureKind | None = None
     usage: TokenUsage = field(default_factory=TokenUsage)
     billing_mode: BillingMode = BillingMode.METERED
-    #: Provider-reported cost. When present it is authoritative and the
-    #: executor marks the CostEstimate `is_estimate=False` — no pricing lookup.
+    #: Provider-reported total cost, including server-side tools when the
+    #: provider reports them. When present it is authoritative and the executor
+    #: marks the CostEstimate `is_estimate=False` — no pricing lookup.
     reported_cost_usd: float | None = None
     model_used: str | None = None
     exit_code: int | None = None

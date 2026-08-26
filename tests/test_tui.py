@@ -104,6 +104,34 @@ def test_dashboard_separates_codex_quota_and_does_not_count_stale_as_done():
     assert "0/1" in stale
 
 
+def test_dashboard_shows_server_tool_usage_without_any_provider_content():
+    plan = plan_of(make_task("a"))
+    task = plan.by_id["a"]
+    now = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    record = AttemptFinished(
+        run_id="run",
+        task_id="a",
+        attempt=1,
+        spec_hash=task.spec_hash(),
+        plan_revision=0,
+        routing=RoutingDecision(
+            tier_requested=Tier.MECHANICAL,
+            tier_final=Tier.MECHANICAL,
+            model="worker/model",
+            adapter=Adapter.OPENROUTER,
+        ),
+        status=AttemptStatus.SUCCEEDED,
+        started_at=now,
+        ended_at=now,
+        wall_time_s=0,
+        usage=TokenUsage(server_tool_use={"web_search_requests": 2}),
+        cost=CostEstimate(billing_mode=BillingMode.METERED, amount_usd=0.014),
+    )
+
+    screen = render_dashboard(plan, [record], width=120, height=24, now=now)
+    assert "tools web_search_requests=2" in screen
+
+
 def test_dashboard_strips_terminal_control_sequences_from_untrusted_text():
     plan = plan_of(make_task("a")).model_copy(
         update={"goal": "safe\x1b[2J\nforged dashboard"}

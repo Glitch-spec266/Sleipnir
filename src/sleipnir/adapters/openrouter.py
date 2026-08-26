@@ -372,6 +372,19 @@ class OpenRouterAdapter(BaseAdapter):
         usage = payload.get("usage") or {}
         prompt_details = usage.get("prompt_tokens_details") or {}
         completion_details = usage.get("completion_tokens_details") or {}
+        raw_server_tools = usage.get("server_tool_use")
+        server_tool_use = {
+            name: count
+            for name, count in (raw_server_tools.items() if isinstance(raw_server_tools, dict) else [])
+            if isinstance(name, str)
+            and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name)
+            and type(count) is int
+            and count >= 0
+        }
+        # Provider payload is untrusted. Keep the same bounded representation
+        # used by TokenUsage rather than letting a malformed response make the
+        # durable result log arbitrarily large.
+        server_tool_use = dict(list(server_tool_use.items())[:16])
         cached = int(prompt_details.get("cached_tokens") or 0)
         prompt_tokens = int(usage.get("prompt_tokens") or 0)
         output_tokens = int(usage.get("completion_tokens") or 0)
@@ -385,6 +398,7 @@ class OpenRouterAdapter(BaseAdapter):
             thinking_tokens=min(
                 int(completion_details.get("reasoning_tokens") or 0), output_tokens
             ),
+            server_tool_use=server_tool_use,
         )
 
     # -- dry run ------------------------------------------------------------
