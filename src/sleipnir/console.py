@@ -1,25 +1,25 @@
 """The Sleipnir console: the window you actually talk to.
 
 What this is, structurally: a full-screen renderer that owns the terminal, plus
-a message router.  It is *not* a second Claude.  A message you type is handed
-to the real ``claude`` CLI — Sleipnir's job is to decide **who** receives it and
-to widen what the receiver can do, not to answer for it.
+a message router.  It is *not* a model.  A message you type is handed to a real
+provider CLI — Claude Code or Codex, switchable with ``/use`` mid-conversation
+— and Sleipnir's job is to decide **who** receives it and to widen what the
+receiver can do, never to answer for it.
 
-Routing is the interesting part.  The brain is expensive and context-bound, so
-it is not always listening:
+Routing has two axes:
 
-* **Brain awake** (no run in flight, or the run has hit a gate): the message
-  goes straight to ``claude`` with session continuity, so a conversation is a
-  conversation.
-* **Brain asleep** (workers are building): waking the brain for "how's it
-  going?" would burn the exact context the whole design protects.  A cheap
-  OpenRouter model reads the message instead and either answers it from the
-  bounded manifest or files it against a build loop for the brain to see when
-  it next wakes.
+* **Provider** (your choice): an awake conversation goes to the selected
+  provider with per-provider session continuity.  Switching providers keeps
+  each conversation separate, so ``claude → codex → claude`` resumes two
+  independent threads.
+* **Wakefulness** (derived): while a run owns the lock there is no conversation
+  to have — waking the reason tier for "how's it going?" would burn the exact
+  context the whole design protects.  A cheap OpenRouter duty officer answers
+  from the bounded manifest instead, or files the message for the brain.
 
-Rendering runs in raw mode at a fixed frame rate so the border can flicker
-while you type.  Input is read byte-by-byte rather than through ``input()``,
-because ``input()`` owns the cursor and cannot coexist with a redraw loop.
+Replies stream.  Tokens render into a growing message at the frame rate, so
+the wait ends when the model's first token lands rather than when its last one
+does.
 """
 
 from __future__ import annotations
@@ -27,16 +27,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import shutil
 import sys
 import termios
 import tty
-import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sleipnir import theme
+from sleipnir import chat, theme
 
 FRAME_INTERVAL_S = 1 / 12  # fast enough for flicker, cheap enough to ignore
 
@@ -103,27 +104,105 @@ class ConsoleState:
     status: str = "ready"
     busy: bool = False
     run_dir: Path | None = None
-    session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     frame: int = 0
     #: Host control is the product, so the console does not stop to ask before
     #: every click and keystroke.  Narrowing this to ``acceptEdits`` turns
-    #: Sleipnir back into an ordinary headless Claude with no reach outside the
+    #: Sleipnir back into an ordinary headless agent with no reach outside the
     #: repository — correct for a cautious session, useless for the desk robot.
     permission_mode: str = "bypassPermissions"
     #: Instructions the duty officer took while the brain slept. Text only —
     #: handed to the brain on its next turn, never executed here.
     queued_for_brain: list[str] = field(default_factory=list)
-    #: Alias passed to `claude --model`. A console message is usually small and
-    #: conversational; letting the account default answer it means the slowest,
-    #: most expensive model handles "how's it going?" and every turn pays a full
-    #: spawn for the privilege. The operator can raise it per session.
-    model: str | None = "sonnet"
+    #: Model alias per provider. Operator data; ``None`` lets the account pick.
+    models: dict[str, str | None] = field(
+        default_factory=lambda: {provider: None for provider in chat.PROVIDERS}
+    )
+    #: The provider the next awake message goes to. Switched with /use;
+    #: conversations stay separate per provider.
+    provider: str = "claude"
+    sessions: dict[str, chat.ChatSession] = field(default_factory=dict)
+    #: Lines typed while a reply was streaming. Nothing typed here is ever
+    #: dropped: each one dispatches the moment the turn in flight finishes.
+    pending_submissions: deque[str] = field(default_factory=deque)
     #: Set while a credential is being typed: the buffer is not echoed and is
     #: never added to the transcript.
     secret_request: object | None = None
 
-    def add(self, role: str, text: str) -> None:
-        self.messages.append(Message(role=role, text=text))
+    def add(self, role: str, text: str) -> Message:
+        message = Message(role=role, text=text)
+        self.messages.append(message)
+        return message
+
+    # -- per-provider session plumbing --------------------------------------
+
+    @property
+    def model(self) -> str | None:
+        return self.models.get(self.provider)
+
+    @model.setter
+    def model(self, value: str | None) -> None:
+        self.models[self.provider] = value
+
+    def session_for(self, provider: str) -> chat.ChatSession:
+        if provider not in self.sessions:
+            self.sessions[provider] = chat.ChatSession(provider=provider)
+        return self.sessions[provider]
+
+    def transport_for(self, provider: str) -> chat.ClaudeTransport | chat.CodexTransport:
+        session = self.session_for(provider)
+        if getattr(session, "_transport", None) is None:
+            session._transport = chat.transport_for(  # noqa: SLF001 - owned here
+                session,
+                permission_mode=self.permission_mode,
+                model=self.models.get(provider),
+                add_dirs=(self.run_dir,) if self.run_dir else (),
+            )
+        return session._transport  # type: ignore[no-any-return]
+
+    async def aclose(self) -> None:
+        for session in self.sessions.values():
+            transport = getattr(session, "_transport", None)
+            if transport is not None:
+                await transport.close()
+
+
+# ---------------------------------------------------------------------------
+# Local commands — intercepted before anything is dispatched to a provider
+# ---------------------------------------------------------------------------
+
+_SLASH_USE = re.compile(r"^/use\s+(claude|codex)\s*$")
+_SLASH_MODEL = re.compile(r"^/model\s+(\S+)\s*$")
+
+
+def apply_slash(state: ConsoleState, line: str) -> bool:
+    """Handle a local command. True means consumed — send nothing anywhere."""
+    if not line.startswith("/"):
+        return False
+    use = _SLASH_USE.match(line)
+    if use:
+        target = use.group(1)
+        if target != state.provider:
+            state.provider = target
+            state.add("sleipnir", f"Now talking to {target}. Conversations stay separate.")
+        else:
+            state.add("sleipnir", f"Already talking to {target}.")
+        return True
+    picked = _SLASH_MODEL.match(line)
+    if picked:
+        alias = picked.group(1)
+        state.model = None if alias in ("default", "@default") else alias
+        shown = state.model or "account default"
+        state.add("sleipnir", f"{state.provider} will use {shown}.")
+        return True
+    if re.match(r"^/help\s*$", line):
+        state.add(
+            "sleipnir",
+            "/use claude|codex — switch provider · /model <alias|default> — "
+            "pick this provider's model · everything else goes to the provider.",
+        )
+        return True
+    state.add("sleipnir", "Unknown command. Try /help.")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +213,7 @@ _ROLE_LEVEL = {
     "you": theme.BRIGHT,
     "sleipnir": theme.NORMAL,
     "claude": theme.NORMAL + 1,
+    "codex": theme.NORMAL + 1,
     "router": theme.DIM + 1,
     "error": theme.NORMAL,
 }
@@ -208,10 +288,11 @@ def render(state: ConsoleState, *, width: int, height: int, colour: bool = True)
         # Masked. The buffer is never echoed, never wrapped into the transcript,
         # and never leaves this process.
         label = _clip(str(getattr(state.secret_request, "label", "credential")))
-        prompt = f"🔒 {label}: {'•' * len(state.input_buffer)}{caret}"
+        prompt_line = f"🔒 {label}: {'•' * len(state.input_buffer)}{caret}"
     else:
-        prompt = f"› {_clip(state.input_buffer)}{caret}"
-    lines.append(theme.paint(prompt[-inner:], theme.BRIGHT, colour=colour))
+        suffix = f" (+{len(state.pending_submissions)} queued)" if state.pending_submissions else ""
+        prompt_line = f"› {_clip(state.input_buffer)}{caret}{suffix}"
+    lines.append(theme.paint(prompt_line[-inner:], theme.BRIGHT, colour=colour))
 
     where = "brain awake" if state.brain_awake else "brain asleep · routed"
     # Full host control is the point of this tool, and it is also the most
@@ -219,7 +300,8 @@ def render(state: ConsoleState, *, width: int, height: int, colour: bool = True)
     # long as it is true, rather than behind a prompt that gets clicked through
     # once and forgotten.
     reach = "FULL HOST CONTROL" if state.permission_mode == "bypassPermissions" else "ask-first"
-    footer = f"{where} · {reach} · {state.status} · ctrl-c to exit"
+    model = state.model or "default"
+    footer = f"{state.provider}:{model} · {where} · {reach} · {state.status} · ctrl-c to exit"
     return theme.frame(
         "\n".join(lines),
         width=width,
@@ -264,9 +346,17 @@ def _paint(text: str) -> None:
     sys.stdout.flush()
 
 
-async def play_splash(*, colour: bool = True) -> None:
+async def play_splash(*, colour: bool = True, skip_requested=None) -> None:
+    """Boot animation, interruptible by any keypress.
+
+    A splash you must sit through on every launch is a tax on the ten launches
+    a day where you just want to type. ``skip_requested`` is a zero-arg probe
+    checked between frames.
+    """
     width, height = shutil.get_terminal_size((90, 26))
     for index in range(theme.SPLASH_FRAMES):
+        if skip_requested is not None and skip_requested():
+            return
         _paint(theme.splash_frame(index, width=width, height=height, colour=colour))
         await asyncio.sleep(0.035)
 
@@ -361,7 +451,6 @@ def run_digest(run_dir: Path) -> str:
 
 async def _ask_duty_officer(state: ConsoleState, text: str) -> None:
     """Answer from bounded run state without spending a reason-tier spawn."""
-    from sleipnir import chat
     from sleipnir.config import SleipnirConfig
 
     if state.run_dir is None or not (state.run_dir / "plan.json").exists():
@@ -378,40 +467,44 @@ async def _ask_duty_officer(state: ConsoleState, text: str) -> None:
     queued = chat.extract_queued_instruction(reply.text)
     if queued:
         # Recorded as text for the brain's next cycle, never executed. Plan
-        # changes still go only through revisions.apply_revision.
+        # changes still go only through the revision applier and its
+        # operator-review gate.
         state.queued_for_brain.append(queued)
         state.add("sleipnir", f"Queued for the orchestrator: {queued}")
 
 
-async def _handle(state: ConsoleState, text: str, *, first_turn: list[bool]) -> None:
-    """Send one operator message to whoever is on duty."""
-    from sleipnir import chat
-
+async def _handle(state: ConsoleState, text: str) -> None:
+    """Send one operator message to whoever is on duty, streaming the reply."""
     refresh_brain_state(state)
     state.busy = True
     state.status = "thinking" if state.brain_awake else "routing"
     try:
-        if state.brain_awake:
-            queued = ""
-            if state.queued_for_brain:
-                queued = (
-                    "\n\nQueued while you were asleep:\n"
-                    + "\n".join(f"- {item}" for item in state.queued_for_brain)
-                )
-                state.queued_for_brain.clear()
-            prompt = f"{capability_brief()}\n\n{text}" if first_turn[0] else text
-            reply = await chat.ask_claude(
-                prompt + queued,
-                state.session_id,
-                resume=not first_turn[0],
-                permission_mode=state.permission_mode,
-                model=state.model,
-                add_dirs=(state.run_dir,) if state.run_dir else (),
-            )
-            first_turn[0] = False
-            state.add("claude", reply.text)
-        else:
+        if not state.brain_awake:
             await _ask_duty_officer(state, text)
+            return
+        session = state.session_for(state.provider)
+        transport = state.transport_for(state.provider)
+        first_turn = not session.opened
+        queued = ""
+        if state.queued_for_brain:
+            queued = (
+                "\n\nQueued while you were asleep:\n"
+                + "\n".join(f"- {item}" for item in state.queued_for_brain)
+            )
+            state.queued_for_brain.clear()
+        prompt = f"{capability_brief()}\n\n{text}" if first_turn else text
+        streaming = state.add(state.provider, "")
+        final_text: str | None = None
+        async for event in transport.turn(prompt + queued):
+            if event.kind == "delta":
+                streaming.text += event.text
+            elif event.kind == "final":
+                final_text = event.text
+                session.opened = True
+        # The final event's text is authoritative; deltas are only the preview.
+        streaming.text = final_text if final_text is not None else streaming.text
+        if not streaming.text.strip():
+            state.add("error", f"{state.provider} returned an empty reply")
     except Exception as error:  # noqa: BLE001 - the console must never die on a reply
         state.add("error", f"{type(error).__name__}: {error}")
     finally:
@@ -465,19 +558,31 @@ def poll_secret_request(state: ConsoleState) -> None:
         )
 
 
+def handle_submitted(state: ConsoleState, text: str, dispatch) -> None:
+    """Route one submitted line: local command, queue behind a live reply,
+    or dispatch now. Split out of the I/O loop so the policy is testable."""
+    if apply_slash(state, text):
+        return
+    if state.busy:
+        # Queued, never dropped: the previous behaviour silently discarded
+        # what you typed while a reply was streaming.
+        state.pending_submissions.append(text)
+        return
+    dispatch(text)
+
+
+def drain_pending(state: ConsoleState, dispatch) -> None:
+    if not state.busy and state.pending_submissions:
+        dispatch(state.pending_submissions.popleft())
+
+
 async def run_console(state: ConsoleState | None = None, *, splash: bool = True) -> int:
     """Own the terminal until the operator leaves."""
     state = state or ConsoleState()
     colour = theme.supports_colour()
-    first_turn = [True]
-    pending: set[asyncio.Task[None]] = set()
+    pending_tasks: set[asyncio.Task[None]] = set()
 
     with raw_terminal() as interactive:
-        if splash:
-            await play_splash(colour=colour)
-        if not interactive:
-            return 0
-
         loop = asyncio.get_running_loop()
         keys: asyncio.Queue[str] = asyncio.Queue()
 
@@ -486,15 +591,27 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
             for char in data:
                 keys.put_nowait(char)
 
-        loop.add_reader(sys.stdin.fileno(), _on_readable)
-        state.add(
-            "sleipnir",
-            "Ready. Your message goes to Claude Code with host control attached — "
-            "keyboard, mouse, screen, browser and shell. Run with --ask-first to "
-            "confirm each action instead."
+        if interactive:
+            loop.add_reader(sys.stdin.fileno(), _on_readable)
+        if splash:
+            await play_splash(colour=colour, skip_requested=lambda: not keys.empty())
+        if not interactive:
+            return 0
+
+        def dispatch(text: str) -> None:
+            state.add("you", text)
+            task = asyncio.create_task(_handle(state, text))
+            pending_tasks.add(task)
+            task.add_done_callback(pending_tasks.discard)
+
+        welcome = (
+            f"Ready. Talking to {state.provider} with host control attached — keyboard, "
+            "mouse, screen, browser and shell. /use codex switches provider; /help "
+            "lists commands."
             if state.permission_mode == "bypassPermissions"
-            else "Ready. Host actions will be confirmed with you before they run.",
+            else "Ready. Host actions will be confirmed with you before they run. /help lists commands."
         )
+        state.add("sleipnir", welcome)
         try:
             while True:
                 width, height = shutil.get_terminal_size((90, 26))
@@ -505,29 +622,32 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
                 try:
                     char = await asyncio.wait_for(keys.get(), timeout=FRAME_INTERVAL_S)
                 except TimeoutError:
-                    continue  # no key this frame; the border still flickers
+                    char = None  # no key this frame; the border still flickers
                 if char == INTERRUPT:
                     return 0
-                if state.secret_request is not None:
-                    # While a credential is being typed the buffer is a secret,
-                    # not a message: it must not reach the transcript or a model.
-                    if char in ENTER:
-                        typed = state.input_buffer
-                        state.input_buffer = ""
-                        submit_secret(state, typed)
-                    else:
-                        apply_key(state, char)
-                    continue
-                submitted = apply_key(state, char)
-                if submitted and not state.busy:
-                    state.add("you", submitted)
-                    task = asyncio.create_task(_handle(state, submitted, first_turn=first_turn))
-                    pending.add(task)
-                    task.add_done_callback(pending.discard)
+                if char is not None:
+                    if state.secret_request is not None:
+                        # While a credential is being typed the buffer is a secret,
+                        # not a message: it must not reach the transcript or a model.
+                        if char in ENTER:
+                            typed = state.input_buffer
+                            state.input_buffer = ""
+                            submit_secret(state, typed)
+                        else:
+                            apply_key(state, char)
+                        continue
+                    submitted = apply_key(state, char)
+                    if submitted:
+                        handle_submitted(state, submitted, dispatch)
+                else:
+                    drain_pending(state, dispatch)
         finally:
-            loop.remove_reader(sys.stdin.fileno())
-            for task in pending:
+            if interactive:
+                loop.remove_reader(sys.stdin.fileno())
+            for task in pending_tasks:
                 task.cancel()
+            with contextlib.suppress(Exception):
+                await asyncio.shield(asyncio.wait_for(state.aclose(), timeout=3.0))
 
 
 __all__ = [
@@ -536,9 +656,14 @@ __all__ = [
     "FRAME_INTERVAL_S",
     "Message",
     "apply_key",
+    "apply_slash",
     "capability_brief",
+    "drain_pending",
+    "handle_submitted",
     "play_splash",
     "raw_terminal",
+    "refresh_brain_state",
     "render",
     "run_console",
+    "run_digest",
 ]

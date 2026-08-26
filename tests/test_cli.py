@@ -533,3 +533,84 @@ def test_extract_plan_json_returns_none_on_prose():
 def test_assemble_plan_requires_a_task_list():
     with pytest.raises(PlanningError, match="non-empty 'tasks' list"):
         assemble_plan({"tasks": []}, goal="g", plan_id="p")
+
+
+# ---------------------------------------------------------------------------
+# Top-level mode split (Phase 10)
+# ---------------------------------------------------------------------------
+
+
+def test_every_project_command_exists_in_both_namespaces():
+    """`sleipnir project run` is canonical; `sleipnir run` stays as a legacy
+    alias. Both must resolve to the same handler so existing scripts and new
+    muscle memory agree."""
+    parser = cli.build_parser()
+    for name, extra in (("plan", ["x"]), ("explain", ["task-1"]), ("apply-revision", ["p.json"])):
+        argv_tail = [name] + extra
+        top = parser.parse_args(argv_tail)
+        nested = parser.parse_args(["project"] + argv_tail)
+        assert top.func is nested.func, name
+    for bare in ("run", "resume", "status", "tui", "orchestrate"):
+        top = parser.parse_args([bare])
+        nested = parser.parse_args(["project", bare])
+        assert top.func is nested.func, bare
+
+
+def test_bare_sleipnir_opens_the_chat_console_as_claude(monkeypatch):
+    import asyncio
+
+    opened: dict = {}
+
+    class FakeConsole:
+        def __enter__(self):
+            return True
+
+        def __exit__(self, *exc):
+            return False
+
+    async def fake_run_console(state, *, splash=True):
+        opened["provider"] = state.provider
+        opened["model"] = state.model
+        return 0
+
+    monkeypatch.setattr("sleipnir.console.run_console", fake_run_console)
+    monkeypatch.setattr("sleipnir.console.raw_terminal", FakeConsole)
+    rc = cli.main([])
+    assert rc == 0
+    assert opened == {"provider": "claude", "model": "sonnet"}
+
+
+def test_chat_selects_the_provider_from_the_command_line(monkeypatch):
+    import asyncio
+
+    opened: dict = {}
+
+    class FakeConsole:
+        def __enter__(self):
+            return True
+
+        def __exit__(self, *exc):
+            return False
+
+    async def fake_run_console(state, *, splash=True):
+        opened["provider"] = state.provider
+        return 0
+
+    monkeypatch.setattr("sleipnir.console.run_console", fake_run_console)
+    monkeypatch.setattr("sleipnir.console.raw_terminal", FakeConsole)
+    cli.main(["chat", "--provider", "codex"])
+    assert opened["provider"] == "codex"
+
+
+def test_the_direct_console_never_touches_orchestration_machinery():
+    """Executable form of the boundary between modes: direct-mode chat must
+    not load plans, build manifests or apply revisions — anywhere, including
+    lazy imports. The duty officer's bounded digest (gate/projection folds)
+    is the one sanctioned overlap and stays read-only."""
+    from pathlib import Path
+
+    package = Path(cli.__file__).parent
+    for module_name in ("chat.py", "console.py"):
+        source = package.joinpath(module_name).read_text(encoding="utf-8")
+        for forbidden in ("load_plan", "build_manifest", "apply_revision", "RunLock("):
+            assert forbidden not in source, f"{module_name} references {forbidden}"

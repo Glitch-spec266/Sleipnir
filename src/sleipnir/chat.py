@@ -1,30 +1,51 @@
-"""Where a typed message goes.
+"""Where a typed message goes, and how it comes back.
 
 Sleipnir is a harness, not a model.  This module is the whole of its opinion
-about conversation: pick the recipient, hand over the text, hand back the
-reply.
+about conversation: pick the recipient, hand over the text, and stream the
+reply back as it is generated.
 
-The recipient depends on whether the brain is awake, and that distinction is
-the economics of the entire project in one branch.  Waking the reason tier to
-answer "is it done yet?" costs a full expensive spawn and, worse, spends
-context that the run needs later.  So while workers are building, a cheap model
-answers from the bounded manifest — the same constant-size object the brain
-itself is allowed to see, and nothing more.
+Two providers share one event contract.  A turn yields :class:`ChatEvent`
+objects — ``delta`` chunks as tokens arrive, then one ``final`` event carrying
+the authoritative reply text.  The console renders deltas into a growing
+message, so time-to-first-visible-token is the model's first token rather than
+the whole turn.
 
-No model name appears here.  ``claude`` is invoked without ``--model`` so the
-authenticated account picks its own default, and the asleep-path model is
-resolved from the operator's TOML policy, exactly as dispatch routing is.
+Latency design, measured before built:
+
+* **Claude** keeps **one persistent process** for the whole conversation
+  (``--input-format stream-json``).  Verified live on CLI 2.1.241: after a
+  ``result`` event the process stays alive, accepts another user envelope over
+  stdin, and continues the same session.  Every turn therefore skips the CLI
+  start-up and the ~30k cache-creation spawn overhead entirely; only a crash
+  pays a relaunch (with ``--resume``, so no context is lost).
+* **Codex** is one ``codex exec --json`` subprocess per turn, resumed against
+  the thread id the first turn returned.  Its JSONL events are parsed as they
+  arrive, so replies still render incrementally even though the process is
+  fresh.
+
+No model name appears in source.  Model aliases are operator data supplied per
+session; omitting one lets the authenticated account pick.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
-from dataclasses import dataclass
+import signal
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from sleipnir.schema import Tier
+
+#: Interactive providers selectable with ``/use`` in the console.
+PROVIDERS: tuple[str, ...] = ("claude", "codex")
+
+Spawner = Callable[..., Awaitable[Any]]
 
 
 class ChatError(RuntimeError):
@@ -39,12 +60,66 @@ class Reply:
     cost_usd: float | None = None
 
 
+@dataclass(frozen=True)
+class ChatEvent:
+    kind: str  # "delta" | "final"
+    text: str = ""
+    session_id: str | None = None
+    cost_usd: float | None = None
+
+
+@dataclass
+class ChatSession:
+    """One conversation with one provider.
+
+    ``opened`` flips only once the provider has confirmed a live session —
+    a failed first turn must not make the next turn send ``--resume`` for a
+    session that was never created (the exact bug the old local
+    ``first_turn`` flag could produce on timeouts).
+    """
+
+    provider: str
+    session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    opened: bool = False
+
+    def __post_init__(self) -> None:
+        if self.provider not in PROVIDERS:
+            raise ChatError(f"unknown provider {self.provider!r}")
+
+
+async def _default_spawn(*argv: str, **kwargs: Any) -> Any:
+    return await asyncio.create_subprocess_exec(*argv, **kwargs)
+
+
+async def _terminate_group(proc: Any, grace_s: float = 3.0) -> None:
+    """TERM the process group, wait briefly, then KILL.
+
+    The same contract as ProcessRunner: provider CLIs spawn children that would
+    otherwise survive a bare SIGTERM to the parent and keep burning tokens.
+    """
+    if proc.returncode is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        with contextlib.suppress(Exception):
+            proc.kill()
+    with contextlib.suppress(TimeoutError, asyncio.CancelledError, ProcessLookupError):
+        await asyncio.wait_for(proc.wait(), grace_s)
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        with contextlib.suppress(Exception):
+            proc.kill()
+
+
 # ---------------------------------------------------------------------------
-# The brain: the real Claude Code CLI
+# Claude — one persistent process, many turns
 # ---------------------------------------------------------------------------
 
 
-def claude_argv(
+def claude_stream_argv(
     session_id: str,
     *,
     resume: bool,
@@ -53,19 +128,19 @@ def claude_argv(
     model: str | None = None,
     add_dirs: tuple[Path, ...] = (),
 ) -> list[str]:
-    """Build the headless invocation.
+    """Build the headless multi-turn invocation.
 
-    ``--session-id`` opens the conversation; every later turn uses ``--resume``
-    against the same id.  Without that the console would be a series of
-    strangers, each paying the ~30k-token spawn overhead to learn what the last
-    one already knew.
-
-    ``model`` is an alias the CLI understands, supplied by the operator — never
-    a model id chosen in source.  Omitting it lets the authenticated account
-    pick, which in practice means its most capable and slowest default on every
-    trivial message.
+    The prompt travels over stdin as JSON envelopes, never argv: argv is
+    world-readable in ``/proc`` and a pasted file would blow past ``ARG_MAX``.
+    ``model`` is an operator-supplied alias; omitted means the account chooses.
     """
-    argv = [executable, "-p", "--output-format", "json"]
+    argv = [
+        executable, "-p",
+        "--input-format", "stream-json",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+    ]
     argv += ["--resume", session_id] if resume else ["--session-id", session_id]
     argv += ["--permission-mode", permission_mode]
     if model:
@@ -75,53 +150,372 @@ def claude_argv(
     return argv
 
 
-async def ask_claude(
-    prompt: str,
-    session_id: str,
-    *,
-    resume: bool,
-    timeout_s: float = 900.0,
-    **argv_kwargs: object,
-) -> Reply:
-    """Send one turn to Claude Code and wait for the whole reply.
+def user_envelope(prompt: str) -> bytes:
+    """One user turn in the stream-json input protocol."""
+    message = {
+        "type": "user",
+        "message": {"role": "user", "content": [{"type": "text", "text": prompt}]},
+    }
+    return json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n"
 
-    The prompt goes over stdin, never argv: argv is world-readable in
-    ``/proc``, and a pasted file would blow past ``ARG_MAX``.
-    """
-    argv = claude_argv(session_id, resume=resume, **argv_kwargs)  # type: ignore[arg-type]
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(prompt.encode("utf-8")), timeout=timeout_s
+
+class ClaudeTransport:
+    """Owns the long-lived ``claude -p`` process for one session."""
+
+    def __init__(
+        self,
+        session: ChatSession,
+        *,
+        permission_mode: str = "acceptEdits",
+        model: str | None = None,
+        add_dirs: tuple[Path, ...] = (),
+        executable: str = "claude",
+        spawn: Spawner | None = None,
+        timeout_s: float = 900.0,
+    ) -> None:
+        self.session = session
+        self.permission_mode = permission_mode
+        self.model = model
+        self.add_dirs = add_dirs
+        self.executable = executable
+        self.timeout_s = timeout_s
+        self._spawn: Spawner = spawn or _default_spawn
+        self._proc: Any | None = None
+        self._stderr_tail = ""
+
+    async def _ensure_process(self) -> Any:
+        if self._proc is not None and self._proc.returncode is None:
+            return self._proc
+        argv = claude_stream_argv(
+            self.session.session_id,
+            # Resume whenever the session was ever opened, including across a
+            # crash of our own persistent process: context lives provider-side.
+            resume=self.session.opened,
+            executable=self.executable,
+            permission_mode=self.permission_mode,
+            model=self.model,
+            add_dirs=self.add_dirs,
         )
-    except TimeoutError as error:
-        process.kill()
-        await process.wait()
-        raise ChatError(f"claude did not reply within {timeout_s:.0f}s") from error
+        self._proc = await self._spawn(
+            *argv,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+        self._stderr_tail = ""
+        asyncio.ensure_future(self._drain_stderr(self._proc))
+        return self._proc
 
-    if process.returncode != 0:
-        detail = stderr.decode("utf-8", "replace").strip()[:400]
-        raise ChatError(f"claude exited {process.returncode}: {detail}")
+    @staticmethod
+    async def _drain_stderr(proc: Any) -> None:
+        """Keep stderr empty so the CLI never blocks writing it.
 
-    try:
-        payload = json.loads(stdout.decode("utf-8", "replace"))
-    except json.JSONDecodeError as error:
-        raise ChatError("claude did not emit the JSON envelope it was asked for") from error
+        Retained tail explains a crash; everything else is discarded. The
+        pump dies with the reader when the process exits.
+        """
+        tail_bytes = 8_192
+        buffer = bytearray()
+        try:
+            while True:
+                chunk = await proc.stderr.read(4_096)
+                if not chunk:
+                    return
+                buffer.extend(chunk)
+                if len(buffer) > tail_bytes:
+                    del buffer[: len(buffer) - tail_bytes]
+        except Exception:  # noqa: BLE001 - a closed pipe is not an error here
+            return
+        finally:
+            proc._sleipnir_stderr_tail = buffer.decode("utf-8", "replace")
 
-    text = payload.get("result") or payload.get("text") or ""
-    if not isinstance(text, str):
-        raise ChatError("claude reply had no textual result")
-    return Reply(
-        text=text,
-        speaker="claude",
-        session_id=payload.get("session_id") or session_id,
-        cost_usd=payload.get("total_cost_usd"),
+    async def turn(self, prompt: str) -> AsyncIterator[ChatEvent]:
+        proc = await self._ensure_process()
+        if proc.stdin is None or proc.stdout is None:
+            raise ChatError("the claude process has no standard streams")
+        try:
+            proc.stdin.write(user_envelope(prompt))
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError) as error:
+            await self._crash()
+            raise ChatError("the claude session process had already exited") from error
+
+        deltas: list[str] = []
+        try:
+            async with asyncio.timeout(self.timeout_s):
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        raise ChatError(
+                            "claude closed its output before finishing the turn"
+                            + self._tail_suffix()
+                        )
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    kind = event.get("type")
+                    if kind == "stream_event":
+                        delta = event.get("event", {}).get("delta", {})
+                        if delta.get("type") == "text_delta":
+                            piece = delta.get("text", "")
+                            deltas.append(piece)
+                            yield ChatEvent(kind="delta", text=piece)
+                    elif kind == "result":
+                        text = event.get("result")
+                        if not isinstance(text, str):
+                            text = "".join(deltas)
+                        self.session.opened = True
+                        yield ChatEvent(
+                            kind="final",
+                            text=text,
+                            session_id=event.get("session_id"),
+                            cost_usd=event.get("total_cost_usd"),
+                        )
+                        return
+        except TimeoutError as error:
+            await self._crash()
+            raise ChatError(
+                f"claude did not finish the turn within {self.timeout_s:.0f}s"
+            ) from error
+
+    def _tail_suffix(self) -> str:
+        tail = getattr(self._proc, "_sleipnir_stderr_tail", "") or self._stderr_tail
+        trimmed = tail.strip()[:400]
+        return f": {trimmed}" if trimmed else ""
+
+    async def _crash(self) -> None:
+        """Tear down a wedged process so the next turn relaunches cleanly."""
+        if self._proc is not None:
+            await _terminate_group(self._proc)
+            self._proc = None
+
+    async def close(self) -> None:
+        if self._proc is not None:
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                if self._proc.stdin is not None:
+                    self._proc.stdin.close()
+            await _terminate_group(self._proc)
+            self._proc = None
+
+
+# ---------------------------------------------------------------------------
+# Codex — exec per turn, resumed against the thread id
+# ---------------------------------------------------------------------------
+
+
+def _codex_sandbox_for(permission_mode: str) -> str:
+    """Map the console posture onto Codex's own sandbox tiers.
+
+    Full host control maps to full access; anything narrower keeps writes
+    confined to the workspace until the unified policy layer replaces both
+    mappings. Enforcement beats intention: Codex's sandbox is kernel-real.
+    """
+    return "danger-full-access" if permission_mode == "bypassPermissions" else "workspace-write"
+
+
+def codex_exec_argv(
+    *,
+    resume_thread: str | None = None,
+    executable: str = "codex",
+    permission_mode: str = "acceptEdits",
+    model: str | None = None,
+) -> list[str]:
+    """One non-interactive Codex invocation; the prompt arrives over stdin.
+
+    ``-`` reads the prompt from stdin, keeping potentially long instructions
+    out of world-readable argv. Verified against CLI 0.149.1, where the two
+    entry points differ in surface: a fresh ``exec`` takes ``--sandbox``, but
+    ``resume`` does not — its posture goes through ``-c sandbox_mode=…`` and
+    its options come before the session id. Both found live.
+    """
+    sandbox = _codex_sandbox_for(permission_mode)
+    argv = [executable, "exec"]
+    if resume_thread:
+        argv += ["resume", "--json", "--skip-git-repo-check"]
+        argv += ["-c", f'sandbox_mode="{sandbox}"']
+        if model:
+            argv += ["--model", model]
+        argv += [resume_thread, "-"]
+    else:
+        argv += ["--json", "--skip-git-repo-check"]
+        argv += ["--sandbox", sandbox]
+        if model:
+            argv += ["--model", model]
+        argv += ["-"]
+    return argv
+
+
+def extract_codex_thread(events_jsonl: str) -> str | None:
+    """Pull the thread id out of a ``thread.started`` event."""
+    for line in events_jsonl.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "thread.started":
+            thread_id = event.get("thread_id")
+            if isinstance(thread_id, str):
+                return thread_id
+    return None
+
+
+class CodexTransport:
+    """Runs ``codex exec`` once per turn, resuming the thread each time."""
+
+    def __init__(
+        self,
+        session: ChatSession,
+        *,
+        permission_mode: str = "acceptEdits",
+        model: str | None = None,
+        executable: str = "codex",
+        spawn: Spawner | None = None,
+        timeout_s: float = 900.0,
+    ) -> None:
+        self.session = session
+        self.permission_mode = permission_mode
+        self.model = model
+        self.executable = executable
+        self.spawn = spawn or _default_spawn
+        self.timeout_s = timeout_s
+
+    async def turn(self, prompt: str) -> AsyncIterator[ChatEvent]:
+        argv = codex_exec_argv(
+            # The thread id only exists after the first successful turn;
+            # resuming before that fails identically every time.
+            resume_thread=self.session.session_id if self.session.opened else None,
+            executable=self.executable,
+            permission_mode=self.permission_mode,
+            model=self.model,
+        )
+        proc = await self.spawn(
+            *argv,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+        if proc.stdin is None or proc.stdout is None:
+            raise ChatError("the codex process has no standard streams")
+
+        stderr_task = asyncio.ensure_future(_read_stream(proc.stderr))
+        seen_text: dict[str, str] = {}
+        assembled: list[str] = []
+        failure: str | None = None
+        finished = False
+        try:
+            proc.stdin.write(prompt.encode("utf-8"))
+            await proc.stdin.drain()
+            proc.stdin.close()
+        except (BrokenPipeError, ConnectionResetError) as error:
+            await _terminate_group(proc)
+            raise ChatError("codex exited before reading its prompt") from error
+
+        try:
+            async with asyncio.timeout(self.timeout_s):
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    kind = event.get("type")
+                    if kind == "thread.started":
+                        thread_id = event.get("thread_id")
+                        if isinstance(thread_id, str):
+                            self.session.session_id = thread_id
+                            self.session.opened = True
+                    elif kind in ("item.started", "item.updated", "item.completed"):
+                        item = event.get("item") or {}
+                        if _is_assistant_item(item):
+                            item_id = str(item.get("id", ""))
+                            text = item.get("text", "") or ""
+                            previous = seen_text.get(item_id, "")
+                            if len(text) > len(previous):
+                                piece = text[len(previous):]
+                                seen_text[item_id] = text
+                                assembled.append(piece)
+                                yield ChatEvent(kind="delta", text=piece)
+                    elif kind == "error":
+                        failure = str(event.get("message", "codex reported an error"))
+                    elif kind == "turn.failed":
+                        detail = event.get("error") or {}
+                        failure = str(detail.get("message") or "codex turn failed")
+                    elif kind == "turn.completed":
+                        finished = True
+        except TimeoutError as error:
+            await _terminate_group(proc)
+            raise ChatError(
+                f"codex did not finish the turn within {self.timeout_s:.0f}s"
+            ) from error
+
+        stderr_tail = (await stderr_task)[:400].strip()
+        code = await proc.wait()
+        if failure:
+            raise ChatError(failure)
+        if not finished:
+            raise ChatError(
+                f"codex exited {code} before completing the turn"
+                + (f": {stderr_tail}" if stderr_tail else "")
+            )
+        yield ChatEvent(
+            kind="final",
+            text="".join(assembled),
+            session_id=self.session.session_id,
+        )
+
+
+def _is_assistant_item(item: dict[str, Any]) -> bool:
+    # Two shapes exist across CLI versions: the documented
+    # {"item_type": "assistant_message"} and the live-captured (0.149.1)
+    # {"type": "agent_message"}. Accept both; text is the payload either way.
+    return (item.get("item_type") or item.get("type")) in (
+        "assistant_message",
+        "agent_message",
     )
+
+
+async def _read_stream(reader: Any, limit: int = 8_192) -> str:
+    buffer = bytearray()
+    with contextlib.suppress(Exception):  # stderr shape is advisory only
+        while True:
+            chunk = await reader.read(4_096)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+            if len(buffer) > limit:
+                del buffer[: limit - 4096]
+    return buffer.decode("utf-8", "replace")
+
+
+def transport_for(
+    session: ChatSession,
+    *,
+    permission_mode: str,
+    model: str | None,
+    add_dirs: tuple[Path, ...] = (),
+    spawn: Spawner | None = None,
+) -> ClaudeTransport | CodexTransport:
+    match session.provider:
+        case "claude":
+            return ClaudeTransport(
+                session,
+                permission_mode=permission_mode,
+                model=model,
+                add_dirs=add_dirs,
+                spawn=spawn,
+            )
+        case "codex":
+            return CodexTransport(
+                session,
+                permission_mode=permission_mode,
+                model=model,
+                spawn=spawn,
+            )
+    raise ChatError(f"no transport for provider {session.provider!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +590,8 @@ def extract_queued_instruction(text: str) -> str | None:
 
     Parsed here rather than trusted as an action: the returned string is only
     ever shown to the operator and handed to the brain as text.  It is never
-    executed and never mutates the plan — plan changes go through
-    ``revisions.apply_revision`` and its operator-review gate, unchanged.
+    executed and never mutates the plan — plan changes go only through the
+    revision applier in ``revisions`` and its operator-review gate, unchanged.
     """
     for line in reversed(text.splitlines()):
         stripped = line.strip()
@@ -208,12 +602,20 @@ def extract_queued_instruction(text: str) -> str | None:
 
 
 __all__ = [
+    "PROVIDERS",
     "ChatError",
+    "ChatEvent",
+    "ChatSession",
+    "ClaudeTransport",
+    "CodexTransport",
     "Reply",
     "ROUTER_SYSTEM",
-    "ask_claude",
     "ask_router",
-    "claude_argv",
+    "claude_stream_argv",
+    "codex_exec_argv",
+    "extract_codex_thread",
     "extract_queued_instruction",
     "router_model",
+    "transport_for",
+    "user_envelope",
 ]
