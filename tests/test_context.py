@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from test_schema import make_task
 
+from sleipnir.artifacts import AttemptWorkspace
 from sleipnir.context import resolve_inputs
 from sleipnir.schema import ArtifactRef, InputContract
 
@@ -56,8 +57,8 @@ def test_dependency_artifact_symlink_cannot_escape_its_attempt(tmp_path):
     assert "artifact:producer/out.py" in resolved.missing
 
 
-def test_a_declared_dependency_artifact_is_staged_into_the_workspace(tmp_path):
-    """Reading it in the prompt is not enough to run it.
+def test_a_declared_dependency_artifact_is_staged_and_referenced_not_inlined(tmp_path):
+    """A staged dependency is available by path without paying to paste it twice.
 
     Live, 2026-08-26: a planned test task declared the library task's module,
     received its source inline, wrote `import roman` — and pytest could not
@@ -87,7 +88,10 @@ def test_a_declared_dependency_artifact_is_staged_into_the_workspace(tmp_path):
         artifact_dir_for=lambda _: artifact_dir,
     )
 
-    assert [(src.name, dest) for src, dest in resolved.staged] == [("roman.py", "roman.py")]
+    assert [(src.name, dest) for src, dest, _ in resolved.staged] == [("roman.py", "roman.py")]
+    assert "`roman.py`" in resolved.prompt
+    assert "VALUE = 4" not in resolved.prompt
+    assert resolved.total_bytes == len("VALUE = 4\n".encode())
 
 
 def test_a_symlinked_dependency_artifact_is_never_staged(tmp_path):
@@ -116,6 +120,38 @@ def test_a_symlinked_dependency_artifact_is_never_staged(tmp_path):
         artifact_dir_for=lambda _: artifact_dir,
     )
     assert resolved.staged == []
+
+
+def test_staged_artifact_is_capped_at_its_declared_input_budget(tmp_path):
+    artifact_dir = tmp_path / "producer"
+    artifact_dir.mkdir()
+    (artifact_dir / "large.txt").write_bytes(b"0123456789")
+    task = make_task(
+        "consumer",
+        deps=["producer"],
+        inputs=InputContract(
+            artifacts=[ArtifactRef(
+                task_id="producer",
+                path="large.txt",
+                reason="The consumer needs a bounded sample of this input.",
+                max_bytes=4,
+            )]
+        ),
+    )
+
+    resolved = resolve_inputs(
+        task,
+        goal="Build safely.",
+        run_root=tmp_path,
+        summaries={},
+        artifact_dir_for=lambda _: artifact_dir,
+    )
+    workspace = AttemptWorkspace(tmp_path, task.id, 1)
+    workspace.prepare_fresh()
+    workspace.stage_inputs(resolved.staged)
+
+    assert (workspace.dir / "large.txt").read_bytes() == b"0123"
+    assert resolved.total_bytes == 4
 
 
 def test_a_dependency_is_not_staged_over_this_task_s_own_output(tmp_path):
