@@ -173,17 +173,16 @@ class TierRouter:
         evaluated: list[CandidateEval] = []
         accepted: list[tuple[str, ModelInfo | None, float]] = []
 
-        if backend.uses_catalog:
-            pool = [(model.id, model, None) for model in self.catalog.models.values()]
-        else:
-            pool = [
-                (option.id, self.catalog.get(option.id), option) for option in backend.models
-            ]
+        pool = [
+            (option.id, self.catalog.get(option.id), option) for option in backend.models
+        ]
 
         for model_id, info, option in pool:
             context = self._context_of(info, option)
             price = self._price_of(info, option, policy)
-            verdict = self._verdict(model_id, info, option, policy, needed, context, price)
+            verdict = self._verdict(
+                model_id, info, option, backend, policy, needed, context, price
+            )
             evaluated.append(
                 CandidateEval(
                     model_id=model_id,
@@ -197,9 +196,6 @@ class TierRouter:
             if verdict is None:
                 accepted.append((model_id, info, price if price is not None else 0.0))
 
-        if backend.uses_catalog:
-            # Catalogue pools are large and unordered: cheapest satisfying wins.
-            accepted.sort(key=lambda item: (item[2], item[0]))
         # Explicit model lists keep config order — the operator knows their plan
         # better than a price table does.
         return [(model_id, info) for model_id, info, _ in accepted], evaluated
@@ -221,6 +217,7 @@ class TierRouter:
         model_id: str,
         info: ModelInfo | None,
         option,
+        backend: Backend,
         policy: TierPolicy,
         needed: int,
         context: int | None,
@@ -233,6 +230,8 @@ class TierRouter:
             return "does not match any allow pattern"
         if context is not None and context < needed:
             return f"context {context:,} < {needed:,} required"
+        if backend.billing.value == "metered" and info is None:
+            return "missing live catalogue price for metered backend"
         if policy.max_price_per_mtok is not None:
             if price is None:
                 return "price unknown and the tier caps price"

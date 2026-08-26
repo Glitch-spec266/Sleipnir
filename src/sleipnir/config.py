@@ -41,17 +41,11 @@ class Backend:
     name: str
     adapter: Adapter
     billing: BillingMode
-    #: Empty means "every model in the live catalogue is a candidate".
     models: tuple[ModelOption, ...] = ()
     #: Fixed token cost paid on every dispatch regardless of task size.
     #: Measured at ~30,000 for `claude -p` — see DESIGN.md. This is why a
     #: trivial task can cost more to delegate than to skip.
     dispatch_overhead_tokens: int = 0
-
-    @property
-    def uses_catalog(self) -> bool:
-        return not self.models
-
 
 @dataclass(slots=True, frozen=True)
 class TierPolicy:
@@ -97,6 +91,15 @@ class SleipnirConfig:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], *, source: str = "<dict>") -> SleipnirConfig:
+        _only_keys(
+            raw,
+            {
+                "backends", "tiers", "concurrency", "catalog_ttl_s", "catalog_url",
+                "catalog_cache_path", "reserve_fraction", "window_tokens_limit",
+                "metered_budget_usd",
+            },
+            source,
+        )
         backends = _parse_backends(raw.get("backends"), source)
         tiers = _parse_tiers(raw.get("tiers"), backends, source)
 
@@ -164,6 +167,11 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
     for entry in raw:
         if not isinstance(entry, dict):
             raise ConfigError(f"{source}: each [[backends]] entry must be a table")
+        _only_keys(
+            entry,
+            {"name", "adapter", "billing", "models", "dispatch_overhead_tokens"},
+            f"{source}: backend",
+        )
         name = entry.get("name")
         if not isinstance(name, str) or not name:
             raise ConfigError(f"{source}: every backend needs a name")
@@ -190,6 +198,8 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
             raise ConfigError(f"{source}: backend {name!r} dispatch overhead must be numeric") from exc
         if overhead < 0:
             raise ConfigError(f"{source}: backend {name!r} dispatch overhead cannot be negative")
+        if any(existing.adapter is adapter for existing in backends.values()):
+            raise ConfigError(f"{source}: adapter {adapter.value!r} may only have one backend")
         backends[name] = Backend(
             name=name,
             adapter=adapter,
@@ -201,15 +211,16 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
 
 
 def _parse_models(raw: Any, backend: str, source: str) -> tuple[ModelOption, ...]:
-    if raw is None:
-        return ()
-    if not isinstance(raw, list):
-        raise ConfigError(f"{source}: backend {backend!r} models must be a list")
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError(f"{source}: backend {backend!r} must name at least one model")
     options: list[ModelOption] = []
     for item in raw:
         if isinstance(item, str):
-            options.append(ModelOption(id=item))
+            model_id = item
+            options.append(ModelOption(id=model_id))
         elif isinstance(item, dict) and isinstance(item.get("id"), str):
+            _only_keys(item, {"id", "context", "price_per_mtok"}, f"{source}: backend {backend!r} model")
+            model_id = item["id"]
             context = _opt_int(item.get("context"))
             price = _opt_float(item.get("price_per_mtok"))
             if item.get("context") is not None and (context is None or context <= 0):
@@ -234,6 +245,10 @@ def _parse_models(raw: Any, backend: str, source: str) -> tuple[ModelOption, ...
                 f"{source}: backend {backend!r} has a model entry that is neither a "
                 f"string nor a table with an id: {item!r}"
             )
+        if not model_id.strip() or any(ord(char) < 32 or ord(char) == 127 for char in model_id):
+            raise ConfigError(f"{source}: backend {backend!r} model id must be printable and non-empty")
+        if any(option.id == model_id for option in options[:-1]):
+            raise ConfigError(f"{source}: backend {backend!r} names model {model_id!r} more than once")
     return tuple(options)
 
 
@@ -254,6 +269,14 @@ def _parse_tiers(
             ) from exc
         if not isinstance(entry, dict):
             raise ConfigError(f"{source}: [tiers.{key}] must be a table")
+        _only_keys(
+            entry,
+            {
+                "prefer", "min_context", "max_price_per_mtok", "require_parameters",
+                "allow", "deny", "output_ratio",
+            },
+            f"{source}: [tiers.{key}]",
+        )
 
         prefer = tuple(entry.get("prefer", ()) or ())
         unknown = [name for name in prefer if name not in backends]
@@ -297,6 +320,12 @@ def _opt_int(value: Any) -> int | None:
 
 def _opt_float(value: Any) -> float | None:
     return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def _only_keys(raw: dict[str, Any], allowed: set[str], where: str) -> None:
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise ConfigError(f"{where}: unknown configuration key(s): {', '.join(unknown)}")
 
 
 __all__ = [

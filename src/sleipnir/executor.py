@@ -132,7 +132,9 @@ class Governor(Protocol):
 
     def tier_for(self, task: Task) -> tuple[Tier, str | None]: ...
 
-    def should_dispatch(self, task: Task) -> tuple[bool, str]: ...
+    def should_dispatch(self, task: Task, tier: Tier | None = None) -> tuple[bool, str]: ...
+
+    def settle_dispatch(self, task: Task, cost: CostEstimate) -> None: ...
 
 
 @dataclass(slots=True)
@@ -521,7 +523,7 @@ class Executor:
         tier, downshift_reason = self._tier_for(task, attempt)
 
         if self.governor is not None:
-            allowed, why = self.governor.should_dispatch(task)
+            allowed, why = self.governor.should_dispatch(task, tier)
             if not allowed:
                 self._deny(task, attempt, tier, why)
                 return
@@ -669,6 +671,8 @@ class Executor:
             stderr_path=workspace.rel("stderr.log"),
         )
         self.log.append(record)
+        if self.governor is not None:
+            self.governor.settle_dispatch(task, cost)
         self._tally(record)
 
     @staticmethod

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from test_schema import make_task
 
-from sleipnir.config import ConfigError, SleipnirConfig
+from sleipnir.config import ConfigError, ModelOption, SleipnirConfig
 from sleipnir.pricing import CatalogSnapshot, ModelInfo
 from sleipnir.router import RoutingError, TierRouter, required_context_tokens
 from sleipnir.schema import Adapter, ArtifactRef, InputContract, Tier
@@ -24,7 +24,7 @@ models = [{ id = "big-sub", context = 200000 }, { id = "small-sub", context = 32
 name = "meter"
 adapter = "openrouter"
 billing = "metered"
-models = []
+models = ["cheap/x"]
 
 [tiers.reason]
 prefer = ["sub", "meter"]
@@ -76,7 +76,17 @@ def catalog(*models, stale=False) -> CatalogSnapshot:
 
 
 def router(*models, cfg=None, **kwargs) -> TierRouter:
-    return TierRouter(cfg or config(), catalog(*models, **kwargs))
+    cfg = cfg or config()
+    if models:
+        meter = cfg.backends["meter"]
+        cfg.backends["meter"] = meter.__class__(
+            name=meter.name,
+            adapter=meter.adapter,
+            billing=meter.billing,
+            models=tuple(ModelOption(id=item.id) for item in models),
+            dispatch_overhead_tokens=meter.dispatch_overhead_tokens,
+        )
+    return TierRouter(cfg, catalog(*models, **kwargs))
 
 
 # -- preference order ------------------------------------------------------
@@ -105,14 +115,14 @@ def test_falls_through_to_the_next_backend_when_the_first_cannot_serve():
     assert decision.model == "huge/x"
 
 
-def test_cheapest_satisfying_model_wins_within_a_catalogue_pool():
+def test_explicit_model_list_rotates_in_config_order():
     r = router(
         model("dear/x", price=10.0, context=64_000),
         model("cheap/x", price=0.10, context=64_000),
         model("mid/x", price=0.50, context=64_000),
     )
     decision = r.resolve(make_task("t", tier=Tier.EXTRACT), attempt=1, tier=Tier.EXTRACT)
-    assert decision.model == "cheap/x"
+    assert decision.model == "dear/x"
 
 
 def test_explicit_model_lists_keep_config_order():
@@ -309,6 +319,42 @@ def test_non_finite_operator_model_price_is_rejected():
     raw = tomllib.loads(CONFIG_TOML)
     raw["backends"][0]["models"][0]["price_per_mtok"] = float("nan")
     with pytest.raises(ConfigError, match="price must be finite"):
+        SleipnirConfig.from_dict(raw, source="<test>")
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("metered_budget_usd",), 1.0),
+        (("backends", 0, "typo"), True),
+        (("tiers", "code", "typo"), True),
+    ],
+)
+def test_unknown_config_keys_are_rejected(path, value):
+    import tomllib
+
+    raw = tomllib.loads(CONFIG_TOML)
+    target = raw
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    if path == ("metered_budget_usd",):
+        target["metered_budegt_usd"] = target.pop("metered_budget_usd")
+    with pytest.raises(ConfigError, match="unknown configuration key"):
+        SleipnirConfig.from_dict(raw, source="<test>")
+
+
+def test_empty_or_duplicate_model_lists_are_rejected():
+    import tomllib
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"][1]["models"] = []
+    with pytest.raises(ConfigError, match="at least one model"):
+        SleipnirConfig.from_dict(raw, source="<test>")
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"][1]["models"] = ["same/x", "same/x"]
+    with pytest.raises(ConfigError, match="more than once"):
         SleipnirConfig.from_dict(raw, source="<test>")
 
 

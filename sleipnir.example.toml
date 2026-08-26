@@ -36,8 +36,10 @@ name = "openrouter"
 adapter = "openrouter"
 billing = "metered"            # spends dollars, not window quota
 dispatch_overhead_tokens = 0
-# Empty models list = every model in the live catalogue is a candidate.
-models = []
+# Explicit model IDs are a trust boundary: the live catalogue supplies metadata
+# and prices, but it must never select what Sleipnir dispatches. Replace this
+# placeholder with models you have approved for metered work.
+models = [{ id = "replace/with-an-approved-model" }]
 
 [[backends]]
 name = "codex-sub"
@@ -51,8 +53,8 @@ models = [{ id = "@cli-default" }]
 
 # --- tiers -----------------------------------------------------------------
 # `prefer` is an ordered list of backends. The first backend with a candidate
-# that satisfies the tier wins; within a catalogue-backed pool the cheapest
-# satisfying model is chosen.
+# that satisfies the tier wins; within an explicit model list, config order is
+# the retry rotation order.
 
 [tiers.reason]
 prefer = ["claude-sub", "openrouter"]
