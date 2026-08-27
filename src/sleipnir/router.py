@@ -143,20 +143,23 @@ class TierRouter:
                 "prices may be out of date"
             )
 
+        # Keep configured backend order for the first attempt, then rotate
+        # across viable backends on retries.  This lets a separate Claude
+        # subscription take over when Codex reports a quota/provider failure
+        # instead of repeating the same exhausted provider.
+        accepted_across_backends: list[tuple[Backend, str, ModelInfo | None]] = []
         for backend_name in policy.prefer:
             backend = self.config.backends[backend_name]
             accepted, evaluated = self._evaluate(backend, policy, needed)
             explanation.candidates.extend(evaluated)
-            if not accepted:
-                continue
+            accepted_across_backends.extend(
+                (backend, model_id, info) for model_id, info in accepted
+            )
 
-            # Rotate by attempt rather than always taking the cheapest.
-            # Free models rate-limit individually — one returned HTTP 429 while
-            # its neighbour answered instantly — so an identical retry fails
-            # identically. Taking the nth-cheapest makes a retry a genuinely
-            # different call, and as a side effect gives tier escalation
-            # (second-cheapest is usually the stronger model) with no ladder.
-            winner, info = accepted[(max(attempt, 1) - 1) % len(accepted)]
+        if accepted_across_backends:
+            backend, winner, info = accepted_across_backends[
+                (max(attempt, 1) - 1) % len(accepted_across_backends)
+            ]
             explanation.decision = self._decide(
                 task, tier, backend, winner, info, policy, downshift_reason, attempt
             )

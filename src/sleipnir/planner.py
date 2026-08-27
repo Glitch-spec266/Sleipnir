@@ -95,6 +95,10 @@ Each task object has these fields:
   the plan. A plan naming a program that is not on PATH is refused before any
   task is dispatched.
 - Give every task at least one required output with a concrete file path.
+- Keep each task description at 600 characters or fewer. Split work that
+  needs more instruction into dependent tasks instead of exceeding the schema.
+- Artifact references default to a combined 262144-byte input cap. Request a
+  larger explicit `inputs.max_input_bytes` only when it is truly necessary.
 
 Write only `{PLAN_OUTPUT}`. No commentary."""
 
@@ -191,7 +195,8 @@ async def generate_plan(
     run_id: str = "plan-run",
 ) -> tuple[Plan, Path]:
     """Dispatch the planning task and return the validated Plan."""
-    task = build_planner_task(goal)
+    fitted_goal = _fit_goal(goal)
+    task = build_planner_task(fitted_goal)
     adapter = adapters.get(routing.adapter)
     if adapter is None:
         raise PlanningError(f"no adapter registered for {routing.adapter.value!r}")
@@ -203,7 +208,7 @@ async def generate_plan(
         attempt=attempt,
         tier_final=routing.tier_final,
         model=routing.model,
-        prompt=planning_instructions(goal),
+        prompt=planning_instructions(fitted_goal),
         workspace=workspace,
         timeout_s=float(task.timeout_s),
         env=env or {},
@@ -225,7 +230,7 @@ async def generate_plan(
             f"Full output: {workspace.rel('stdout.log')}"
         )
 
-    return assemble_plan(payload, goal=goal, plan_id=plan_id), written
+    return assemble_plan(payload, goal=fitted_goal, plan_id=plan_id), written
 
 
 __all__ = [

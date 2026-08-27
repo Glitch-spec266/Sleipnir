@@ -385,6 +385,29 @@ def test_successive_attempts_rotate_through_accepted_candidates():
     assert picks == ["a/cheap", "b/mid", "c/dear", "a/cheap"]
 
 
+def test_retry_rotates_to_the_next_configured_backend():
+    """A provider failure can fail over from Codex to Claude on retry."""
+    import tomllib
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"].append({
+        "name": "codex",
+        "adapter": "codex",
+        "billing": "subscription",
+        "models": [{"id": "@cli-default", "context": 200_000}],
+    })
+    raw["tiers"]["code"]["prefer"] = ["codex", "sub"]
+    cfg = SleipnirConfig.from_dict(raw, source="<test>")
+    r = TierRouter(cfg, catalog(model("cheap/x", price=0.05, context=200_000)))
+    task = make_task("t", tier=Tier.CODE)
+
+    first = r.resolve(task, attempt=1, tier=Tier.CODE)
+    second = r.resolve(task, attempt=2, tier=Tier.CODE)
+
+    assert first.adapter is Adapter.CODEX
+    assert second.adapter is Adapter.CLAUDE
+
+
 def test_a_string_pattern_list_is_rejected_rather_than_split_into_letters():
     """`deny = "gpt-4"` must not become five one-character patterns.
 

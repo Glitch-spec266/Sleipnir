@@ -129,7 +129,9 @@ def build_adapters(config: SleipnirConfig) -> dict[Adapter, BaseAdapter]:
             continue
         match backend.adapter:
             case Adapter.CLAUDE:
-                adapters[Adapter.CLAUDE] = ClaudeAdapter(billing_mode=backend.billing)
+                adapters[Adapter.CLAUDE] = ClaudeAdapter(
+                    billing_mode=backend.billing, extra_args=list(backend.cli_args)
+                )
             case Adapter.CODEX:
                 adapters[Adapter.CODEX] = CodexAdapter(billing_mode=backend.billing)
             case Adapter.OPENROUTER:
