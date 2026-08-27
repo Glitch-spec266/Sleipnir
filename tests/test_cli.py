@@ -117,6 +117,15 @@ def test_plan_writes_a_validated_dag(workspace: Path, monkeypatch, capsys):
     assert "2 tasks" in out and "schema" in out
 
 
+def test_plan_clips_a_long_goal_before_persisting_it(workspace: Path, monkeypatch):
+    adapter = PlanningAdapter()
+    monkeypatch.setattr(cli, "build_adapters", lambda config: {Adapter.CLAUDE: adapter})
+
+    assert invoke(workspace, "plan", "Y" * 5_000) == 0
+
+    assert len(cli.load_plan(workspace).goal) <= 4_000
+
+
 def test_plan_refuses_to_clobber_an_existing_plan(workspace: Path, monkeypatch):
     monkeypatch.setattr(cli, "build_adapters", lambda config: {Adapter.CLAUDE: PlanningAdapter()})
     invoke(workspace, "plan", "Build it")
@@ -629,6 +638,7 @@ def test_the_planner_is_told_how_to_declare_a_dependency_artifact():
     instructions = build_planner_task("build something").inputs.instructions or ""
     assert "inputs.artifacts" in instructions
     assert "not on PATH" in instructions
+    assert "600 characters or fewer" in instructions
 
 
 def test_a_long_goal_is_clipped_instead_of_truncating_the_planner_rules():

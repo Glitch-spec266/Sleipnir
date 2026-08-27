@@ -46,6 +46,9 @@ class Backend:
     #: Measured at ~30,000 for `claude -p` — see DESIGN.md. This is why a
     #: trivial task can cost more to delegate than to skip.
     dispatch_overhead_tokens: int = 0
+    #: Adapter-specific, operator-supplied flags. Currently used by Claude
+    #: Code for settings such as ``--effort medium``.
+    cli_args: tuple[str, ...] = ()
 
 @dataclass(slots=True, frozen=True)
 class TierPolicy:
@@ -169,7 +172,7 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
             raise ConfigError(f"{source}: each [[backends]] entry must be a table")
         _only_keys(
             entry,
-            {"name", "adapter", "billing", "models", "dispatch_overhead_tokens"},
+            {"name", "adapter", "billing", "models", "dispatch_overhead_tokens", "cli_args"},
             f"{source}: backend",
         )
         name = entry.get("name")
@@ -200,12 +203,16 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
             raise ConfigError(f"{source}: backend {name!r} dispatch overhead cannot be negative")
         if any(existing.adapter is adapter for existing in backends.values()):
             raise ConfigError(f"{source}: adapter {adapter.value!r} may only have one backend")
+        cli_args = _pattern_list(entry.get("cli_args"), f"{source}: backend {name!r}", "cli_args")
+        if cli_args and adapter is not Adapter.CLAUDE:
+            raise ConfigError(f"{source}: backend {name!r} cli_args are currently supported only for claude")
         backends[name] = Backend(
             name=name,
             adapter=adapter,
             billing=billing,
             models=_parse_models(entry.get("models"), name, source),
             dispatch_overhead_tokens=overhead,
+            cli_args=cli_args,
         )
     return backends
 
