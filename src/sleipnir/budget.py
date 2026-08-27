@@ -666,30 +666,36 @@ class BudgetGovernor:
         left. An unknown limit never denies: the governor must not stop a run
         on a number it could not verify.
         """
+        active_tier = tier or task.tier
+        window_tokens, metered_usd = self.estimate_task(task, active_tier)
         snapshot = self._recent_snapshot()
         headroom = snapshot.window_headroom_tokens
-        if headroom is not None and headroom <= 0:
+        # A Codex subscription (and a metered request) does not consume the
+        # Claude five-hour window.  The estimate is the single source of truth
+        # here: applying the window refusal to every adapter turns a depleted
+        # Claude account into a global stop switch and defeats multi-provider
+        # routing.
+        if window_tokens > 0 and headroom is not None and headroom <= 0:
             return False, (
                 f"the 5-hour window is exhausted ({snapshot.window_tokens_used:,} of "
                 f"{snapshot.window_tokens_limit:,} tokens used; it resets at "
                 f"{snapshot.window_end.isoformat(timespec='minutes')})"
             )
-        if snapshot.metered_budget_usd is not None and (
+        if metered_usd > 0 and snapshot.metered_budget_usd is not None and (
             snapshot.metered_spend_usd >= snapshot.metered_budget_usd
         ):
             return False, (
                 f"metered budget of ${snapshot.metered_budget_usd:.2f} is spent "
                 f"(${snapshot.metered_spend_usd:.2f})"
             )
-        if snapshot.metered_budget_usd is not None and tier is not None:
-            estimate = self.estimate_task(task, tier)[1]
+        if metered_usd > 0 and snapshot.metered_budget_usd is not None:
             reserved = sum(self._metered_reservations.values())
-            if snapshot.metered_spend_usd + reserved + estimate > snapshot.metered_budget_usd:
+            if snapshot.metered_spend_usd + reserved + metered_usd > snapshot.metered_budget_usd:
                 return False, (
                     f"metered budget of ${snapshot.metered_budget_usd:.2f} would be exceeded "
-                    f"by the ${estimate:.4f} reserved dispatch"
+                    f"by the ${metered_usd:.4f} reserved dispatch"
                 )
-            self._metered_reservations[task.id] = estimate
+            self._metered_reservations[task.id] = metered_usd
         return True, ""
 
     def settle_dispatch(self, task: Task, cost: CostEstimate) -> None:

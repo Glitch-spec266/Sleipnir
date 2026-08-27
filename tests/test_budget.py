@@ -312,6 +312,27 @@ def test_exhausted_window_denies_dispatch(tmp_path: Path):
     assert "window is exhausted" in why
 
 
+def test_exhausted_claude_window_does_not_deny_codex_subscription(tmp_path: Path):
+    root = write_transcript(tmp_path / "projects", [
+        assistant_line(ts=NOW - timedelta(minutes=5), request_id="r1", cache_creation=500_000)
+    ])
+    cfg = config(window_tokens_limit=10_000)
+    backend = cfg.backends["sub"]
+    cfg.backends["sub"] = type(backend)(
+        name=backend.name,
+        adapter=Adapter.CODEX,
+        billing=backend.billing,
+        models=backend.models,
+        dispatch_overhead_tokens=backend.dispatch_overhead_tokens,
+    )
+    router = TierRouter(cfg, catalog(model("cheap/x", price=0.05, context=200_000)))
+    gov = BudgetGovernor(cfg, router, projects_dir=root, now=NOW, read_real_utilization=False)
+
+    allowed, why = gov.should_dispatch(make_task("a", tier=Tier.CODE), Tier.CODE)
+
+    assert allowed and why == ""
+
+
 def test_spent_metered_budget_denies_dispatch(tmp_path: Path):
     cfg = config(metered_budget_usd=1.0)
     router = TierRouter(cfg, catalog(model("cheap/x", price=0.05, context=200_000)))
