@@ -146,6 +146,22 @@ LOGO_WIDTH = max(len(line) for line in LOGO)
 
 COMPACT_LOGO = ("SLEIPNIR", "⌁⌁⌁⌁⌁⌁⌁⌁")
 
+# The terminal wordmark mirrors the repository mark: an assertive, squared
+# wordmark over four paired strokes for Sleipnir's eight legs. It stays made of
+# terminal-native glyphs, so a splash remains useful over SSH and in a plain
+# monochrome terminal rather than depending on a bitmap that cannot render.
+LOGO = (
+    "  █████╗ ██╗     ███████╗██╗██████╗ ███╗   ██╗██╗██████╗ ",
+    " ██╔════╝██║     ██╔════╝██║██╔══██╗████╗  ██║██║██╔══██╗",
+    " ╚█████╗ ██║     █████╗  ██║██████╔╝██╔██╗ ██║██║██████╔╝",
+    "  ╚═══██╗██║     ██╔══╝  ██║██╔═══╝ ██║╚██╗██║██║██╔══██╗",
+    " ██████╔╝███████╗███████╗██║██║     ██║ ╚████║██║██║  ██║",
+    " ╚═════╝ ╚══════╝╚══════╝╚═╝╚═╝     ╚═╝  ╚═══╝╚═╝╚═╝  ╚═╝",
+    "              ╲╱  ╲╱  ╲╱  ╲╱   EIGHT-LANE ORCHESTRATION",
+)
+LOGO_WIDTH = max(len(line) for line in LOGO)
+COMPACT_LOGO = ("SLEIPNIR", "╲╱ ╲╱ ╲╱ ╲╱")
+
 
 def logo_lines(width: int) -> tuple[str, ...]:
     return LOGO if width >= LOGO_WIDTH + 4 else COMPACT_LOGO

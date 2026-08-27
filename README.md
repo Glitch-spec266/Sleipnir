@@ -1,5 +1,9 @@
 # Sleipnir
 
+<p align="center">
+  <img src="assets/sleipnir-mark.svg" width="600" alt="Sleipnir — eight-lane orchestration">
+</p>
+
 A budget-aware agentic orchestrator. Takes one complex project prompt,
 decomposes it into a task DAG, and dispatches each task to the cheapest model
 tier that can do it — while keeping the expensive orchestrator model's context
@@ -10,7 +14,7 @@ never re-enters the orchestrator's context.** The plan lives on disk. The
 orchestrator is re-invoked fresh each cycle with only a compact, size-bounded
 manifest.
 
-## Status: Phases 1–7 complete
+## Status: Phases 1–14 complete; Phase 15 in progress
 
 | Phase | Scope | State |
 |---|---|---|
@@ -49,7 +53,7 @@ src/sleipnir/revisions.py    typed, audited mid-run plan changes
 src/sleipnir/orchestrator.py sparse bounded-context brain decisions
 src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
 src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate
-tests/                       277 tests, including the executable form of the
+tests/                       415 tests, including the executable form of the
                              manifest size bound
 ```
 

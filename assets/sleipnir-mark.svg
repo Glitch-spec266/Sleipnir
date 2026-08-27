@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 280" role="img" aria-labelledby="title desc">
+  <title id="title">Sleipnir</title>
+  <desc id="desc">A neon green, eight-legged horse mark beside the Sleipnir wordmark.</desc>
+  <defs>
+    <linearGradient id="field" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#071d13"/>
+      <stop offset="1" stop-color="#020907"/>
+    </linearGradient>
+    <linearGradient id="phosphor" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#d5ffb9"/>
+      <stop offset=".45" stop-color="#4cf08b"/>
+      <stop offset="1" stop-color="#00a85a"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="960" height="280" rx="30" fill="url(#field)"/>
+  <path d="M312 34H934" stroke="#1e5b3a" stroke-width="2" opacity=".65"/>
+  <path d="M312 246H934" stroke="#1e5b3a" stroke-width="2" opacity=".65"/>
+  <g fill="none" stroke="url(#phosphor)" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+    <path d="M94 62 124 39l19 31 38 4 18 44-27 43-29 6-32-21-7-45 23-20" stroke-width="10"/>
+    <path d="M143 70 174 46 171 94" stroke-width="10"/>
+    <path d="M113 100h1" stroke-width="14"/>
+    <path d="M153 102h1" stroke-width="14"/>
+    <path d="M118 139c15 10 32 11 47 1" stroke-width="8"/>
+    <path d="M91 151 56 221M106 158 84 229M122 164 115 235M139 166 147 235M155 163 177 229M169 154 204 221" stroke-width="9"/>
+    <path d="M101 177 75 211M160 177 187 211" stroke-width="5" opacity=".65"/>
+  </g>
+  <path d="M42 243h180" stroke="#4cf08b" stroke-width="3" stroke-dasharray="7 11" opacity=".8"/>
+  <g fill="#e8ffd9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <text x="310" y="142" font-size="89" font-weight="800" letter-spacing="9">SLEIPNIR</text>
+    <text x="316" y="193" font-size="20" letter-spacing="6" fill="#65db96">EIGHT-LANE ORCHESTRATION</text>
+  </g>
+</svg>

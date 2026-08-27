@@ -122,7 +122,7 @@ def test_a_symlinked_dependency_artifact_is_never_staged(tmp_path):
     assert resolved.staged == []
 
 
-def test_staged_artifact_is_capped_at_its_declared_input_budget(tmp_path):
+def test_staged_artifact_is_capped_at_its_declared_input_budget(tmp_path, monkeypatch):
     artifact_dir = tmp_path / "producer"
     artifact_dir.mkdir()
     (artifact_dir / "large.txt").write_bytes(b"0123456789")
@@ -148,9 +148,17 @@ def test_staged_artifact_is_capped_at_its_declared_input_budget(tmp_path):
     )
     workspace = AttemptWorkspace(tmp_path, task.id, 1)
     workspace.prepare_fresh()
+
+    def whole_file_read_is_forbidden(_path):
+        raise AssertionError("staging must read only the declared prefix")
+
+    # Slicing a whole-file read still produces the right output, but defeats
+    # the bounded input contract for a large dependency artifact.
+    monkeypatch.setattr(type(artifact_dir / "large.txt"), "read_bytes", whole_file_read_is_forbidden)
     workspace.stage_inputs(resolved.staged)
 
-    assert (workspace.dir / "large.txt").read_bytes() == b"0123"
+    with (workspace.dir / "large.txt").open("rb") as handle:
+        assert handle.read() == b"0123"
     assert resolved.total_bytes == 4
 
 

@@ -50,6 +50,16 @@ def test_frame_works_without_colour():
     assert "SLEIPNIR" in rendered
 
 
+def test_logo_has_a_full_wordmark_and_eight_leg_strokes():
+    full = "\n".join(theme.logo_lines(theme.LOGO_WIDTH + 4))
+    compact = "\n".join(theme.logo_lines(20))
+
+    assert len(theme.logo_lines(theme.LOGO_WIDTH + 4)) == 7
+    assert theme.COMPACT_LOGO[0] == "SLEIPNIR"
+    assert full.count("╲") == 4 and full.count("╱") == 4
+    assert compact == "SLEIPNIR\n╲╱ ╲╱ ╲╱ ╲╱"
+
+
 def test_every_escape_sequence_is_terminated():
     rendered = theme.splash_frame(20, width=80, height=24)
     # Equal counts of colour-set and reset means nothing bleeds past the frame.
