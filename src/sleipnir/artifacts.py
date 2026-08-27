@@ -146,8 +146,9 @@ class AttemptWorkspace:
     def stage_inputs(self, staged: Sequence[tuple[Path, str, int]]) -> None:
         """Copy declared dependency artifacts in before the worker starts.
 
-        The source has already been checked as a contained regular file, so
-        this copies bytes rather than following anything; the destination is
+        The source has already been checked as a contained regular file. Read
+        only its declared prefix: ``max_bytes`` is a real resource bound, not
+        merely a limit on what reaches the prompt. The destination is
         re-checked because a workspace is agent-controlled.
         """
         for source, relative, max_bytes in staged:
@@ -157,7 +158,8 @@ class AttemptWorkspace:
                     f"staged input {relative!r} escapes the attempt workspace"
                 )
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(source.read_bytes()[:max_bytes])
+            with source.open("rb") as handle:
+                destination.write_bytes(handle.read(max_bytes))
 
     def write_text(self, filename: str, text: str) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
