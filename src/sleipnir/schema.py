@@ -24,6 +24,7 @@ import json
 import re
 from datetime import datetime
 from enum import StrEnum
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import (
@@ -69,6 +70,38 @@ def estimate_tokens(text: str) -> int:
 def _canonical_json(payload: Any) -> str:
     """Stable JSON encoding for hashing: sorted keys, no incidental whitespace."""
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _escapes_workspace(value: str) -> bool:
+    """True when ``value`` is not safely relative -- an absolute path, a
+    drive-qualified path, a UNC share, or one that walks upward out of the
+    workspace it is meant to stay inside.
+
+    Every one of these strings is model- or plan-authored, so this is a
+    security boundary, not a portability nicety, and it has to reject an
+    escape shaped for *either* platform's conventions regardless of which
+    platform Sleipnir is running on -- a plan written on Linux and run on
+    Windows (or vice versa) must be validated the same way either place.
+    Checking ``value.startswith("/")`` alone -- what this validated before --
+    passes ``C:\\Windows\\System32\\...``, ``\\\\server\\share\\...``, and
+    ``..\\..\\secret`` straight through, because none of them start with a
+    forward slash; ``PurePath.is_absolute()`` on each of a POSIX and a
+    Windows path object, plus a walk-upward check across *both* separators,
+    is what actually closes that.
+    """
+    if not value:
+        return True
+    if PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute():
+        return True
+    if re.match(r"^[A-Za-z]:", value):
+        # A drive-relative Windows path ("C:foo"): not is_absolute() by
+        # PureWindowsPath's own definition (it is relative to that drive's
+        # current directory, not a fixed location), but naming a drive at
+        # all is not something a workspace-relative path should ever need
+        # to do.
+        return True
+    parts = re.split(r"[/\\]", value)
+    return ".." in parts
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +270,7 @@ class ArtifactRef(BaseModel):
     @field_validator("path")
     @classmethod
     def _path_is_contained(cls, value: str) -> str:
-        if value.startswith("/") or ".." in value.split("/"):
+        if _escapes_workspace(value):
             raise ValueError("artifact path must be relative and must not escape upward")
         if value.strip() in {"*", "**", "**/*"}:
             raise ValueError(
@@ -278,7 +311,7 @@ class InputContract(BaseModel):
     @classmethod
     def _files_are_contained(cls, values: list[str]) -> list[str]:
         for value in values:
-            if not value or value.startswith("/") or ".." in value.split("/"):
+            if _escapes_workspace(value):
                 raise ValueError(
                     "input file paths/globs must be non-empty, relative, and must not escape upward"
                 )
@@ -324,7 +357,7 @@ class ExpectedOutput(BaseModel):
     @field_validator("path")
     @classmethod
     def _contained(cls, value: str) -> str:
-        if value.startswith("/") or ".." in value.split("/"):
+        if _escapes_workspace(value):
             raise ValueError("output path must be relative and must not escape upward")
         if value in _RESERVED_WORKSPACE_PATHS or value.startswith(".checks/"):
             raise ValueError("output path collides with a harness-owned workspace file")

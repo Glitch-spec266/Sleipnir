@@ -164,7 +164,12 @@ def test_claude_argv_uses_verified_flags(tmp_path: Path):
     adapter, calls = claude_adapter()
     run(adapter.dispatch(request_for(tmp_path, model="claude-haiku-4-5-20251001")))
     argv = calls[0]["argv"]
-    assert argv[0] == "claude"
+    # ClaudeAdapter resolves "claude" through PATH at construction (so a
+    # .cmd/.bat shim spawns correctly on Windows), so argv[0] is either the
+    # bare name (nothing on PATH, e.g. a bare CI container) or an absolute
+    # path to it (this dev machine, and any real install) -- either way its
+    # stem must still name the claude CLI.
+    assert Path(argv[0]).stem.lower() == "claude"
     assert "-p" in argv
     assert argv[argv.index("--output-format") + 1] == "json"
     assert argv[argv.index("--model") + 1] == "claude-haiku-4-5-20251001"

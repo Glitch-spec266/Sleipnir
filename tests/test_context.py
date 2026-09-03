@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from conftest import requires_symlink
 from test_schema import make_task
 
 from sleipnir.artifacts import AttemptWorkspace
@@ -9,6 +10,7 @@ from sleipnir.context import resolve_inputs
 from sleipnir.schema import ArtifactRef, InputContract
 
 
+@requires_symlink
 def test_repository_file_symlink_cannot_escape_the_run_root(tmp_path):
     run_root = tmp_path / "run"
     run_root.mkdir()
@@ -28,6 +30,7 @@ def test_repository_file_symlink_cannot_escape_the_run_root(tmp_path):
     assert "file:linked.txt" in resolved.missing
 
 
+@requires_symlink
 def test_dependency_artifact_symlink_cannot_escape_its_attempt(tmp_path):
     artifact_dir = tmp_path / "producer"
     artifact_dir.mkdir()
@@ -67,7 +70,12 @@ def test_a_declared_dependency_artifact_is_staged_and_referenced_not_inlined(tmp
     """
     artifact_dir = tmp_path / "producer"
     artifact_dir.mkdir()
-    (artifact_dir / "roman.py").write_text("VALUE = 4\n")
+    # write_bytes, not write_text: staging reads the file as raw bytes (see
+    # AttemptWorkspace.stage_inputs), and write_text's default newline
+    # translation turns "\n" into "\r\n" on Windows -- a real byte-count
+    # mismatch (11 vs. 10) that has nothing to do with the behaviour this
+    # test checks.
+    (artifact_dir / "roman.py").write_bytes(b"VALUE = 4\n")
     task = make_task(
         "consumer",
         deps=["producer"],
@@ -94,6 +102,7 @@ def test_a_declared_dependency_artifact_is_staged_and_referenced_not_inlined(tmp
     assert resolved.total_bytes == len("VALUE = 4\n".encode())
 
 
+@requires_symlink
 def test_a_symlinked_dependency_artifact_is_never_staged(tmp_path):
     artifact_dir = tmp_path / "producer"
     artifact_dir.mkdir()

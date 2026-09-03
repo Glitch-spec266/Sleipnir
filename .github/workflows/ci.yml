@@ -1,0 +1,43 @@
+# The port's guard rail. Sleipnir runs on Linux and Windows from one source
+# tree, and nearly every difference between them is invisible on the machine
+# you happen to be developing on: `fcntl` is absent on Windows, `msvcrt` is
+# absent on Linux, and a platform branch that regressed would look fine
+# locally and fail for everyone on the other OS. Both jobs run the same
+# suite; a change that fixes one platform by breaking the other is not done.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      # Never stop the Windows job because Linux failed, or the reverse: the
+      # whole point of this matrix is seeing both answers at once.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e . pytest
+
+      # `windows-latest` runners have Developer Mode on, so the symlink
+      # containment tests that skip on a stock local Windows install do run
+      # here -- which is the reason those tests skip rather than being deleted.
+      - name: Test
+        run: python -m pytest -q
+
+      # A smoke test that costs a second and catches the class of failure that
+      # started this port: an import-time `fcntl` in a module the CLI loads at
+      # module scope, which no unit test necessarily touches.
+      - name: CLI starts
+        run: sleipnir --help
