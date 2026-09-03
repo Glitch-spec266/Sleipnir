@@ -90,3 +90,24 @@ def no_credential_reads(monkeypatch, request):
     if request.node.get_closest_marker("allow_utilization_reads"):
         return
     monkeypatch.setattr(budget, "read_oauth_token", lambda *a, **k: None)
+
+
+requires_junction = pytest.mark.skipif(
+    sys.platform != "win32", reason="NTFS junctions are a Windows-only shape"
+)
+
+
+def make_junction(link: Path, target: Path) -> None:
+    """Create an NTFS directory junction at ``link`` pointing at ``target``.
+
+    The counterpart to ``requires_symlink``, and the more important one: a
+    junction needs neither Developer Mode nor elevation, so it is the reparse
+    point a subagent on a stock Windows install can actually create. The
+    symlink tests skip on such a machine; these do not.
+
+    ``_winapi.CreateJunction`` is private but is what the stdlib's own ``venv``
+    uses; the alternative is shelling out to ``mklink /J``.
+    """
+    import _winapi
+
+    _winapi.CreateJunction(str(target), str(link))
