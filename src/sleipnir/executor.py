@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from sleipnir import platform
 from sleipnir.adapters.base import (
     BaseAdapter,
     DispatchOutcome,
@@ -64,15 +65,7 @@ class ConcurrentExecutionError(RuntimeError):
     """An unfinished attempt still belongs to a live executor process."""
 
 
-def _pid_is_alive(pid: int) -> bool:
-    """Probe process existence without sending a signal that changes state."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+_pid_is_alive = platform.pid_is_alive
 
 
 class Router(Protocol):

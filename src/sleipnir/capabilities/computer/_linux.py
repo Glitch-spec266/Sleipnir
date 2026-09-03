@@ -1,14 +1,16 @@
-"""Keyboard, mouse, screen and shell control of the host machine.
+"""ydotool backend: kernel-level input injection via ``/dev/uinput``.
 
-Wayland is the constraint that shapes this module.  Under X11 a client could
-synthesise input for any window; Wayland deliberately removed that, so the only
-compositor-independent way to move the real pointer is to inject at the kernel
-level through ``/dev/uinput``.  That is what ``ydotool`` does, and it is why
-this needs a udev rule rather than a plain package install.
+Wayland is the constraint that shapes this module. Under X11 a client could
+synthesise input for any window; Wayland deliberately removed that, so the
+only compositor-independent way to move the real pointer is to inject at the
+kernel level through ``/dev/uinput``. That is what ``ydotool`` does, and it
+is why ``sleipnir setup`` needs a udev rule rather than a plain package
+install.
 
 The consequence worth knowing: injected events are indistinguishable from a
 physical keyboard, which is exactly the "robot at the desk" behaviour asked
-for, and exactly why every call here is audited.
+for. Auditing happens one layer up, in ``computer/__init__.py`` -- this
+module only performs the raw injection, never records that it did.
 """
 
 from __future__ import annotations
@@ -17,10 +19,9 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
-from sleipnir.capabilities import audit
+from sleipnir.capabilities.computer._backend import CapabilityError, Probe
 
 YDOTOOL_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / ".ydotool_socket"
 
@@ -45,30 +46,7 @@ LEFT_CLICK = "0xC0"
 RIGHT_CLICK = "0xC1"
 MIDDLE_CLICK = "0xC2"
 
-
-class CapabilityError(RuntimeError):
-    """A host capability was asked for and is genuinely unavailable.
-
-    Raised rather than silently degraded: an agent told "click at 400,300" that
-    quietly does nothing is worse than one that stops and says the pointer is
-    not wired up.
-    """
-
-
-@dataclass(frozen=True)
-class Probe:
-    """What this machine can actually do, for ``sleipnir doctor``."""
-
-    input_injection: bool
-    daemon_running: bool
-    screenshot_tool: str | None
-    uinput_writable: bool
-    session_type: str
-    notes: tuple[str, ...] = ()
-
-    @property
-    def ready(self) -> bool:
-        return self.input_injection and self.uinput_writable and bool(self.screenshot_tool)
+BUTTON_CODES = {"left": LEFT_CLICK, "right": RIGHT_CLICK, "middle": MIDDLE_CLICK}
 
 
 def _screenshot_tool() -> str | None:
@@ -130,14 +108,19 @@ def ensure_daemon(timeout_s: float = 5.0) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if YDOTOOL_SOCKET.exists():
-            audit.record("desktop.daemon_started", {"socket": str(YDOTOOL_SOCKET)})
             return
         time.sleep(0.1)
     raise CapabilityError(f"ydotoold did not create {YDOTOOL_SOCKET} within {timeout_s}s")
 
 
 def _ydotool(*args: str, timeout_s: float = 15.0) -> None:
-    ensure_daemon()
+    """Run one ydotool invocation.
+
+    Does not call ``ensure_daemon()`` itself: the public API in
+    ``computer/__init__.py`` calls it exactly once per operation, ahead of
+    dispatching here, so it stays the one seam a caller (or a test) can
+    intercept.
+    """
     env = dict(os.environ, YDOTOOL_SOCKET=str(YDOTOOL_SOCKET))
     result = subprocess.run(  # noqa: S603 - fixed argv, no shell
         ["ydotool", *args],
@@ -151,62 +134,46 @@ def _ydotool(*args: str, timeout_s: float = 15.0) -> None:
         raise CapabilityError(f"ydotool {args[0]} failed: {result.stderr.strip()[:200]}")
 
 
-def type_text(text: str, *, key_delay_ms: int = 12) -> None:
+def type_text(text: str, *, key_delay_ms: int) -> None:
     """Type into whatever window currently has focus.
 
     ``key_delay_ms`` is not cosmetic: web sign-in forms commonly debounce or
     validate per keystroke, and a zero-delay burst gets dropped or mangled by
-    them.  Twelve milliseconds is roughly a fast human.
+    them.
     """
     _ydotool("type", "--key-delay", str(key_delay_ms), "--", text)
-    audit.record("desktop.type", {"text": text, "chars": len(text)})
 
 
-def key(*combo: str) -> None:
-    """Press a chord, e.g. ``key("ctrl", "shift", "t")``.
+def key_chord(codes: list[int]) -> None:
+    """Press already-resolved key codes in order, release in reverse.
 
-    Modifiers are held for the whole chord and released in reverse order, which
-    is what applications expect; releasing in press order leaves a modifier
-    stuck down often enough to be a real bug.
+    Ordering is the caller's contract (``computer/__init__.py``), not this
+    backend's: this function only knows how to speak it to ydotool.
     """
-    codes = []
-    for name in combo:
-        code = KEYCODES.get(name.lower())
-        if code is None:
-            raise CapabilityError(f"unknown key name: {name!r}")
-        codes.append(code)
     sequence = [f"{code}:1" for code in codes] + [f"{code}:0" for code in reversed(codes)]
     _ydotool("key", *sequence)
-    audit.record("desktop.key", {"combo": list(combo)})
 
 
 def move_mouse(x: int, y: int) -> None:
     _ydotool("mousemove", "--absolute", "-x", str(x), "-y", str(y))
-    audit.record("desktop.move_mouse", {"x": x, "y": y})
 
 
-def click(button: str = "left") -> None:
-    code = {"left": LEFT_CLICK, "right": RIGHT_CLICK, "middle": MIDDLE_CLICK}.get(button)
-    if code is None:
-        raise CapabilityError(f"unknown mouse button: {button!r}")
-    _ydotool("click", code)
-    audit.record("desktop.click", {"button": button})
+def click(button: str) -> None:
+    _ydotool("click", BUTTON_CODES[button])
 
 
 def scroll(amount: int) -> None:
     """Positive scrolls up, negative down."""
     _ydotool("mousemove", "--wheel", "-x", "0", "-y", str(amount))
-    audit.record("desktop.scroll", {"amount": amount})
 
 
-def screenshot(path: str | Path) -> Path:
-    """Capture the full screen to ``path``.
+def screenshot(destination: Path) -> str:
+    """Capture to ``destination``, returning the tool that did it.
 
-    The agent reads the resulting image itself; this function never returns
-    pixel data, so a screenshot cannot accidentally become prompt text.
+    The name is returned rather than re-derived by the caller because
+    ``_screenshot_tool()`` walks ``PATH`` and the audit record has to name
+    the tool that actually ran, not the one a second probe would pick.
     """
-    destination = Path(path).expanduser().resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True)
     tool = _screenshot_tool()
     argv = {
         "spectacle": ["spectacle", "-b", "-n", "-f", "-o", str(destination)],
@@ -219,54 +186,21 @@ def screenshot(path: str | Path) -> Path:
     result = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)  # noqa: S603
     if result.returncode != 0 or not destination.exists():
         raise CapabilityError(f"{tool} failed: {result.stderr.strip()[:200]}")
-    audit.record("desktop.screenshot", {"path": str(destination), "tool": tool})
-    return destination
-
-
-def run(command: str, *, cwd: str | Path | None = None, timeout_s: float = 300.0) -> subprocess.CompletedProcess[str]:
-    """Run a shell command as the operator, with the operator's environment.
-
-    This is the deliberate opposite of the executor's credential-stripped
-    worker spawn.  It exists so the console can install packages, provision
-    hosting and drive CLIs the way a person at this keyboard would — and it is
-    audited for exactly that reason.
-
-    **This function is not a trust boundary, and narrowing it would not create
-    one.**  Static analysis flags ``shell=True`` here; the flag is correct about
-    the pattern and wrong about the consequence.  The only caller is a session
-    that already holds full host control and its own shell, so anything that
-    could be "smuggled" through this argument can simply be executed one line
-    earlier.  Replacing this with an argv list would delete pipes, redirection
-    and globbing — the reason an operator shell exists — while removing no
-    capability from an attacker who is, by construction, already inside.
-
-    The boundary that does exist is the worker lane: dispatched tasks keep the
-    stripped environment and the confined workspace, and never reach this
-    module at all.  If you are tempted to harden this function, check that
-    separation instead; it is the one that carries weight.
-    """
-    audit.record("shell.run", {"command": command, "cwd": str(cwd or Path.cwd())})
-    return subprocess.run(  # noqa: S602 - operator-authorised shell, by design
-        command,
-        shell=True,
-        cwd=str(cwd) if cwd else None,
-        capture_output=True,
-        text=True,
-        timeout=timeout_s,
-        check=False,
-    )
+    return tool
 
 
 __all__ = [
-    "CapabilityError",
+    "BUTTON_CODES",
     "KEYCODES",
-    "Probe",
+    "LEFT_CLICK",
+    "MIDDLE_CLICK",
+    "RIGHT_CLICK",
+    "YDOTOOL_SOCKET",
     "click",
     "ensure_daemon",
-    "key",
+    "key_chord",
     "move_mouse",
     "probe",
-    "run",
     "screenshot",
     "scroll",
     "type_text",

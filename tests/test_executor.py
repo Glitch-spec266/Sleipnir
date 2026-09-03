@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from conftest import requires_symlink
 from test_schema import finished, make_task
 
+from sleipnir import platform
 from sleipnir.adapters.base import (
     BaseAdapter,
     DispatchOutcome,
@@ -347,6 +348,7 @@ def test_summary_comes_from_the_subagents_file_and_is_clipped(tmp_path: Path):
     assert len(record.summary) <= AttemptFinished.SUMMARY_MAX_CHARS
 
 
+@requires_symlink
 def test_summary_symlink_cannot_read_a_host_file(tmp_path: Path):
     secret = tmp_path / "host-secret.txt"
     secret.write_text("DO-NOT-EXFILTRATE")
@@ -367,6 +369,7 @@ def test_summary_symlink_cannot_read_a_host_file(tmp_path: Path):
     assert "DO-NOT-EXFILTRATE" not in record.model_dump_json()
 
 
+@requires_symlink
 def test_declared_output_symlink_cannot_read_a_host_file(tmp_path: Path):
     secret = tmp_path / "host-secret.txt"
     secret.write_text("DO-NOT-EXFILTRATE")
@@ -588,7 +591,7 @@ def test_run_refuses_when_another_executor_owns_the_run_directory(tmp_path: Path
     with lock_path.open("r+") as owner:
         owner.write("pid=4242\n")
         owner.flush()
-        fcntl.flock(owner.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        platform.try_lock_exclusive(owner)
         with pytest.raises(ConcurrentExecutionError, match=r"already active.*pid=4242"):
             run(executor.run())
 
@@ -613,6 +616,7 @@ def test_executor_refuses_a_plan_changed_before_lock_acquisition(tmp_path: Path)
         run(executor.run())
 
 
+@requires_symlink
 def test_result_log_refuses_a_precreated_symlink(tmp_path: Path):
     outside = tmp_path / "outside.txt"
     outside.write_text("must stay unchanged")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from conftest import requires_symlink
 from test_executor import plan_of
 from test_schema import finished, make_task
 
@@ -95,6 +96,7 @@ def test_revision_audit_drives_stale_projection_until_a_post_revision_success(tm
     )
 
 
+@requires_symlink
 def test_revision_persistence_refuses_a_symlinked_audit_log(tmp_path):
     plan = plan_of(make_task("a"))
     replacement = plan.by_id["a"].model_copy(update={"tier": Tier.MECHANICAL})

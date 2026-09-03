@@ -89,8 +89,15 @@ def workspace(tmp_path: Path) -> Path:
     }))
     # Top-level keys MUST precede the [tables]; a bare key after a table
     # header belongs to that table, not to the document root.
+    #
+    # TOML basic strings treat "\" as an escape lead (\n, \uXXXX, ...), so a
+    # raw Windows path interpolated here (e.g. "C:\Users\...") fails to
+    # parse -- reproduced: "Invalid hex value" from a backslash-U sequence
+    # nobody intended as an escape. Forward slashes parse as a normal path
+    # on both platforms, so as_posix() sidesteps the escaping question
+    # entirely rather than hand-escaping backslashes.
     (tmp_path / "sleipnir.toml").write_text(
-        f'catalog_cache_path = "{cache}"\ncatalog_ttl_s = 99999\n' + CONFIG_TOML
+        f'catalog_cache_path = "{cache.as_posix()}"\ncatalog_ttl_s = 99999\n' + CONFIG_TOML
     )
     return tmp_path
 

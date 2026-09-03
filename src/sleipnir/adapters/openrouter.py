@@ -17,7 +17,7 @@ import json
 import os
 import re
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import httpx
@@ -434,7 +434,20 @@ def materialize_file_blocks(content: str, target_dir: Path) -> list[str]:
     resolved_root = target_dir.resolve()
     for match in _FILE_BLOCK.finditer(content):
         raw_path = match.group("path").strip()
-        if not raw_path or raw_path.startswith("/") or ".." in Path(raw_path).parts:
+        # ``raw_path.startswith("/")`` alone misses a Windows-absolute form
+        # ("C:\\..."); PureWindowsPath.is_absolute() catches that too. Belt
+        # and braces: the is_relative_to() check below already catches this
+        # regardless of platform (joining an absolute path onto target_dir
+        # discards target_dir entirely, per pathlib's own semantics, so the
+        # result resolves outside resolved_root and fails that check) --
+        # verified directly. This first check exists to skip the write
+        # attempt entirely rather than let the second one perform it.
+        if (
+            not raw_path
+            or PurePosixPath(raw_path).is_absolute()
+            or PureWindowsPath(raw_path).is_absolute()
+            or ".." in Path(raw_path).parts
+        ):
             continue
         destination = (target_dir / raw_path).resolve()
         if not destination.is_relative_to(resolved_root):

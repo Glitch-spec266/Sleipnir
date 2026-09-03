@@ -28,6 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from sleipnir import platform
 from sleipnir.adapters.base import (
     BaseAdapter,
     DispatchOutcome,
@@ -62,7 +63,11 @@ class ClaudeAdapter(BaseAdapter):
         extra_args: list[str] | None = None,
         spawn: Spawner | None = None,
     ) -> None:
-        self.executable = executable
+        # Resolved through PATH explicitly (not just handed to exec* as-is):
+        # CreateProcess appends ".exe" for a bare name on Windows but will
+        # not resolve a ".cmd"/".bat" shim -- irrelevant for the officially
+        # distributed native claude.exe, but not every install is that.
+        self.executable = platform.resolve_executable(executable)
         self.permission_mode = permission_mode
         self.billing_mode = billing_mode
         self.extra_args = list(extra_args or [])

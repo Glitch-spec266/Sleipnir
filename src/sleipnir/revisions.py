@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sleipnir import platform
 from sleipnir.projection import fold_results
 from sleipnir.schema import (
     AttemptFinished,
@@ -129,7 +130,7 @@ def apply_revision(
 def persist_revision(plan_path: Path, revision_path: Path, plan: Plan, audit: PlanRevision) -> None:
     """Append the audit first, then atomically replace the derived plan view."""
     revision_path.parent.mkdir(parents=True, exist_ok=True)
-    if revision_path.is_symlink():
+    if platform.is_reparse_point(revision_path):
         raise RevisionError(f"refusing to append through symlinked revision log: {revision_path}")
     with revision_path.open("a", encoding="utf-8") as handle:
         handle.write(audit.model_dump_json() + "\n")
@@ -143,14 +144,14 @@ def persist_revision(plan_path: Path, revision_path: Path, plan: Plan, audit: Pl
         handle.write(plan.model_dump_json(indent=2))
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(temporary, plan_path)
+    platform.replace_atomic(temporary, plan_path)
 
 
 def read_staleness(revision_path: Path) -> dict[str, int]:
     """Latest revision that made each completed descendant stale."""
     if not revision_path.exists():
         return {}
-    if revision_path.is_symlink():
+    if platform.is_reparse_point(revision_path):
         raise RevisionError(f"refusing to read through symlinked revision log: {revision_path}")
     lines = revision_path.read_text(encoding="utf-8", errors="replace").splitlines()
     staled: dict[str, int] = {}

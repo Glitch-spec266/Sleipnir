@@ -18,10 +18,11 @@ sequences it generates itself.
 from __future__ import annotations
 
 import math
-import os
 import random
 import re
 import sys
+
+from sleipnir import platform
 
 RESET = "\x1b[0m"
 HIDE_CURSOR = "\x1b[?25l"
@@ -57,14 +58,15 @@ def supports_colour(stream: object | None = None) -> bool:
 
     ``NO_COLOR`` is honoured (https://no-color.org) and a redirected stdout is
     treated as a file, so ``sleipnir tui > log.txt`` stays greppable.
+
+    Delegates to :mod:`sleipnir.platform` because the two backends decide
+    this differently: POSIX checks ``TERM``, which no Windows console ever
+    sets, so applying that rule unconditionally would disable colour on
+    Windows outright. The Windows backend instead tries to turn on VT escape
+    processing on the target handle and reports whether that succeeded.
     """
-    if os.environ.get("NO_COLOR"):
-        return False
-    if os.environ.get("TERM") in (None, "", "dumb"):
-        return False
     stream = sys.stdout if stream is None else stream
-    isatty = getattr(stream, "isatty", None)
-    return bool(isatty and isatty())
+    return platform.colour_is_supported(stream)
 
 
 def fg(level: int) -> str:
