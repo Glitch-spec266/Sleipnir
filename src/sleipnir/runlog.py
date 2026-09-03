@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import json
 import os
-import fcntl
 from pathlib import Path
 from types import TracebackType
 
 from pydantic import TypeAdapter, ValidationError
 
+from sleipnir import platform
 from sleipnir.schema import AttemptFinished, AttemptStarted, ResultRecord
 
 _ADAPTER: TypeAdapter[AttemptStarted | AttemptFinished] = TypeAdapter(ResultRecord)
@@ -47,8 +47,8 @@ class RunLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         handle = self.path.open("a+", encoding="utf-8")
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+            platform.try_lock_exclusive(handle)
+        except platform.LockUnavailable as exc:
             handle.seek(0)
             owner = handle.read().strip() or "unknown owner"
             handle.close()
@@ -72,7 +72,7 @@ class RunLock:
         handle = self._handle
         self._handle = None
         if handle is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[union-attr]
+            platform.unlock(handle)  # type: ignore[union-attr]
             handle.close()  # type: ignore[union-attr]
 
 
@@ -82,15 +82,19 @@ def run_is_active(run_root: Path) -> bool:
     if not path.exists():
         return False
     try:
-        with path.open("r", encoding="utf-8") as handle:
+        # "r+" rather than "r": Windows' msvcrt.locking requires the handle
+        # to be opened for writing to take any lock on it at all, even a
+        # probe that is released immediately below. fcntl.flock has no such
+        # requirement, so this was never an issue on the POSIX path.
+        with path.open("r+", encoding="utf-8") as handle:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
+                platform.try_lock_exclusive(handle)
+            except platform.LockUnavailable:
                 return True
             finally:
                 # Unlock is harmless after a failed non-blocking acquisition.
                 try:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    platform.unlock(handle)
                 except OSError:
                     pass
     except OSError:
@@ -117,7 +121,7 @@ class ResultLog:
         milliseconds against a multi-second model call.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.is_symlink():
+        if platform.is_reparse_point(self.path):
             raise TornRecordError(f"refusing to append through symlinked result log: {self.path}")
         line = record.model_dump_json() + "\n"
         with self.path.open("a", encoding="utf-8") as handle:
@@ -135,7 +139,7 @@ class ResultLog:
         """
         if not self.path.exists():
             return []
-        if self.path.is_symlink():
+        if platform.is_reparse_point(self.path):
             raise TornRecordError(f"refusing to read through symlinked result log: {self.path}")
 
         # The executor folds the whole log on every readiness check, so an

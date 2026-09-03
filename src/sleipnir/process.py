@@ -11,14 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
-import signal
-import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+
+from sleipnir import platform
 
 #: Bytes of stderr retained in memory for the result record. The full stream
 #: always goes to disk; this is the part that reaches a human without opening
@@ -110,56 +109,62 @@ class ProcessRunner:
         started = time.monotonic()
         stdout_path.parent.mkdir(parents=True, exist_ok=True)
 
-        launch_argv = list(argv)
-        if self._guard_parent_death and sys.platform.startswith("linux"):
-            launch_argv = [
-                sys.executable,
-                str(Path(__file__).with_name("process_guard.py")),
-                "--",
-                *launch_argv,
-            ]
-
-        proc = await self._spawn(
-            *launch_argv,
-            cwd=str(cwd) if cwd else None,
-            env=dict(env) if env is not None else None,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            # Own process group, so a timeout kills the CLI's children too.
-            # Provider CLIs spawn node/python subprocesses that outlive a bare
-            # SIGTERM to the parent and go on burning tokens.
-            start_new_session=True,
-        )
-
-        result = ProcessResult(exit_code=None)
-        pumps = [
-            asyncio.create_task(_pump(proc.stdout, stdout_path)),
-            asyncio.create_task(_pump(proc.stderr, stderr_path, tail_bytes=STDERR_TAIL_BYTES)),
-        ]
+        # Test/injected spawners get the adapter argv unwrapped and no tree-
+        # kill guarantee beyond the group kwargs below; real children get
+        # whatever this platform can offer against "Sleipnir itself is
+        # hard-killed" (PR_SET_PDEATHSIG on Linux, a job object on Windows;
+        # see platform.create_guarded_launch and process_guard.py).
+        if self._guard_parent_death and platform.WRAPS_CHILDREN:
+            guard = platform.create_guarded_launch(list(argv))
+        else:
+            guard = platform.GuardedLaunch(list(argv), close=lambda: None)
 
         try:
-            await self._feed_stdin(proc, stdin_data)
+            proc = await self._spawn(
+                *guard.argv,
+                cwd=str(cwd) if cwd else None,
+                env=dict(env) if env is not None else None,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                # Own process group, so a timeout kills the CLI's children
+                # too. Provider CLIs spawn node/python subprocesses that
+                # outlive a bare stop-the-parent and go on burning tokens.
+                **platform.CHILD_SPAWN_KWARGS,
+            )
+
+            result = ProcessResult(exit_code=None)
+            pumps = [
+                asyncio.create_task(_pump(proc.stdout, stdout_path)),
+                asyncio.create_task(
+                    _pump(proc.stderr, stderr_path, tail_bytes=STDERR_TAIL_BYTES)
+                ),
+            ]
+
             try:
-                async with asyncio.timeout(timeout_s):
-                    result.exit_code = await proc.wait()
-                    await asyncio.gather(*pumps)
-            except TimeoutError:
-                result.timed_out = True
+                await self._feed_stdin(proc, stdin_data)
+                try:
+                    async with asyncio.timeout(timeout_s):
+                        result.exit_code = await proc.wait()
+                        await asyncio.gather(*pumps)
+                except TimeoutError:
+                    result.timed_out = True
+                    await self._terminate(proc, grace_s, result)
+                    await self._drain(pumps)
+            except asyncio.CancelledError:
+                result.cancelled = True
                 await self._terminate(proc, grace_s, result)
                 await self._drain(pumps)
-        except asyncio.CancelledError:
-            result.cancelled = True
-            await self._terminate(proc, grace_s, result)
-            await self._drain(pumps)
-            self._finalize(result, pumps, started)
-            raise
-        finally:
-            for pump in pumps:
-                pump.cancel()
+                self._finalize(result, pumps, started)
+                raise
+            finally:
+                for pump in pumps:
+                    pump.cancel()
 
-        self._finalize(result, pumps, started)
-        return result
+            self._finalize(result, pumps, started)
+            return result
+        finally:
+            guard.close()
 
     @staticmethod
     async def _feed_stdin(proc: SpawnedProcess, data: str | None) -> None:
@@ -178,28 +183,18 @@ class ProcessRunner:
     async def _terminate(
         self, proc: SpawnedProcess, grace_s: float, result: ProcessResult
     ) -> None:
-        """SIGTERM the group, allow a grace period, then SIGKILL.
+        """Ask the group to stop, allow a grace period, then force it.
 
         Shielded because this runs inside cancellation handling, where an
         unshielded await re-raises immediately and would leave the child alive.
         """
         if proc.returncode is not None:
             return
-        self._signal_group(proc, signal.SIGTERM, result)
+        result.signalled.append(platform.request_group_stop(proc))
         with contextlib.suppress(TimeoutError, asyncio.CancelledError, ProcessLookupError):
             await asyncio.shield(asyncio.wait_for(proc.wait(), grace_s))
             return
-        self._signal_group(proc, signal.SIGKILL, result)
-
-    @staticmethod
-    def _signal_group(proc: SpawnedProcess, sig: signal.Signals, result: ProcessResult) -> None:
-        result.signalled.append(sig.name)
-        try:
-            os.killpg(os.getpgid(proc.pid), sig)
-        except (ProcessLookupError, PermissionError, OSError):
-            # Already reaped, or the fake process in tests has no real pgid.
-            with contextlib.suppress(Exception):
-                proc.kill()  # type: ignore[attr-defined]
+        result.signalled.append(platform.force_kill_tree(proc))
 
     @staticmethod
     async def _drain(pumps: list[asyncio.Task[Any]]) -> None:

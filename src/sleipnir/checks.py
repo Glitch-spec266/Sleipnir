@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from sleipnir import platform
 from sleipnir.artifacts import AttemptWorkspace
 from sleipnir.process import ProcessRunner
 from sleipnir.schema import (
@@ -64,7 +65,7 @@ def _static_program(command: str) -> str | None:
     if not parts:
         return None
     program = parts[0]
-    if "=" in program or "/" in program:
+    if "=" in program or "/" in program or "\\" in program:
         return None  # an env assignment, or a path the operator spelled out
     return None if program in _SHELL_BUILTINS else program
 
@@ -176,7 +177,7 @@ async def _check_command(
     logs.mkdir(parents=True, exist_ok=True)
     stem = f"command-{abs(hash(check.command)) % 10_000:04d}"
     result = await runner.run(
-        ["/bin/sh", "-c", check.command],
+        platform.shell_argv(check.command),
         stdout_path=logs / f"{stem}.out",
         stderr_path=logs / f"{stem}.err",
         cwd=cwd,

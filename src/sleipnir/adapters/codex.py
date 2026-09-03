@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from sleipnir import platform
 from sleipnir.adapters.base import (
     BaseAdapter,
     DispatchOutcome,
@@ -73,6 +74,17 @@ class CodexInvocation:
         ]
     )
     prompt_via: Literal["stdin", "argv"] = "stdin"
+
+    def __post_init__(self) -> None:
+        # CreateProcess resolves a bare name's ".exe" for us but not a
+        # ".cmd"/".bat" shim -- which is exactly what an npm-installed CLI
+        # like codex is. Resolved once here, at construction, rather than
+        # per dispatch: shutil.which() is a PATH walk, and every dispatch
+        # already re-reads self.invocation.executable through argv().
+        # Idempotent and inert everywhere else: a name already on PATH
+        # resolves to itself in substance, and a name not found (e.g. a
+        # test's "fake-codex") is returned unchanged.
+        self.executable = platform.resolve_executable(self.executable)
 
     def argv(self, model: str, prompt: str) -> list[str]:
         argv = [self.executable, *self.subcommand]
