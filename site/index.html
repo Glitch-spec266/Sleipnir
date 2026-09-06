@@ -92,7 +92,7 @@
     <dl class="stats reveal">
       <div><dt>448</dt><dd>tests, including the manifest size bound</dd></div>
       <div><dt>2</dt><dd>runtime dependencies</dd></div>
-      <div><dt>3</dt><dd>model backends</dd></div>
+      <div><dt>4</dt><dd>model backends</dd></div>
       <div><dt>~2.7k</dt><dd>manifest tokens at any plan size</dd></div>
     </dl>
   </section>
@@ -217,8 +217,8 @@
     <p class="group reveal"><span>02</span> Dispatch</p>
     <div class="grid">
       <article class="card reveal">
-        <h3>Three backends, zero re-implemented auth</h3>
-        <p><code>claude -p</code>, <code>codex exec</code> and plain OpenRouter HTTP. The adapters shell out to the official CLIs and inherit their credentials. No adapter runs an OAuth flow.</p>
+        <h3>Four backends, zero re-implemented auth</h3>
+        <p>Claude, Codex, OpenRouter and NVIDIA NIM. <code>claude -p</code> and <code>codex exec</code> shell out to the official CLIs and inherit their credentials; OpenRouter and NIM are plain HTTP against an OpenAI-compatible endpoint. No adapter runs an OAuth flow.</p>
       </article>
       <article class="card reveal">
         <h3>Parallel work in isolated workspaces</h3>
@@ -311,7 +311,8 @@ sleipnir tui --orchestrate</code></pre>
         <h3>Providers</h3>
         <p>
           The <code>claude</code> and <code>codex</code> adapters use whatever those official CLIs are
-          already signed into. OpenRouter reads <code>OPENROUTER_API_KEY</code>. Browser control is
+          already signed into. OpenRouter reads <code>OPENROUTER_API_KEY</code>, and NVIDIA NIM
+          takes its own key. Browser control is
           opt-in: <code>pip install -e ".[host]"</code>.
         </p>
       </article>
