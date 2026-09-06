@@ -934,6 +934,16 @@ async def cmd_doctor(args: argparse.Namespace) -> int:
             ("browser control", "yes" if browser.available() else "NO"),
             ("shell for plan checks", platform.shell_kind()),
         ]
+    elif platform.IS_MACOS:
+        rows = [
+            ("session", probe.session_type),
+            ("input injection (Quartz)", "yes" if probe.input_injection else "NO"),
+            ("Accessibility granted", "yes" if probe.input_injection else "NO"),
+            ("window server present", "yes" if probe.uinput_writable else "NO"),
+            ("input daemon running", "n/a (none needed)"),
+            ("screenshot", probe.screenshot_tool or "NONE"),
+            ("browser control", "yes" if browser.available() else "NO"),
+        ]
     else:
         rows = [
             ("session", probe.session_type),
@@ -961,6 +971,16 @@ async def cmd_doctor(args: argparse.Namespace) -> int:
         print(
             "  ! Codex's worker sandbox is kernel-enforced on Linux and macOS "
             "but not here; treat `workspace-write` as an intention on Windows."
+        )
+    if platform.IS_MACOS and not probe.input_injection:
+        # Said plainly because the checkbox people go looking for does not
+        # exist: TCC attributes the grant to the process that owns the
+        # terminal, so Sleipnir never appears in that list under its own name.
+        print(
+            "  ! grant Accessibility to your terminal app, not to Sleipnir — "
+            "System Settings → Privacy & Security → Accessibility lists "
+            "Terminal or iTerm, and the grant only takes effect after that "
+            "app is restarted."
         )
     if not browser.available():
         print("  ! playwright is not installed — run `sleipnir setup`")

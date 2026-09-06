@@ -22,6 +22,7 @@ from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
 IS_LINUX = sys.platform.startswith("linux")
+IS_MACOS = sys.platform == "darwin"
 
 #: Platforms where the parent-death guard (``process_guard.py``) has a real
 #: implementation. Other POSIX systems (macOS, *BSD) fall through to no
@@ -95,6 +96,7 @@ replace_atomic = _impl.replace_atomic
 __all__ = [
     "CHILD_SPAWN_KWARGS",
     "IS_LINUX",
+    "IS_MACOS",
     "IS_WINDOWS",
     "WRAPS_CHILDREN",
     "GuardedLaunch",
