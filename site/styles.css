@@ -249,6 +249,37 @@ h1 {
 .stats dt { font-size:clamp(1.7rem,3vw,2.35rem); font-weight:600; letter-spacing:-.035em; line-height:1; }
 .stats dd { margin:.5rem 0 0; font-size:.82rem; line-height:1.5; color:var(--text-muted); }
 
+
+/* ── connected to ────────────────────────────────────────────────
+   Official brand marks in their own colours, sitting on white tiles
+   so a light mark (OpenRouter's slate) still separates from the warm
+   paper. The label under each carries the name — the NVIDIA mark
+   alone would not tell anyone this means NIM specifically. */
+.connected {
+  max-width:var(--maxw); margin-inline:auto;
+  padding:clamp(1rem,3vw,2rem) var(--gutter) clamp(2.5rem,5vw,3.5rem);
+}
+.connected .kicker { margin-bottom:1.6rem; color:var(--text-faint); }
+.logos {
+  list-style:none; margin:0 auto; padding:0;
+  display:flex; flex-wrap:wrap; justify-content:center; align-items:flex-start;
+  gap:clamp(1.25rem,4vw,3rem);
+}
+.logos li { display:flex; flex-direction:column; align-items:center; gap:.7rem; }
+.logo {
+  display:grid; place-items:center;
+  width:56px; height:56px; border-radius:16px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  box-shadow:var(--shadow-sm);
+  transition:transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.logos li:hover .logo { transform:translateY(-3px); box-shadow:var(--shadow-md); }
+.logo svg { width:27px; height:27px; fill:var(--brand); }
+.logo-name { font-size:.82rem; font-weight:500; color:var(--text-muted); letter-spacing:-.01em; }
+
+@media (max-width:520px) { .logos { gap:1.5rem 1.75rem; } .logo { width:48px; height:48px; } .logo svg { width:23px; height:23px; } }
+
 /* ── bands ───────────────────────────────────────────────────── */
 .band { max-width:var(--maxw); margin-inline:auto; padding:clamp(3.5rem,8vw,6rem) var(--gutter); }
 .band-head { max-width:44rem; margin:0 auto clamp(2.5rem,5vw,3.5rem); }
