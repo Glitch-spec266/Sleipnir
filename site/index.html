@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Arcaflame — budget-aware agentic orchestration</title>
-<meta name="description" content="Arcaflame takes one complex prompt, decomposes it into a task DAG, and dispatches every task to the cheapest model tier that can do it — while the orchestrator's context stays flat.">
+<meta name="description" content="Some work has no API — provisioning a key, standing up hosting, clicking through a signup. Arcaflame opens a real browser and does it in front of you, with every action written to an audit log you own.">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -12,9 +12,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- ?v= is a hand-rolled cache buster: no build step here, so a redeploy
      would otherwise serve a stale stylesheet. Bump it when these change. -->
-<link rel="stylesheet" href="styles.css?v=6">
+<link rel="stylesheet" href="styles.css?v=9">
 <meta property="og:title" content="Arcaflame — budget-aware agentic orchestration">
-<meta property="og:description" content="Delegate the work. Keep the context thin.">
+<meta property="og:description" content="Some work has no API. Arcaflame does it anyway — in a real browser, in front of you.">
 <meta property="og:type" content="website">
 </head>
 <body>
@@ -24,8 +24,8 @@
 <!-- Split nav: links to the sides, the mark centred and alone. -->
 <header class="nav">
   <nav class="nav-side nav-left" aria-label="Primary">
+    <a href="#host">Host control</a>
     <a href="#capabilities">Capabilities</a>
-    <a href="#context">Flat context</a>
   </nav>
 
   <a class="brand" href="#top" aria-label="Arcaflame — home">
@@ -68,14 +68,16 @@
           <path d="M32 62 L 32 16"/>
           <path d="M32 9 L 26.6 19 L 37.4 19 Z" fill="currentColor" stroke="none"/>
         </svg>
-        Budget-aware agentic orchestration
+        Agentic orchestration that can use a browser
       </p>
 
-      <h1>Delegate the work.<br>Keep the context <em>thin</em>.</h1>
+      <h1>Some work has no API.<br>Arcaflame <em>does it anyway</em>.</h1>
 
       <p class="lede">
-        One prompt becomes a task DAG. Every task goes to the cheapest model tier that can
-        actually do it — and the orchestrator's own context never grows.
+        Provisioning a key. Standing up hosting. Clicking through a signup and copying the
+        result back out. Arcaflame plans the whole project, delegates it to the cheapest model
+        that can do each part — and when the next step is a web form, it opens a real browser
+        and fills it in while you watch.
       </p>
     </div>
 
@@ -93,6 +95,69 @@
       <div><dt>3</dt><dd>model backends</dd></div>
       <div><dt>~2.7k</dt><dd>manifest tokens at any plan size</dd></div>
     </dl>
+  </section>
+
+
+  <!-- ── Host control: the lead capability ────────────────────── -->
+  <section class="band" id="host">
+    <header class="band-head">
+      <p class="kicker">The part with no endpoint</p>
+      <h2>The last mile is almost always a web page.</h2>
+      <p class="band-lede">
+        An agent that can only make HTTP calls stops at exactly the moment the work turns
+        tedious — the console that needs a real click, the signup that fingerprints headless
+        browsers, the key that only appears once on a page after you accept the terms.
+      </p>
+    </header>
+
+    <blockquote class="pull reveal">
+      <p>“Click through the signup, accept the terms, copy the key.”</p>
+      <cite>There is no headless endpoint for that sentence. It is a web flow, not an API call.</cite>
+    </blockquote>
+
+    <p class="group reveal"><span>SO</span> It uses the computer, like you would</p>
+    <div class="grid">
+      <article class="card reveal">
+        <h3>A real browser, headed by default</h3>
+        <p>Not a scraper and not a hidden window. Chromium opens on your screen so you can watch every step — and because many signup flows detect and block headless browsers anyway.</p>
+      </article>
+      <article class="card reveal">
+        <h3>Keyboard, mouse and screen</h3>
+        <p>When the work is outside the browser it types, clicks and reads the screen through the OS itself — <code>SendInput</code> and GDI on Windows, <code>ydotool</code> on Linux.</p>
+      </article>
+      <article class="card reveal">
+        <h3>Sessions that survive the run</h3>
+        <p>A persistent profile, so it does not ask you to sign in again on every task. You log in once, in a window you can see, and the next run picks up where it left off.</p>
+      </article>
+    </div>
+
+    <p class="group reveal"><span>AND</span> Nothing happens off-screen</p>
+    <div class="grid">
+      <article class="card reveal">
+        <h3>Every action is written down</h3>
+        <p>An append-only log at <code>~/.sleipnir/capability-audit.jsonl</code>, fsynced per record and never rewritten. A tool that can type into any window is only reasonable if there is an honest record of what it typed.</p>
+      </article>
+      <article class="card reveal">
+        <h3>Your passwords never travel</h3>
+        <p>When a credential is needed, the console prompts you in its own frame, injects the value directly and wipes it. No file, no pipe and no environment variable ever holds it — and keystrokes are logged by length, never content.</p>
+      </article>
+      <article class="card reveal">
+        <h3>Off unless you ask for it</h3>
+        <p>Host control is an opt-in extra: <code>pip install -e ".[host]"</code>. Skip it and the orchestrator, the console and the whole test suite still run — a headless server has no use for a Chromium download.</p>
+      </article>
+      <article class="card reveal">
+        <h3>No admin rights, no kernel driver</h3>
+        <p>It runs as you, with your permissions, using the same public input APIs an accessibility tool uses. Nothing is installed into the kernel and nothing asks you to elevate.</p>
+      </article>
+      <article class="card reveal">
+        <h3>It tells you what it cannot reach</h3>
+        <p><code>doctor</code> reports exactly what your host will and will not allow before a run starts — including the windows it is not permitted to touch, rather than failing quietly halfway through.</p>
+      </article>
+      <article class="card reveal">
+        <h3>You can take the wheel</h3>
+        <p>The browser is yours while it works. Watch it, stop it, or finish a step by hand — it is a window on your desktop, not a service running somewhere you cannot see.</p>
+      </article>
+    </div>
   </section>
 
   <!-- ── The property ─────────────────────────────────────────── -->

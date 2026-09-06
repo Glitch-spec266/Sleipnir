@@ -76,7 +76,10 @@ body {
   text-align:center;                 /* centred by request — everything, everywhere */
   -webkit-font-smoothing:antialiased;
   text-wrap:pretty;
-  overflow-x:hidden;
+  /* No overflow-x here on purpose: `hidden` on the body makes it a scroll
+     container, and that stops `animation-timeline: scroll(root)` from ever
+     advancing. The glow's horizontal spill is clipped at section level with
+     `overflow-x:clip`, which contains it without creating a scroller. */
 }
 
 a { color:var(--accent); text-decoration:none; }
@@ -187,8 +190,10 @@ h1 em, h2 em { font-style:normal; color:var(--accent); }
 
 h1 {
   margin:0 auto 1.5rem;
-  max-width:18ch;
-  font-size:clamp(2.9rem,7.4vw,5.5rem);
+  /* wide enough that each sentence keeps its own line at desktop —
+     the <br> does the breaking, not the measure */
+  max-width:26ch;
+  font-size:clamp(2.5rem,6vw,4.5rem);
   font-weight:600;
   letter-spacing:-.042em;
 }
@@ -291,20 +296,49 @@ h1 {
 .card em { font-style:normal; font-weight:600; color:var(--text); }
 
 /* 01 Plan */
-.band > .grid:nth-of-type(1) .card:nth-child(1) { --card-line:#F5A524; }
-.band > .grid:nth-of-type(1) .card:nth-child(2) { --card-line:#F09113; }
-.band > .grid:nth-of-type(1) .card:nth-child(3) { --card-line:#EA7F0A; }
+#capabilities > .grid:nth-of-type(1) .card:nth-child(1) { --card-line:#F5A524; }
+#capabilities > .grid:nth-of-type(1) .card:nth-child(2) { --card-line:#F09113; }
+#capabilities > .grid:nth-of-type(1) .card:nth-child(3) { --card-line:#EA7F0A; }
 /* 02 Dispatch */
-.band > .grid:nth-of-type(2) .card:nth-child(1) { --card-line:#E36D07; }
-.band > .grid:nth-of-type(2) .card:nth-child(2) { --card-line:#DC5B08; }
-.band > .grid:nth-of-type(2) .card:nth-child(3) { --card-line:#D24C0A; }
+#capabilities > .grid:nth-of-type(2) .card:nth-child(1) { --card-line:#E36D07; }
+#capabilities > .grid:nth-of-type(2) .card:nth-child(2) { --card-line:#DC5B08; }
+#capabilities > .grid:nth-of-type(2) .card:nth-child(3) { --card-line:#D24C0A; }
 /* 03 Control */
-.band > .grid:nth-of-type(3) .card:nth-child(1) { --card-line:#C8400C; }
-.band > .grid:nth-of-type(3) .card:nth-child(2) { --card-line:#BC380E; }
-.band > .grid:nth-of-type(3) .card:nth-child(3) { --card-line:#AE3210; }
-.band > .grid:nth-of-type(3) .card:nth-child(4) { --card-line:#9F2D11; }
-.band > .grid:nth-of-type(3) .card:nth-child(5) { --card-line:#8F2911; }
-.band > .grid:nth-of-type(3) .card:nth-child(6) { --card-line:#7C2410; }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(1) { --card-line:#C8400C; }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(2) { --card-line:#BC380E; }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(3) { --card-line:#AE3210; }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(4) { --card-line:#9F2D11; }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(5) { --card-line:#8F2911; }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(6) { --card-line:#7C2410; }
+
+
+/* Host control: its own run of the ramp. The three capability cards
+   take the warm end, the six safeguards the deeper end — so the eye
+   reads them as two groups without a heading having to say so. */
+#host > .grid:nth-of-type(1) .card:nth-child(1) { --card-line:#F5A524; }
+#host > .grid:nth-of-type(1) .card:nth-child(2) { --card-line:#EE8A10; }
+#host > .grid:nth-of-type(1) .card:nth-child(3) { --card-line:#E5720A; }
+#host > .grid:nth-of-type(2) .card:nth-child(1) { --card-line:#D9600C; }
+#host > .grid:nth-of-type(2) .card:nth-child(2) { --card-line:#CB520D; }
+#host > .grid:nth-of-type(2) .card:nth-child(3) { --card-line:#BC450E; }
+#host > .grid:nth-of-type(2) .card:nth-child(4) { --card-line:#AC3A10; }
+#host > .grid:nth-of-type(2) .card:nth-child(5) { --card-line:#9B3011; }
+#host > .grid:nth-of-type(2) .card:nth-child(6) { --card-line:#8A2911; }
+
+/* the pull quote — the problem, stated once, in the client's words */
+.pull {
+  max-width:44rem; margin:0 auto clamp(2rem,4vw,3rem);
+  padding:clamp(1.5rem,3vw,2.25rem);
+  border:2px solid var(--border-strong); border-left:2px solid var(--accent);
+  border-radius:18px;
+  background:linear-gradient(180deg, var(--ember-100), transparent 70%);
+}
+.pull p {
+  margin:0 0 .8rem;
+  font-size:clamp(1.15rem,2.4vw,1.6rem); font-weight:600;
+  letter-spacing:-.025em; line-height:1.25;
+}
+.pull cite { font-style:normal; font-size:.92rem; color:var(--text-muted); }
 
 /* ── the property panel ──────────────────────────────────────── */
 .panel {
@@ -401,12 +435,67 @@ pre code { background:none; color:inherit; padding:0; }
 .foot-links { display:flex; justify-content:center; gap:1.5rem; margin-top:1.4rem !important; font-weight:500; }
 
 /* ── motion ──────────────────────────────────────────────────── */
+
+/* Baseline: a one-shot reveal driven by IntersectionObserver. Works
+   everywhere, including Firefox, and is what ships if the scroll-driven
+   block below is unsupported. Without JS the content is simply visible. */
 .reveal { opacity:1; }
 .js .reveal { opacity:0; translate:0 12px; }
 .js .reveal.is-in {
   opacity:1; translate:0 0;
   transition:opacity var(--dur-slow) var(--ease), translate var(--dur-slow) var(--ease);
 }
+
+/* Anchor jumps glide instead of cutting. */
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior:smooth; }
+}
+
+/* ── scroll-driven enhancement ───────────────────────────────────
+   Chrome/Edge 115+ and Safari 26+ run these off the main thread, so
+   the page keeps moving with the scroll rather than firing once and
+   stopping. Firefox still lacks `animation-timeline`, where the
+   @supports block simply does not apply and the observer above stays
+   in charge — the un-enhanced state is a perfectly good end state.
+   All of it sits inside a reduced-motion guard. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+
+    /* Progress hairline across the top, tied to document scroll. */
+    body::before {
+      content:""; position:fixed; inset:0 auto auto 0; z-index:40;
+      height:2px; width:100%; transform-origin:0 50%;
+      background:linear-gradient(90deg, #F5A524, var(--accent), #8A2911);
+      animation:progress linear both;
+      animation-timeline:scroll(root block);
+    }
+
+    /* Content rises as it enters, driven by its own position in the
+       viewport rather than by a one-shot class. */
+    .js .reveal {
+      opacity:1; translate:none; transition:none;
+      animation:rise linear both;
+      animation-timeline:view(block);
+      animation-range:entry 5% cover 22%;
+    }
+
+    /* The cards lag very slightly behind their neighbours, which reads
+       as a stagger without any per-card delay to maintain. */
+    .card { animation-range:entry 0% cover 26%; }
+
+    /* The glow drifts at a different rate to the content in front of
+       it — depth, from two elements moving at two speeds. */
+    .glow {
+      animation:drift linear both;
+      animation-timeline:view(block);
+      animation-range:entry 0% exit 100%;
+    }
+  }
+}
+
+@keyframes progress { from { scale:0 1; } to { scale:1 1; } }
+@keyframes rise { from { opacity:0; translate:0 26px; } to { opacity:1; translate:0 0; } }
+@keyframes drift { from { translate:-50% -3rem; } to { translate:-50% 3rem; } }
 
 /* ── responsive ──────────────────────────────────────────────── */
 @media (max-width:900px) {
