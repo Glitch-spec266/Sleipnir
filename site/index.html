@@ -12,7 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- ?v= is a hand-rolled cache buster: no build step here, so a redeploy
      would otherwise serve a stale stylesheet. Bump it when these change. -->
-<link rel="stylesheet" href="styles.css?v=17">
+<link rel="stylesheet" href="styles.css?v=19">
 <meta property="og:title" content="Arcaflame — budget-aware agentic orchestration">
 <meta property="og:description" content="Some work has no API. Arcaflame does it anyway — in a real browser, in front of you.">
 <meta property="og:type" content="website">
@@ -48,17 +48,6 @@
     <a href="https://github.com/Glitch-spec266/Arcaflame">GitHub</a>
   </nav>
 </header>
-
-<!-- Product preview. Deliberately empty: drop a screenshot of the TUI
-     inside .preview-frame (an <img> is enough — it will be scaled and
-     clipped to the frame) and delete .preview-empty. -->
-<aside class="preview" aria-label="What Arcaflame looks like">
-  <p class="preview-label">Arcaflame in the terminal</p>
-  <div class="preview-frame">
-    <span class="preview-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-    <p class="preview-empty">Screenshot goes here</p>
-  </div>
-</aside>
 
 <main id="main">
 
@@ -140,6 +129,32 @@
         <span class="logo-name">OpenRouter</span>
       </li>
     </ul>
+  </section>
+
+
+  <!-- ── Product preview ──────────────────────────────────────────
+       Deliberately empty. To fill it: drop an <img> inside
+       .preview-frame and delete the .preview-empty paragraph. The
+       frame already holds its own shape, and the image is clipped to
+       it with object-fit, so nothing else needs changing. -->
+  <section class="preview" id="preview">
+    <div class="glow glow-low" aria-hidden="true"></div>
+    <header class="band-head">
+      <p class="kicker">See it running</p>
+      <h2>A dashboard, not a wall of logs.</h2>
+      <p class="band-lede">
+        The whole run in one terminal: the task graph, what each tier is costing, and
+        where the budget stands — without a single line of subagent output scrolling past.
+      </p>
+    </header>
+
+    <figure class="preview-frame reveal">
+      <span class="preview-bar" aria-hidden="true">
+        <i></i><i></i><i></i>
+        <em>arcaflame tui --orchestrate</em>
+      </span>
+      <p class="preview-empty">Screenshot goes here</p>
+    </figure>
   </section>
 
   <!-- ── Host control: the lead capability ────────────────────── -->
