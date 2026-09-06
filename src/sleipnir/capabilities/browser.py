@@ -19,12 +19,12 @@ suite — still runs on a machine where the browser was never installed.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sleipnir import platform
 from sleipnir.capabilities import audit
 from sleipnir.capabilities.computer import CapabilityError
 
@@ -100,7 +100,7 @@ async def ensure_browser(profile_dir: Path = DEFAULT_PROFILE, *, headless: bool 
         argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        **platform.CHILD_SPAWN_KWARGS,
     )
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text(str(process.pid), encoding="utf-8")
@@ -126,9 +126,6 @@ def available() -> bool:
 
 def stop_browser(timeout_s: float = 8.0) -> bool:
     """Terminate the detached browser, if one is running. True if it stopped."""
-    import os
-    import signal
-
     if not PID_FILE.exists():
         return False
     try:
@@ -136,9 +133,7 @@ def stop_browser(timeout_s: float = 8.0) -> bool:
     except (OSError, ValueError):
         PID_FILE.unlink(missing_ok=True)
         return False
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
+    if not platform.stop_pid_group(pid):
         PID_FILE.unlink(missing_ok=True)
         return False
 
@@ -148,8 +143,7 @@ def stop_browser(timeout_s: float = 8.0) -> bool:
             break
         time.sleep(0.2)
     else:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        platform.kill_pid_tree(pid)
     PID_FILE.unlink(missing_ok=True)
     return True
 

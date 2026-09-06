@@ -750,3 +750,76 @@ could settle:
   simulated "no network" by deleting the cache without blocking the fetch, so on
   any networked machine the live fetch succeeded and the refusal never fired.
   One of the project's stated safety guarantees was passing by accident.
+
+
+# Platform contracts
+
+Sleipnir runs on Linux and Windows from one source tree. Everything the two
+operating systems disagree about lives in `src/sleipnir/platform/`, which binds
+one name to one backend at import time. **No module outside that package may
+branch on `sys.platform` for process control, file locking, console mode, shell
+selection or path shape.** That rule is what makes `_posix.py` a provable
+no-op lift of the original Linux behaviour, and what keeps the Windows path
+reviewable as one thing instead of six partial ones.
+
+The same names do not always mean the same mechanism. They mean the same
+*contract*, and callers may depend only on the contract:
+
+| Contract | Linux | Windows |
+|---|---|---|
+| `try_lock_exclusive` — one process owns a run dir | `fcntl.flock(LOCK_EX\|LOCK_NB)`, advisory | `msvcrt.locking`, **mandatory** |
+| `create_guarded_launch` — a hard-killed Sleipnir leaves no spending orphan | `prctl(PR_SET_PDEATHSIG)` in `process_guard.py` | nested job object with `KILL_ON_JOB_CLOSE` |
+| `force_kill_tree` — the whole descendant tree is gone on return | `killpg(SIGKILL)` | `taskkill /F /T` |
+| `request_group_stop` — ask politely first | `SIGTERM` to the group | `CTRL_BREAK_EVENT` |
+| `shell_argv` — one dialect for `CommandCheck` and the operator shell | `/bin/sh -c` | `sh -c` if one exists, else `cmd.exe /c` |
+| `is_reparse_point` — a path that redirects outside the workspace | symlink | symlink **or NTFS junction** |
+| `key_reader` — raw keystrokes into the console loop | `termios` + `loop.add_reader` | `msvcrt.kbhit` on a polling thread |
+| desktop injection | `ydotool` writing `/dev/uinput` | `user32.SendInput` |
+| screen capture | `spectacle`/`grim`/`gnome-screenshot`/`import` | GDI `BitBlt` + a stdlib PNG encoder |
+
+Four consequences are worth writing down, because each was found by running
+the code rather than by reading it.
+
+**Windows file locks block reads.** `fcntl.flock` is advisory: a process that
+loses the race can still read the lock file to find out who won. `msvcrt`
+range locks are mandatory, so locking byte 0 — where `RunLock` writes the
+owning pid — made the losing `run_is_active()` unable to read the pid it
+needed for its own error message. The lock is taken at a sentinel offset
+(`1 << 20`, past any real content) instead. Same exclusion, no collateral.
+
+**The parent-death guard cannot import Sleipnir.** `process_guard.py` runs as
+a bare `python process_guard.py …` subprocess with no `src/` on `sys.path`, so
+its Windows branch carries its own inline `ctypes` bindings rather than
+importing `sleipnir.platform._win32`. That duplication is deliberate; removing
+it raises `ModuleNotFoundError` at the exact moment the guard is supposed to
+be protecting a run, and only an end-to-end spawn test catches it.
+
+**`start_new_session=True` is silently ignored on Windows.** No error, no
+isolation — so every call site that passed it was claiming a containment it
+was not getting. `CHILD_SPAWN_KWARGS` replaces it with
+`CREATE_NEW_PROCESS_GROUP`, which is what `CTRL_BREAK_EVENT` needs to be
+deliverable at all.
+
+**Containment validators were POSIX-shaped, and that was a security bug, not
+a portability one.** `schema.py` rejected a model-supplied path with
+`value.startswith("/")`, which accepts `C:\Windows\System32\config\SAM`,
+`\server\share\x` and `..\..\secret`. It now rejects on both `PurePosixPath`
+and `PureWindowsPath` shapes regardless of the host, so a plan authored on
+Linux is validated the same way as one authored on Windows. `artifacts.py` and
+`revisions.py` had the matching gap in the other direction:
+`Path.is_symlink()` does not detect an NTFS junction, and unlike a symlink a
+junction needs no privilege and no Developer Mode to create.
+
+## Honest gaps
+
+`SendInput` is user-mode. UIPI stops it reaching a window owned by a more
+privileged process, the UAC secure desktop is unreachable by design, and
+software that inspects `LLMHF_INJECTED` can distinguish it from a physical
+keyboard — none of which is true of ydotool's `/dev/uinput` path. `probe()`
+reports elevation for exactly this reason, and reports it as a *note* rather
+than as `ready = False`: unelevated is the ordinary, working state for almost
+every window on a desktop.
+
+Codex's `workspace-write` sandbox is kernel-enforced on Linux (seccomp,
+Landlock) and macOS (Seatbelt). On Windows it degrades toward intention.
+Sleipnir cannot fix that and does not claim otherwise.
