@@ -1,9 +1,15 @@
-# The port's guard rail. Sleipnir runs on Linux and Windows from one source
-# tree, and nearly every difference between them is invisible on the machine
-# you happen to be developing on: `fcntl` is absent on Windows, `msvcrt` is
-# absent on Linux, and a platform branch that regressed would look fine
-# locally and fail for everyone on the other OS. Both jobs run the same
-# suite; a change that fixes one platform by breaking the other is not done.
+# The port's guard rail. Sleipnir runs on Linux, Windows and macOS from one
+# source tree, and nearly every difference between them is invisible on the
+# machine you happen to be developing on: `fcntl` is absent on Windows,
+# `msvcrt` is absent on Linux, Quartz is absent on both, and a platform
+# branch that regressed would look fine locally and fail for everyone on the
+# other OS. All three jobs run the same suite; a change that fixes one
+# platform by breaking another is not done.
+#
+# The macOS job proves the tree imports and the shared logic holds there. It
+# cannot prove input injection works: that needs the Accessibility grant,
+# which is a human ticking a box in System Settings and is not available to
+# a CI runner. Those paths are covered by fakes and marked as such.
 name: tests
 
 on:
@@ -18,7 +24,7 @@ jobs:
       # whole point of this matrix is seeing both answers at once.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
