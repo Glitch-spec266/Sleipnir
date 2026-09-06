@@ -12,7 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- ?v= is a hand-rolled cache buster: no build step here, so a redeploy
      would otherwise serve a stale stylesheet. Bump it when these change. -->
-<link rel="stylesheet" href="styles.css?v=15">
+<link rel="stylesheet" href="styles.css?v=17">
 <meta property="og:title" content="Arcaflame — budget-aware agentic orchestration">
 <meta property="og:description" content="Some work has no API. Arcaflame does it anyway — in a real browser, in front of you.">
 <meta property="og:type" content="website">
@@ -21,30 +21,6 @@
 
 <a class="skip" href="#main">Skip to content</a>
 
-<!-- Ambient fire down both edges. Decorative, so it is hidden from
-     assistive tech and never intercepts a pointer. -->
-<div class="flames" aria-hidden="true">
-  <span class="flame flame-l">
-    <b class="ember"></b>
-    <i></i>
-      <i></i>
-      <i></i>
-      <i></i>
-      <i></i>
-      <i></i>
-      <i></i>
-  </span>
-  <span class="flame flame-r">
-    <b class="ember"></b>
-    <i></i>
-      <i></i>
-      <i></i>
-      <i></i>
-      <i></i>
-      <i></i>
-      <i></i>
-  </span>
-</div>
 
 <!-- Split nav: links to the sides, the mark centred and alone. -->
 <header class="nav">
@@ -72,6 +48,17 @@
     <a href="https://github.com/Glitch-spec266/Arcaflame">GitHub</a>
   </nav>
 </header>
+
+<!-- Product preview. Deliberately empty: drop a screenshot of the TUI
+     inside .preview-frame (an <img> is enough — it will be scaled and
+     clipped to the frame) and delete .preview-empty. -->
+<aside class="preview" aria-label="What Arcaflame looks like">
+  <p class="preview-label">Arcaflame in the terminal</p>
+  <div class="preview-frame">
+    <span class="preview-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+    <p class="preview-empty">Screenshot goes here</p>
+  </div>
+</aside>
 
 <main id="main">
 
