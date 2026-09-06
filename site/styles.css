@@ -139,43 +139,24 @@ h1 em, h2 em { font-style:normal; color:var(--accent); }
 .brand-word { font-weight:600; font-size:1.05rem; letter-spacing:-.02em; }
 
 
-/* ── product preview sidebar ─────────────────────────────────────
-   A pinned panel showing what the tool actually looks like. It only
-   appears when the viewport is genuinely wider than the content
-   column — the page maxes out at 70rem, so below roughly 1400px there
-   is no gutter to put it in without crowding the text, and it is
-   better absent than overlapping.
-
-   Empty for now: the frame holds its own shape via aspect-ratio, so
-   dropping a screenshot in later changes nothing about the layout. */
-.preview { display:none; }
-
-/* The content column is 70rem and centred, so the gutter is
-   (100vw - 70rem) / 2. The panel may only appear once that gutter can
-   hold it outright — at 1440px it cannot, and an earlier breakpoint
-   put it 41px on top of the hero. 1560px is where the arithmetic
-   actually works, with room to spare. */
-@media (min-width:1560px) {
-  .preview {
-    display:block;
-    position:fixed; z-index:5;
-    right:clamp(1rem, 1.5vw, 2rem);
-    top:50%; translate:0 -50%;
-    width:clamp(11rem, 12vw, 16rem);
-    text-align:left;
-  }
-}
-
-.preview-label {
-  margin:0 0 .6rem;
-  font-size:.7rem; font-weight:600; letter-spacing:.16em; text-transform:uppercase;
-  color:var(--text-faint);
+/* ── product preview ────────────────────────────────────────────
+   In the flow rather than pinned to a gutter, so it is visible at
+   every width instead of only on very wide screens. It borrows the
+   page's existing language wholesale — centred head, the same warm
+   glow as the hero, the same radius, border and shadow as .panel —
+   so an empty frame still reads as part of the design rather than as
+   a hole in it. */
+.preview {
+  position:relative; isolation:isolate; overflow-x:clip;
+  max-width:var(--maxw); margin-inline:auto;
+  padding:clamp(2.5rem,6vw,4rem) var(--gutter) clamp(3rem,7vw,4.5rem);
 }
 
 .preview-frame {
   position:relative;
-  aspect-ratio:4 / 3;
-  border-radius:14px;
+  max-width:56rem; margin:0 auto;
+  aspect-ratio:16 / 10;
+  border-radius:20px;
   border:1px solid var(--border-strong);
   background:var(--surface);
   box-shadow:var(--shadow-md);
@@ -185,19 +166,30 @@ h1 em, h2 em { font-style:normal; color:var(--accent); }
 /* a screenshot dropped in fills the frame without touching this CSS */
 .preview-frame img { width:100%; height:100%; object-fit:cover; display:block; }
 
-/* title bar, so the empty state still reads as an application window */
-.preview-dots {
-  position:absolute; top:0; left:0; right:0; height:26px;
-  display:flex; align-items:center; gap:5px; padding-inline:10px;
+/* window chrome, so the empty state reads as an application waiting
+   for a screenshot rather than as a missing image */
+.preview-bar {
+  position:absolute; top:0; left:0; right:0; height:34px;
+  display:flex; align-items:center; gap:6px; padding-inline:14px;
   background:var(--surface-2);
   border-bottom:1px solid var(--border);
 }
-.preview-dots i { width:7px; height:7px; border-radius:50%; background:var(--border-strong); }
-.preview-dots i:first-child { background:var(--ember-300); }
+.preview-bar i { width:9px; height:9px; border-radius:50%; background:var(--border-strong); flex:none; }
+.preview-bar i:first-child { background:var(--ember-300); }
+.preview-bar em {
+  margin-inline:auto;
+  font-family:var(--mono); font-style:normal;
+  font-size:.72rem; color:var(--text-faint);
+}
 
 .preview-empty {
-  margin:26px 0 0;
-  font-size:.8rem; color:var(--text-faint);
+  margin:34px 0 0;
+  font-size:.9rem; color:var(--text-faint);
+}
+
+@media (max-width:700px) {
+  .preview-frame { aspect-ratio:4 / 3; }
+  .preview-bar em { display:none; }
 }
 
 /* ── the warm spotlight ──────────────────────────────────────── */
@@ -349,7 +341,7 @@ h1 {
   margin:0 0 1rem; font-size:.74rem; font-weight:600;
   letter-spacing:.18em; text-transform:uppercase; color:var(--accent);
 }
-.band h2 { font-size:clamp(1.9rem,4vw,3rem); font-weight:600; margin-bottom:1.1rem; }
+.band h2, .preview h2 { font-size:clamp(1.9rem,4vw,3rem); font-weight:600; margin-bottom:1.1rem; }
 .band-lede { margin:0 auto; max-width:52ch; color:var(--text-muted); }
 
 .group {
