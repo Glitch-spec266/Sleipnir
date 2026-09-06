@@ -101,8 +101,10 @@ async def collect(iterator) -> list:
 # ---------------------------------------------------------------------------
 
 
-def test_claude_first_turn_opens_and_streams(monkeypatch):
-    monkeypatch.chdir("/tmp")
+def test_claude_first_turn_opens_and_streams(monkeypatch, tmp_path):
+    # Any directory that is not the repo will do; `/tmp` resolved to `C:\tmp`
+    # on Windows, which exists on some machines and not on a CI runner.
+    monkeypatch.chdir(tmp_path)
     procs: list[ScriptedProcess] = []
     argvs: list[list[str]] = []
 

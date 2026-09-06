@@ -33,13 +33,13 @@ import asyncio
 import contextlib
 import json
 import os
-import signal
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sleipnir import platform
 from sleipnir.schema import Tier
 
 #: Interactive providers selectable with ``/use`` in the console.
@@ -113,26 +113,25 @@ async def _readline(stream: Any) -> bytes | None:
 
 
 async def _terminate_group(proc: Any, grace_s: float = 3.0) -> None:
-    """TERM the process group, wait briefly, then KILL.
+    """Ask the group to stop, wait briefly, then force it.
 
     The same contract as ProcessRunner: provider CLIs spawn children that would
-    otherwise survive a bare SIGTERM to the parent and keep burning tokens.
+    otherwise survive a bare stop-the-parent and keep burning tokens. Unlike
+    ProcessRunner's dispatch path, these processes are not wrapped by
+    process_guard.py (a persistent chat session has no attempt boundary to
+    wrap), so on Windows the tree-wide guarantee comes from ``taskkill /F
+    /T`` (platform.force_kill_tree) rather than a job object -- see that
+    function's docstring for why that is race-free without one.
     """
     if proc.returncode is not None:
         return
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError, OSError):
-        with contextlib.suppress(Exception):
-            proc.kill()
+    with contextlib.suppress(Exception):
+        platform.request_group_stop(proc)
     with contextlib.suppress(TimeoutError, asyncio.CancelledError, ProcessLookupError):
         await asyncio.wait_for(proc.wait(), grace_s)
         return
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
-        with contextlib.suppress(Exception):
-            proc.kill()
+    with contextlib.suppress(Exception):
+        platform.force_kill_tree(proc)
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +197,7 @@ class ClaudeTransport:
         self.permission_mode = permission_mode
         self.model = model
         self.add_dirs = add_dirs
-        self.executable = executable
+        self.executable = platform.resolve_executable(executable)
         self.timeout_s = timeout_s
         self._spawn: Spawner = spawn or _default_spawn
         self._proc: Any | None = None
@@ -223,7 +222,7 @@ class ClaudeTransport:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
+            **platform.CHILD_SPAWN_KWARGS,
         )
         self._stderr_tail = ""
         asyncio.ensure_future(self._drain_stderr(self._proc))
@@ -333,7 +332,16 @@ def _codex_sandbox_for(permission_mode: str) -> str:
 
     Full host control maps to full access; anything narrower keeps writes
     confined to the workspace until the unified policy layer replaces both
-    mappings. Enforcement beats intention: Codex's sandbox is kernel-real.
+    mappings.
+
+    How much that confinement is worth depends on the host, and the honest
+    answer is not the same everywhere: Codex enforces ``workspace-write`` in
+    the kernel on Linux (seccomp, Landlock) and macOS (Seatbelt), while on
+    Windows it is closer to an intention than a guarantee. Sleipnir cannot
+    strengthen someone else's sandbox, so it declines to describe it as
+    kernel-real on a platform where it is not; ``sleipnir doctor`` says so
+    there rather than letting this comment imply a containment the OS is not
+    providing.
     """
     return "danger-full-access" if permission_mode == "bypassPermissions" else "workspace-write"
 
@@ -400,7 +408,7 @@ class CodexTransport:
         self.session = session
         self.permission_mode = permission_mode
         self.model = model
-        self.executable = executable
+        self.executable = platform.resolve_executable(executable)
         self.spawn = spawn or _default_spawn
         self.timeout_s = timeout_s
 
@@ -419,7 +427,7 @@ class CodexTransport:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
+            **platform.CHILD_SPAWN_KWARGS,
         )
         if proc.stdin is None or proc.stdout is None:
             raise ChatError("the codex process has no standard streams")

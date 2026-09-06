@@ -14,7 +14,13 @@ from pathlib import Path
 import pytest
 from fakes import fake_spawner
 
+from sleipnir import platform
 from sleipnir.process import STDERR_TAIL_BYTES, ProcessRunner
+
+#: What request_group_stop() labels its first, graceful attempt as, on this
+#: platform -- used so the timeout test asserts a real, platform-correct
+#: value instead of hardcoding the POSIX one.
+_GRACEFUL_STOP_LABEL = "CTRL_BREAK_EVENT" if platform.IS_WINDOWS else "SIGTERM"
 
 
 def run(coro):
@@ -92,7 +98,7 @@ def test_timeout_kills_the_process(tmp_path: Path):
     assert result.timed_out
     assert not result.ok
     assert processes[0].killed, "a timed-out process must not be left running"
-    assert "SIGTERM" in result.signalled
+    assert _GRACEFUL_STOP_LABEL in result.signalled
 
 
 def test_cancellation_kills_the_process_and_propagates(tmp_path: Path):
@@ -129,8 +135,12 @@ def test_nonzero_exit_is_not_ok(tmp_path: Path):
     assert not result.ok
 
 
-def test_spawn_requests_its_own_session(tmp_path: Path):
-    """start_new_session is what makes killpg reach the CLI's children."""
+def test_spawn_requests_its_own_group(tmp_path: Path):
+    """The group-forming spawn kwargs are what let a tree-kill reach the
+    CLI's children -- start_new_session on POSIX, CREATE_NEW_PROCESS_GROUP
+    on Windows. This is unconditional: it applies even with a fake spawner,
+    since forming the group is orthogonal to whether the parent-death guard
+    (process_guard.py) is also wrapping argv."""
     calls: list = []
     runner = ProcessRunner(spawn=fake_spawner(calls=calls))
     run(
@@ -141,12 +151,14 @@ def test_spawn_requests_its_own_session(tmp_path: Path):
         )
     )
     assert calls[0]["argv"] == ["fake", "--flag"]
-    assert calls[0]["kwargs"]["start_new_session"] is True
+    for key, value in platform.CHILD_SPAWN_KWARGS.items():
+        assert calls[0]["kwargs"][key] == value
 
 
-def test_real_spawn_is_wrapped_with_linux_parent_death_guard(
-    tmp_path: Path, monkeypatch
-):
+def test_real_spawn_is_wrapped_with_a_parent_death_guard(tmp_path: Path, monkeypatch):
+    """Only a *real* spawner (spawn=None, the ProcessRunner() default) gets
+    wrapped -- test/injected spawners receive the adapter argv untouched, per
+    test_spawn_requests_its_own_group above."""
     calls: list = []
     monkeypatch.setattr("sleipnir.process._default_spawn", fake_spawner(calls=calls))
     runner = ProcessRunner()
@@ -157,16 +169,21 @@ def test_real_spawn_is_wrapped_with_linux_parent_death_guard(
             stderr_path=tmp_path / "err.log",
         )
     )
-    if sys.platform.startswith("linux"):
-        assert calls[0]["argv"] == [
-            sys.executable,
-            str(Path(__file__).parents[1] / "src" / "sleipnir" / "process_guard.py"),
-            "--",
-            "provider-cli",
-            "--flag",
-        ]
+    guard = str(Path(__file__).parents[1] / "src" / "sleipnir" / "process_guard.py")
+    argv = calls[0]["argv"]
+    if platform.IS_WINDOWS:
+        # ['python', guard.py, '--job', <uuid-based name>, '--', 'provider-cli', '--flag']
+        assert argv[0] == sys.executable
+        assert argv[1] == guard
+        assert argv[2] == "--job"
+        assert argv[3].startswith("sleipnir-")
+        assert argv[4:] == ["--", "provider-cli", "--flag"]
+    elif sys.platform.startswith("linux"):
+        assert argv == [sys.executable, guard, "--", "provider-cli", "--flag"]
     else:
-        assert calls[0]["argv"] == ["provider-cli", "--flag"]
+        # No guard implementation on this POSIX platform (e.g. macOS):
+        # platform.WRAPS_CHILDREN is False there, so argv passes through.
+        assert argv == ["provider-cli", "--flag"]
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux prctl contract")
@@ -301,3 +318,49 @@ time.sleep(30)
             if pid is not None:
                 with contextlib.suppress(ProcessLookupError):
                     os.kill(pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not platform.IS_WINDOWS, reason="Windows job-object contract")
+def test_windows_job_guard_terminates_after_hard_parent_kill(tmp_path: Path):
+    """The Windows analogue of the two Linux tests above: a
+    process_guard.py invocation must not survive a hard kill (TerminateProcess,
+    not a cooperative close) of its launcher. create_guarded_launch's job
+    object -- KILL_ON_JOB_CLOSE plus the guard's own parent-watch thread --
+    is what stands in for PR_SET_PDEATHSIG on this platform; this is the
+    live drill that PR_SET_PDEATHSIG's own tests run for Linux.
+    """
+    src_dir = Path(__file__).parents[1] / "src"
+    supervisor_code = f"""
+import sys, subprocess, time
+sys.path.insert(0, {str(src_dir)!r})
+from sleipnir import platform
+gl = platform.create_guarded_launch([sys.executable, "-c", "import time; time.sleep(30)"])
+proc = subprocess.Popen(gl.argv)
+print(proc.pid, flush=True)
+time.sleep(30)
+"""
+    supervisor = subprocess.Popen(
+        [sys.executable, "-c", supervisor_code],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert supervisor.stdout is not None
+    guard_pid = int(supervisor.stdout.readline().strip())
+    assert platform.pid_is_alive(guard_pid)
+
+    try:
+        # A hard kill, not a cooperative one: this must not depend on the
+        # supervisor running any of its own cleanup code.
+        subprocess.run(
+            ["taskkill", "/F", "/PID", str(supervisor.pid)], capture_output=True, check=False
+        )
+        supervisor.wait(timeout=5)
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and platform.pid_is_alive(guard_pid):
+            time.sleep(0.05)
+        assert not platform.pid_is_alive(guard_pid), "guard survived its parent's hard kill"
+    finally:
+        subprocess.run(
+            ["taskkill", "/F", "/PID", str(guard_pid)], capture_output=True, check=False
+        )
