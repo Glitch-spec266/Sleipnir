@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Arcaflame: bow drawn, arrow nocked and lit, aimed up.
+       Stroke weights are heavier than the site mark because a
+       favicon renders at 16px and hairlines disappear there. -->
+  <rect width="64" height="64" rx="12" fill="#FCFBF8"/>
+  <g fill="none" stroke="#C2410C" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 49 C 12 38, 22 33.5, 32 33.5 C 42 33.5, 52 38, 54 49"/>
+    <path d="M10 49 L 32 56 L 54 49" stroke-width="2.6"/>
+    <path d="M32 58 L 32 17"/>
+    <path d="M32 10 L 27 19.5 L 37 19.5 Z" fill="#C2410C" stroke="none"/>
+    <path d="M32 58 L 27 52 M32 58 L 37 52" stroke-width="2.6"/>
+  </g>
+</svg>

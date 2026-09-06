@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arcaflame — budget-aware agentic orchestration</title>
+<meta name="description" content="Arcaflame takes one complex prompt, decomposes it into a task DAG, and dispatches every task to the cheapest model tier that can do it — while the orchestrator's context stays flat.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,400;1,9..144,200&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<meta property="og:title" content="Arcaflame — budget-aware agentic orchestration">
+<meta property="og:description" content="Delegate the work. Keep the context thin.">
+<meta property="og:type" content="website">
+<script>
+  // Set the theme before first paint so there is no flash.
+  try {
+    var t = localStorage.getItem('arcaflame-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <a class="brand" href="#top" aria-label="Arcaflame — home">
+    <svg class="brand-star" viewBox="0 0 64 64" aria-hidden="true" focusable="false"
+           fill="none" stroke="currentColor" stroke-width="3"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 51 C 8 39, 20 34, 32 34 C 44 34, 56 39, 58 51"/>
+        <path d="M6 51 L 32 59 L 58 51" stroke-width="2.2"/>
+        <path d="M32 62 L 32 16"/>
+        <path d="M32 9 L 26.6 19 L 37.4 19 Z" fill="currentColor" stroke="none"/>
+        <path d="M32 62 L 26.6 55.5 M32 62 L 37.4 55.5" stroke-width="2.2"/>
+        <path d="M25.8 16 C 22.2 11, 24.6 5.5, 29 2.5" stroke-width="2.4" opacity=".55"/>
+      </svg>
+    <span class="brand-word">ARCAFLAME</span>
+  </a>
+  <nav class="nav-links" aria-label="Primary">
+    <a href="#capabilities">Capabilities</a>
+    <a href="#context">Flat context</a>
+    <a href="#download">Download</a>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
+      <span class="theme-toggle-label">Theme</span>
+    </button>
+  </nav>
+</header>
+
+<main id="main">
+
+  <!-- ── Introduction ─────────────────────────────────────────── -->
+  <section class="hero" id="top">
+    <p class="eyebrow reveal">Budget-aware agentic orchestration</p>
+    <h1 class="reveal">Delegate the work. Keep the context <em>thin</em>.</h1>
+    <p class="lede reveal">
+      Arcaflame takes one complex project prompt, decomposes it into a task DAG, and
+      dispatches every task to the cheapest model tier that can actually do it — while the
+      orchestrator's own context stays flat and spend stays inside your five-hour window.
+    </p>
+    <p class="insight reveal">
+      It rests on one property: <strong>delegation only saves money if subtask output never
+      re-enters the orchestrator's context.</strong> So the plan lives on disk, and the
+      orchestrator is re-invoked fresh each cycle with nothing but a compact, size-bounded manifest.
+    </p>
+
+    <div class="cta reveal">
+      <a class="btn btn-primary" href="#download">Download<span class="btn-arrow" aria-hidden="true">→</span></a>
+      <button class="copy" type="button" data-copy="git clone https://github.com/Glitch-spec266/Arcaflame &amp;&amp; cd Arcaflame">
+        <code>git clone …/Arcaflame</code>
+        <span class="copy-state" aria-live="polite">Copy</span>
+      </button>
+    </div>
+
+    <dl class="stats reveal">
+      <div><dt>448</dt><dd>tests, including the manifest size bound</dd></div>
+      <div><dt>2</dt><dd>runtime dependencies — pydantic, httpx</dd></div>
+      <div><dt>3</dt><dd>backends: Claude, Codex, OpenRouter</dd></div>
+      <div><dt>~2.7k</dt><dd>manifest tokens at <em>any</em> plan size</dd></div>
+    </dl>
+  </section>
+
+  <!-- ── Information ──────────────────────────────────────────── -->
+  <section class="band" id="capabilities">
+    <header class="band-head reveal">
+      <p class="kicker">What it does</p>
+      <h2>Everything between a prompt and a finished, paid-for plan.</h2>
+      <p class="band-lede">
+        Twelve of them, in the order a run meets them. No agent framework underneath any of it.
+      </p>
+    </header>
+
+    <h3 class="group reveal"><span>01</span> Plan</h3>
+    <div class="grid">
+      <article class="card reveal">
+        <h4>Prompt → validated task DAG</h4>
+        <p>The planner turns one paragraph of intent into typed tasks with real dependencies, and validates the whole graph before a single token is spent.</p>
+      </article>
+      <article class="card reveal">
+        <h4>Tier routing, with its reasoning</h4>
+        <p>Every task is labelled <code>reason</code>, <code>code</code>, <code>mechanical</code> or <code>extract</code>. The router maps each tier to the cheapest model that clears it — and <code>explain</code> prints why it chose what it chose.</p>
+      </article>
+      <article class="card reveal">
+        <h4>Policy you write, in TOML</h4>
+        <p>A backend order per tier. The shipped example keeps Claude first for reasoning, a Codex subscription first for bulk code, and OpenRouter first for cheap mechanical work — so the tight window is spent on thinking.</p>
+      </article>
+    </div>
+
+    <h3 class="group reveal"><span>02</span> Dispatch</h3>
+    <div class="grid">
+      <article class="card reveal">
+        <h4>Three backends, zero re-implemented auth</h4>
+        <p><code>claude -p</code>, <code>codex exec</code> and plain OpenRouter HTTP. The adapters shell out to the official CLIs and inherit their credentials. No adapter runs an OAuth flow.</p>
+      </article>
+      <article class="card reveal">
+        <h4>Parallel work in isolated workspaces</h4>
+        <p>Readiness comes from the graph, not a queue: a concurrency cap, cancellation, timeouts and tree kill. Each attempt gets its own directory, so nothing leaks sideways between tasks — and a dry run spends nothing.</p>
+      </article>
+      <article class="card reveal">
+        <h4>Acceptance checks</h4>
+        <p>Tasks carry checks that have to pass before the work counts. A task is not finished because a model said it was finished.</p>
+      </article>
+    </div>
+
+    <h3 class="group reveal"><span>03</span> Control</h3>
+    <div class="grid">
+      <article class="card reveal">
+        <h4>Budget governor</h4>
+        <p>Five-hour window accounting across providers, with automatic downshift to cheaper tiers <em>before</em> the wall — not an error after it. Codex subscription usage is tracked in its own pool.</p>
+      </article>
+      <article class="card reveal">
+        <h4>Sparse brain</h4>
+        <p>Costs nothing while workers succeed. At a terminal impasse it gets the bounded manifest plus at most four urgent task specs — 24k characters, hard capped — and may stop, defer, or propose a typed revision.</p>
+      </article>
+      <article class="card reveal">
+        <h4>Audited plan revisions</h4>
+        <p>Blast radius is computed locally before anything is written. Routing-only retargets can auto-apply; semantic changes wait for <code>apply-revision</code>. Superseded tasks and stale descendants rerun in dependency order.</p>
+      </article>
+      <article class="card reveal">
+        <h4>Live terminal dashboard</h4>
+        <p><code>tui</code> shows DAG, routing and budget; <code>--watch</code> follows a run, <code>--run</code> drives one under a lock. Dependency-free, offline in read-only mode, and it never prints subagent output.</p>
+      </article>
+      <article class="card reveal">
+        <h4>Append-only run log</h4>
+        <p><code>results.jsonl</code>, fsynced per record. Status is a pure fold of results over the plan, so a run resumes exactly where it stopped and no state can drift away from the log.</p>
+      </article>
+      <article class="card reveal">
+        <h4>One OS seam, two first-class platforms</h4>
+        <p>Process trees, file locking, raw console mode, shell selection, input injection and screen capture all go through one platform layer picked at import — <code>ydotool</code> on Linux, <code>SendInput</code>, GDI and job objects on Windows. No admin rights, no kernel driver, and <code>doctor</code> says exactly what your host will and will not allow.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ── The property ─────────────────────────────────────────── -->
+  <section class="band feature" id="context">
+    <div class="feature-inner">
+      <div class="reveal">
+        <p class="kicker">The property everything rests on</p>
+        <h2>The orchestrator's context does not grow with the plan.</h2>
+        <p>
+          Multiply the work by 166× and the brain reads the same page. That is the whole
+          economic argument, and it is enforced by a test: <code>test_manifest_size_is_constant_in_task_count</code>
+          fails the build if a change reintroduces growth.
+        </p>
+      </div>
+      <table class="scale reveal">
+        <caption>Manifest cost per orchestrator cycle</caption>
+        <thead><tr><th scope="col">Tasks in plan</th><th scope="col">Manifest tokens</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">60</th><td>2,689</td></tr>
+          <tr><th scope="row">600</th><td>2,696</td></tr>
+          <tr><th scope="row">10,000</th><td>2,706</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Download ─────────────────────────────────────────────── -->
+  <section class="band" id="download">
+    <header class="band-head reveal">
+      <p class="kicker">Get it</p>
+      <h2>Python 3.12, two dependencies, no account to create.</h2>
+      <p class="band-lede">
+        Arcaflame installs from source and borrows the provider CLIs you already have
+        signed in. Nothing phones home.
+      </p>
+    </header>
+
+    <div class="dl-grid">
+      <article class="dl reveal">
+        <h3>Linux &amp; macOS</h3>
+        <pre><code>git clone https://github.com/Glitch-spec266/Arcaflame
+cd Arcaflame
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e .
+.venv/bin/python -m pytest -q</code></pre>
+        <button class="copy copy-block" type="button" data-copy="git clone https://github.com/Glitch-spec266/Arcaflame
+cd Arcaflame
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e .
+.venv/bin/python -m pytest -q"><span class="copy-state" aria-live="polite">Copy</span></button>
+      </article>
+
+      <article class="dl reveal">
+        <h3>Windows</h3>
+        <pre><code>git clone https://github.com/Glitch-spec266/Arcaflame
+cd Arcaflame
+uv venv --python 3.12 .venv
+uv pip install --python .venv\Scripts\python.exe -e .
+.venv\Scripts\python.exe -m pytest -q</code></pre>
+        <button class="copy copy-block" type="button" data-copy="git clone https://github.com/Glitch-spec266/Arcaflame
+cd Arcaflame
+uv venv --python 3.12 .venv
+uv pip install --python .venv\Scripts\python.exe -e .
+.venv\Scripts\python.exe -m pytest -q"><span class="copy-state" aria-live="polite">Copy</span></button>
+      </article>
+    </div>
+
+    <div class="dl-notes">
+      <article class="note reveal">
+        <h4>Then point it at a plan</h4>
+        <pre><code>sleipnir plan "ship a REST API"
+sleipnir tui --orchestrate</code></pre>
+        <p>The CLI entry point is <code>sleipnir</code> (alias <code>orch</code>) until the rename lands in the package.</p>
+      </article>
+      <article class="note reveal">
+        <h4>Providers</h4>
+        <p>
+          The <code>claude</code> and <code>codex</code> adapters use whatever those official CLIs are
+          already signed into. OpenRouter reads <code>OPENROUTER_API_KEY</code>. Browser control is
+          opt-in: <code>pip install -e ".[host]"</code>.
+        </p>
+      </article>
+      <article class="note reveal note-warn">
+        <h4>Before you run someone else's plan</h4>
+        <p>
+          <code>CommandCheck</code> acceptance checks execute shell commands out of
+          <code>plan.json</code>. A plan file is executable content. Do not run one from a
+          source you do not trust.
+        </p>
+      </article>
+    </div>
+
+    <div class="dl-links reveal">
+      <a class="btn btn-primary" href="https://github.com/Glitch-spec266/Arcaflame">Repository<span class="btn-arrow" aria-hidden="true">→</span></a>
+      <a class="btn btn-ghost" href="../DESIGN.md">Read DESIGN.md<span class="btn-arrow" aria-hidden="true">→</span></a>
+      <a class="btn btn-ghost" href="../README.md">README<span class="btn-arrow" aria-hidden="true">→</span></a>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <a class="brand" href="#top" aria-label="Arcaflame — home">
+    <svg class="brand-star" viewBox="0 0 64 64" aria-hidden="true" focusable="false"
+       fill="none" stroke="currentColor" stroke-width="3"
+       stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 51 C 8 39, 20 34, 32 34 C 44 34, 56 39, 58 51"/>
+    <path d="M6 51 L 32 59 L 58 51" stroke-width="2.2"/>
+    <path d="M32 62 L 32 16"/>
+    <path d="M32 9 L 26.6 19 L 37.4 19 Z" fill="currentColor" stroke="none"/>
+    <path d="M32 62 L 26.6 55.5 M32 62 L 37.4 55.5" stroke-width="2.2"/>
+    <path d="M25.8 16 C 22.2 11, 24.6 5.5, 29 2.5" stroke-width="2.4" opacity=".55"/>
+      </svg>
+    <span class="brand-word">ARCAFLAME</span>
+  </a>
+  <p>Budget-aware agentic orchestration. Python 3.12+. Linux and Windows, both first-class.</p>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>
