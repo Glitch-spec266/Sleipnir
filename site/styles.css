@@ -266,20 +266,45 @@ h1 {
   padding:.2rem .5rem; border-radius:999px;
 }
 
-/* cards: soft, rounded, lifted — the reference's bento, in daylight */
+/* cards: outlined boxes, right-set text, each one a step along an
+   orange ramp. The shade is decoration only — headings and body stay
+   on the ink tokens, because a border colour must never be the thing
+   carrying the meaning. The ramp runs golden amber to deep rust and
+   stays saturated at both ends, so every outline reads as a real
+   boundary on warm paper rather than fading into it. */
 .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:clamp(.9rem,2vw,1.25rem); }
 .card {
-  padding:1.7rem 1.5rem;
-  background:var(--surface);
-  border:1px solid var(--border);
+  text-align:right;
+  display:flex; flex-direction:column; justify-content:center;
+  padding:1.7rem 1.6rem;
+  background:transparent;
+  border:2px solid var(--card-line, var(--border-strong));
   border-radius:18px;
-  box-shadow:var(--shadow-sm);
-  transition:transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  transition:transform var(--dur) var(--ease), background var(--dur) var(--ease);
 }
-.card:hover { transform:translateY(-3px); box-shadow:var(--shadow-md); border-color:var(--border-strong); }
+.card:hover {
+  transform:translateY(-3px);
+  background:color-mix(in srgb, var(--card-line) 7%, transparent);
+}
 .card h3 { font-size:1.04rem; font-weight:600; margin-bottom:.6rem; letter-spacing:-.02em; }
 .card p { margin:0; font-size:.9rem; color:var(--text-muted); }
 .card em { font-style:normal; font-weight:600; color:var(--text); }
+
+/* 01 Plan */
+.band > .grid:nth-of-type(1) .card:nth-child(1) { --card-line:#F5A524; }
+.band > .grid:nth-of-type(1) .card:nth-child(2) { --card-line:#F09113; }
+.band > .grid:nth-of-type(1) .card:nth-child(3) { --card-line:#EA7F0A; }
+/* 02 Dispatch */
+.band > .grid:nth-of-type(2) .card:nth-child(1) { --card-line:#E36D07; }
+.band > .grid:nth-of-type(2) .card:nth-child(2) { --card-line:#DC5B08; }
+.band > .grid:nth-of-type(2) .card:nth-child(3) { --card-line:#D24C0A; }
+/* 03 Control */
+.band > .grid:nth-of-type(3) .card:nth-child(1) { --card-line:#C8400C; }
+.band > .grid:nth-of-type(3) .card:nth-child(2) { --card-line:#BC380E; }
+.band > .grid:nth-of-type(3) .card:nth-child(3) { --card-line:#AE3210; }
+.band > .grid:nth-of-type(3) .card:nth-child(4) { --card-line:#9F2D11; }
+.band > .grid:nth-of-type(3) .card:nth-child(5) { --card-line:#8F2911; }
+.band > .grid:nth-of-type(3) .card:nth-child(6) { --card-line:#7C2410; }
 
 /* ── the property panel ──────────────────────────────────────── */
 .panel {
