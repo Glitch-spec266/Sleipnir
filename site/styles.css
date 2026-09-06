@@ -329,13 +329,25 @@ h1 {
 .panel-note { margin:1.4rem 0 0; font-size:.88rem; color:var(--text-muted); }
 
 /* ── download ────────────────────────────────────────────────── */
+/* Same outlined language as the capability cards, on its own short
+   ramp rather than a continuation of theirs — past deep rust the steps
+   turn to mud, and this is a separate group anyway. Text sets right;
+   the code blocks stay left, because commands are read left to right. */
 .dl-grid { display:grid; grid-template-columns:1fr 1fr; gap:clamp(.9rem,2vw,1.25rem); }
 .dl, .note {
   position:relative;
+  text-align:right;
   padding:1.5rem;
-  background:var(--surface); border:1px solid var(--border);
-  border-radius:18px; box-shadow:var(--shadow-sm);
+  background:transparent;
+  border:2px solid var(--card-line, var(--border-strong));
+  border-radius:18px;
 }
+.dl-grid .dl:nth-child(1) { --card-line:#F5A524; }
+.dl-grid .dl:nth-child(2) { --card-line:#E88A0C; }
+.dl-notes .note:nth-child(1) { --card-line:#D6600B; }
+.dl-notes .note:nth-child(2) { --card-line:#B8380E; }
+.dl-notes .note:nth-child(3) { --card-line:#8F2911; }
+
 .dl h3, .note h3 {
   font-size:.76rem; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
   color:var(--text-muted); margin-bottom:.9rem;
@@ -357,7 +369,10 @@ pre code { background:none; color:inherit; padding:0; }
 .dl-notes { display:grid; grid-template-columns:repeat(3,1fr); gap:clamp(.9rem,2vw,1.25rem); margin-top:clamp(.9rem,2vw,1.25rem); }
 .note p { margin:0; font-size:.88rem; color:var(--text-muted); }
 .note pre { margin-bottom:.9rem; }
-.note-warn { border-color:var(--ember-300); background:linear-gradient(180deg, var(--ember-100), var(--surface) 60%); }
+/* The warning keeps a tint and an accent heading on top of the outline.
+   Its border is now the same weight as its neighbours', so the border
+   alone can no longer be what marks it as a warning. */
+.note-warn { background:linear-gradient(180deg, var(--ember-100), transparent 65%); }
 .note-warn h3 { color:var(--accent); }
 
 /* ── closing ─────────────────────────────────────────────────── */
