@@ -329,7 +329,7 @@ h1 {
 .pull {
   max-width:44rem; margin:0 auto clamp(2rem,4vw,3rem);
   padding:clamp(1.5rem,3vw,2.25rem);
-  border:2px solid var(--border-strong); border-left:2px solid var(--accent);
+  border:2px solid var(--accent);
   border-radius:18px;
   background:linear-gradient(180deg, var(--ember-100), transparent 70%);
 }
