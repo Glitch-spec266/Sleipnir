@@ -139,91 +139,66 @@ h1 em, h2 em { font-style:normal; color:var(--accent); }
 .brand-word { font-weight:600; font-size:1.05rem; letter-spacing:-.02em; }
 
 
-/* ── ambient fire, both edges ────────────────────────────────────
-   Built like real flame rather than like a warm gradient: a dark red
-   bed at the very edge, then seven tongues per side that are born at
-   the bottom, rise, lean, narrow and die out. Each tongue carries the
-   full heat ramp inside itself — deep red at the shoulders, orange
-   through the body, yellow near the base and a pale core — because
-   yellow only reads as fire when it sits on top of orange, never when
-   it sits on paper.
+/* ── product preview sidebar ─────────────────────────────────────
+   A pinned panel showing what the tool actually looks like. It only
+   appears when the viewport is genuinely wider than the content
+   column — the page maxes out at 70rem, so below roughly 1400px there
+   is no gutter to put it in without crowding the text, and it is
+   better absent than overlapping.
 
-   Every tongue runs its own duration and delay, all of them coprime
-   enough that the wall never resynchronises. Only `translate`,
-   `scale`, `rotate` and `opacity` animate; the blur is static, so each
-   tongue is rasterised once and then moved by the compositor. */
-.flames { position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden; }
-.flame {
-  position:absolute; top:0; bottom:0;
-  width:clamp(80px, 13vw, 230px);
-  -webkit-mask-image:linear-gradient(to right, #000 0%, rgba(0,0,0,.7) 42%, transparent 100%);
-          mask-image:linear-gradient(to right, #000 0%, rgba(0,0,0,.7) 42%, transparent 100%);
-}
-.flame-l { left:0; }
-.flame-r { right:0; scale:-1 1; }        /* mirrored: the sides never match */
+   Empty for now: the frame holds its own shape via aspect-ratio, so
+   dropping a screenshot in later changes nothing about the layout. */
+.preview { display:none; }
 
-/* the bed — dark red banked against the very edge, with the coals
-   showing through it */
-.ember {
-  position:absolute; inset:0; display:block;
-  background:
-    linear-gradient(to right,
-      rgba(120,20,15,.82), rgba(190,35,20,.62) 10%,
-      rgba(234,88,12,.4) 26%, rgba(251,146,60,.14) 46%, transparent 66%);
-  animation:breathe 4.3s ease-in-out infinite alternate;
+/* The content column is 70rem and centred, so the gutter is
+   (100vw - 70rem) / 2. The panel may only appear once that gutter can
+   hold it outright — at 1440px it cannot, and an earlier breakpoint
+   put it 41px on top of the hero. 1560px is where the arithmetic
+   actually works, with room to spare. */
+@media (min-width:1560px) {
+  .preview {
+    display:block;
+    position:fixed; z-index:5;
+    right:clamp(1rem, 1.5vw, 2rem);
+    top:50%; translate:0 -50%;
+    width:clamp(11rem, 12vw, 16rem);
+    text-align:left;
+  }
 }
 
-.flame i {
-  position:absolute; left:-18%;
-  width:38%; height:46%;
-  /* tall and pinched at the tip — a flame is much taller than it is
-     wide, and the blur has to stay low enough not to eat that shape */
-  border-radius:46% 54% 38% 42% / 72% 70% 30% 28%;
-  filter:blur(6px);
-  will-change:transform, opacity;
-  animation:tongue 6s ease-in-out infinite;
-  /* the heat ramp, hottest at the base and cooling toward the tip */
-  background:radial-gradient(58% 66% at 46% 82%,
-    #FFF7E0 0%, #FDE047 14%, #FBBF24 28%,
-    #F97316 46%, #EA580C 60%, #DC2626 74%, rgba(127,29,29,0) 90%);
+.preview-label {
+  margin:0 0 .6rem;
+  font-size:.7rem; font-weight:600; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--text-faint);
 }
 
-/* Seven tongues: each at its own height, size, speed and phase.
-   The variation is the whole trick — identical tongues read as a
-   pattern, and a pattern never reads as fire. */
-.flame i:nth-child(2) { bottom:-10%; width:44%; height:52%; animation-duration:5.2s; animation-delay:-0.3s; }
-.flame i:nth-child(3) { bottom:4%;   width:34%; height:44%; animation-duration:6.8s; animation-delay:-2.1s;
-  background:radial-gradient(56% 64% at 48% 84%, #FFFBEB 0%, #FDE047 16%, #FB923C 34%, #EA580C 56%, #B91C1C 76%, rgba(127,29,29,0) 90%); }
-.flame i:nth-child(4) { bottom:16%;  width:46%; height:50%; animation-duration:4.4s; animation-delay:-1.2s; }
-.flame i:nth-child(5) { bottom:30%;  width:32%; height:42%; animation-duration:7.6s; animation-delay:-3.4s;
-  background:radial-gradient(54% 62% at 44% 80%, #FEF3C7 0%, #FBBF24 18%, #F97316 38%, #DC2626 62%, rgba(153,27,27,0) 88%); }
-.flame i:nth-child(6) { bottom:44%;  width:42%; height:48%; animation-duration:5.9s; animation-delay:-0.9s; }
-.flame i:nth-child(7) { bottom:58%;  width:30%; height:40%; animation-duration:8.3s; animation-delay:-4.6s;
-  background:radial-gradient(52% 60% at 50% 78%, #FFF7E0 0%, #FDE047 20%, #EA580C 44%, #991B1B 70%, rgba(127,29,29,0) 88%); }
-.flame i:nth-child(8) { bottom:72%;  width:38%; height:46%; animation-duration:6.4s; animation-delay:-2.8s; }
-
-/* born low and wide, rises while narrowing and leaning, dies out */
-@keyframes tongue {
-  0%   { translate:0 18%;    scale:.72 .55;  rotate:-3deg; opacity:0; }
-  16%  { opacity:1; }
-  42%  { translate:-6% -6%;  scale:1.04 1.1; rotate:4deg; }
-  70%  { translate:5% -26%;  scale:.9 1.3;   rotate:-5deg; opacity:.8; }
-  100% { translate:-4% -48%; scale:.6 1.55;  rotate:3deg;  opacity:0; }
+.preview-frame {
+  position:relative;
+  aspect-ratio:4 / 3;
+  border-radius:14px;
+  border:1px solid var(--border-strong);
+  background:var(--surface);
+  box-shadow:var(--shadow-md);
+  overflow:hidden;
+  display:grid; place-items:center;
 }
-@keyframes breathe { from { opacity:.7; } to { opacity:1; } }
+/* a screenshot dropped in fills the frame without touching this CSS */
+.preview-frame img { width:100%; height:100%; object-fit:cover; display:block; }
 
-/* Narrow screens have no spare width, and the text runs close to both
-   edges — so it goes rather than competing with the content. */
-@media (max-width:720px) { .flames { display:none; } }
-
-/* Reduced motion keeps the heat, drops every bit of movement. */
-@media (prefers-reduced-motion: reduce) {
-  .flame i, .ember { animation:none; }
-  .flame i { opacity:.55; }
+/* title bar, so the empty state still reads as an application window */
+.preview-dots {
+  position:absolute; top:0; left:0; right:0; height:26px;
+  display:flex; align-items:center; gap:5px; padding-inline:10px;
+  background:var(--surface-2);
+  border-bottom:1px solid var(--border);
 }
+.preview-dots i { width:7px; height:7px; border-radius:50%; background:var(--border-strong); }
+.preview-dots i:first-child { background:var(--ember-300); }
 
-/* Content rides above the fire. */
-main, .foot { position:relative; z-index:1; }
+.preview-empty {
+  margin:26px 0 0;
+  font-size:.8rem; color:var(--text-faint);
+}
 
 /* ── the warm spotlight ──────────────────────────────────────── */
 .hero, .closing {
