@@ -138,6 +138,77 @@ h1 em, h2 em { font-style:normal; color:var(--accent); }
 .brand-star { width:24px; height:24px; }
 .brand-word { font-weight:600; font-size:1.05rem; letter-spacing:-.02em; }
 
+
+/* ── ambient fire, both edges ────────────────────────────────────
+   Heat rather than clip art: three soft gradient tongues per side,
+   each drifting up on its own period so they never resynchronise
+   into a visible loop. Only `translate`, `scale` and `opacity` are
+   animated, so the whole thing stays on the compositor — no layout,
+   no paint, no scroll listener, no JS at all.
+
+   The mask fades each column toward the page so the fire dies out
+   before it reaches anything you have to read. */
+.flames { position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden; }
+.flame {
+  position:absolute; top:-12%; bottom:-12%;
+  width:clamp(72px, 12vw, 210px);
+  -webkit-mask-image:linear-gradient(to right, #000 0%, rgba(0,0,0,.55) 45%, transparent 100%);
+          mask-image:linear-gradient(to right, #000 0%, rgba(0,0,0,.55) 45%, transparent 100%);
+}
+.flame-l { left:0; }
+.flame-r { right:0; scale:-1 1; }   /* mirrored, so the two sides never match */
+
+.flame i {
+  position:absolute; inset:0;
+  will-change:transform, opacity;
+  animation:lick 7s ease-in-out infinite alternate,
+            flicker 2.3s ease-in-out infinite alternate;
+}
+/* Tongues, not blobs: each gradient is narrow and tall, anchored near
+   the edge, so the shape reads as flame rather than as a warm smudge. */
+.flame i:nth-child(1) {
+  background:
+    radial-gradient(16% 30% at 4% 74%, rgba(226,86,12,.78), transparent 68%),
+    radial-gradient(13% 24% at 10% 46%, rgba(194,65,12,.62), transparent 70%),
+    radial-gradient(11% 19% at 3% 20%, rgba(154,52,18,.5), transparent 72%);
+  animation-duration:7.5s, 2.1s;
+}
+.flame i:nth-child(2) {
+  background:
+    radial-gradient(13% 26% at 8% 60%, rgba(253,186,116,.85), transparent 66%),
+    radial-gradient(10% 20% at 2% 32%, rgba(245,165,36,.7), transparent 68%),
+    radial-gradient(12% 22% at 12% 88%, rgba(226,86,12,.55), transparent 70%);
+  animation-duration:11s, 3.1s;
+  animation-delay:-3s, -1.2s;
+}
+.flame i:nth-child(3) {
+  /* the hot core, hugging the very edge */
+  background:
+    linear-gradient(to right, rgba(226,86,12,.5), transparent 42%),
+    radial-gradient(9% 17% at 2% 84%, rgba(255,214,170,.9), transparent 66%),
+    radial-gradient(8% 15% at 6% 54%, rgba(253,186,116,.75), transparent 68%);
+  animation-duration:5.5s, 1.7s;
+  animation-delay:-1.5s, -.6s;
+}
+
+@keyframes lick {
+  from { translate:0 9%;  scale:.94 .9; }
+  to   { translate:0 -9%; scale:1.1 1.12; }
+}
+@keyframes flicker { from { opacity:.55; } to { opacity:1; } }
+
+/* Narrow screens have no spare width for it, and the text sits close
+   to both edges — so it goes rather than competing with the content. */
+@media (max-width:720px) { .flames { display:none; } }
+
+/* Reduced motion keeps the warmth, drops the movement entirely. */
+@media (prefers-reduced-motion: reduce) {
+  .flame i { animation:none; opacity:.5; }
+}
+
+/* Content rides above the fire. */
+main, .foot { position:relative; z-index:1; }
+
 /* ── the warm spotlight ──────────────────────────────────────── */
 .hero, .closing {
   position:relative; isolation:isolate;
