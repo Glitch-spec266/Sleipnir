@@ -5,14 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Arcaflame — budget-aware agentic orchestration</title>
 <meta name="description" content="Some work has no API — provisioning a key, standing up hosting, clicking through a signup. Arcaflame opens a real browser and does it in front of you, with every action written to an audit log you own.">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="light dark">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- ?v= is a hand-rolled cache buster: no build step here, so a redeploy
      would otherwise serve a stale stylesheet. Bump it when these change. -->
-<link rel="stylesheet" href="styles.css?v=19">
+<link rel="stylesheet" href="styles.css?v=22">
+<script>
+  // Applied before first paint: setting the theme from JS after render is
+  // what causes the flash of the wrong palette on every navigation.
+  try {
+    var t = localStorage.getItem('arcaflame-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
 <meta property="og:title" content="Arcaflame — budget-aware agentic orchestration">
 <meta property="og:description" content="Some work has no API. Arcaflame does it anyway — in a real browser, in front of you.">
 <meta property="og:type" content="website">
@@ -30,22 +38,18 @@
   </nav>
 
   <a class="brand" href="#top" aria-label="Arcaflame — home">
-    <span class="brand-tile">
-      <svg class="brand-star" viewBox="0 0 64 64" aria-hidden="true" focusable="false"
-           fill="none" stroke="currentColor" stroke-width="3.4"
-           stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6 51 C 8 39, 20 34, 32 34 C 44 34, 56 39, 58 51"/>
-        <path d="M6 51 L 32 59 L 58 51" stroke-width="2.4"/>
-        <path d="M32 62 L 32 16"/>
-        <path d="M32 9 L 26.6 19 L 37.4 19 Z" fill="currentColor" stroke="none"/>
-        <path d="M32 62 L 26.6 55.5 M32 62 L 37.4 55.5" stroke-width="2.4"/>
-      </svg>
+    <span class="brand-mark">
+      <img class="mark-light" src="arcaflame-mark.png" alt="" width="457" height="433" decoding="async">
+      <img class="mark-dark" src="arcaflame-mark-dark.png" alt="" width="457" height="433" decoding="async">
     </span>
   </a>
 
   <nav class="nav-side nav-right" aria-label="Secondary">
     <a href="#download">Download</a>
     <a href="https://github.com/Glitch-spec266/Arcaflame">GitHub</a>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
+      <span class="theme-toggle-label">Theme</span>
+    </button>
   </nav>
 </header>
 
@@ -63,12 +67,8 @@
       <span class="tick tick-br" aria-hidden="true"></span>
 
       <p class="eyebrow">
-        <svg viewBox="0 0 64 64" aria-hidden="true" fill="none" stroke="currentColor"
-             stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M6 51 C 8 39, 20 34, 32 34 C 44 34, 56 39, 58 51"/>
-          <path d="M32 62 L 32 16"/>
-          <path d="M32 9 L 26.6 19 L 37.4 19 Z" fill="currentColor" stroke="none"/>
-        </svg>
+        <img class="eyebrow-mark mark-light" src="arcaflame-mark.png" alt="" width="457" height="433" decoding="async">
+        <img class="eyebrow-mark mark-dark" src="arcaflame-mark-dark.png" alt="" width="457" height="433" decoding="async">
         Agentic orchestration that can use a browser
       </p>
 
@@ -401,16 +401,9 @@ sleipnir tui --orchestrate</code></pre>
 
 <footer class="foot">
   <a class="brand" href="#top" aria-label="Arcaflame — home">
-    <span class="brand-tile">
-      <svg class="brand-star" viewBox="0 0 64 64" aria-hidden="true" focusable="false"
-           fill="none" stroke="currentColor" stroke-width="3.4"
-           stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6 51 C 8 39, 20 34, 32 34 C 44 34, 56 39, 58 51"/>
-        <path d="M6 51 L 32 59 L 58 51" stroke-width="2.4"/>
-        <path d="M32 62 L 32 16"/>
-        <path d="M32 9 L 26.6 19 L 37.4 19 Z" fill="currentColor" stroke="none"/>
-        <path d="M32 62 L 26.6 55.5 M32 62 L 37.4 55.5" stroke-width="2.4"/>
-      </svg>
+    <span class="brand-mark">
+      <img class="mark-light" src="arcaflame-mark.png" alt="" width="457" height="433" decoding="async">
+      <img class="mark-dark" src="arcaflame-mark-dark.png" alt="" width="457" height="433" decoding="async">
     </span>
     <span class="brand-word">Arcaflame</span>
   </a>
