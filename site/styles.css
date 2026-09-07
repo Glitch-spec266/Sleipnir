@@ -541,6 +541,29 @@ h1 {
    stays saturated at both ends, so every outline reads as a real
    boundary on warm paper rather than fading into it. */
 .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:clamp(.9rem,2vw,1.25rem); }
+
+/* Bento rhythm. A dozen identical cards is what made this section read
+   as a wall of text; giving one card per row more room breaks the grid
+   into something the eye can scan. The wider cards turn horizontal —
+   figure on the left, text on the right — which also gives their
+   paragraphs a shorter measure rather than a wider one. */
+.grid .card--wide { grid-column:span 2; }
+.grid .card--full { grid-column:1 / -1; }
+
+.grid .card--wide, .grid .card--full {
+  display:grid;
+  grid-template-columns:auto 1fr;
+  /* column-gap only: a shared `gap` also spaces the heading away from
+     its own paragraph, which reads as two unrelated blocks */
+  column-gap:clamp(1rem,2.5vw,1.75rem);
+  row-gap:.55rem;
+  align-items:center;
+  align-content:center;
+  text-align:right;
+}
+.grid .card--wide .card-figure, .grid .card--full .card-figure { margin:0; align-self:center; }
+.grid .card--wide :is(h3,p), .grid .card--full :is(h3,p) { grid-column:2; }
+.grid .card--full .card-figure { width:64px; height:64px; }
 .card {
   text-align:right;
   display:flex; flex-direction:column; justify-content:center;
@@ -804,8 +827,15 @@ pre code { background:none; color:inherit; padding:0; }
 /* ── responsive ──────────────────────────────────────────────── */
 @media (max-width:900px) {
   .grid, .dl-notes { grid-template-columns:1fr 1fr; }
+  .grid .card--wide { grid-column:span 2; }
+  .grid .card--full { grid-column:1 / -1; }
 }
 @media (max-width:700px) {
+  /* one column, so the bento spans collapse and every card returns to
+     the stacked layout — a two-column card at 375px is two slivers */
+  .grid .card--wide, .grid .card--full { grid-column:auto; display:block; }
+  .grid .card--wide .card-figure, .grid .card--full .card-figure { margin:0 0 .9rem auto; }
+  .grid .card--full .card-figure { width:46px; height:46px; }
   .nav { padding-inline:1rem; }
   .nav-side { gap:1rem; font-size:.82rem; }
   .nav-side a:nth-child(2) { display:none; }
