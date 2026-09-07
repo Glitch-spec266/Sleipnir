@@ -1,55 +1,75 @@
 /* ═══════════════════════════════════════════════════════════════
-   Arcaflame — warm, centred, light-only.
+   Arcaflame — blue, centred, light and dark.
 
    The layout follows a reference the client chose: split nav with
    the mark alone in the middle, a crosshair-framed hero, one very
-   large centred headline, and a big centred closing line. The
-   reference is dark; this is its daylight inverse — the warm peach
-   that glowed on near-black becomes ember ink on warm paper, and
-   the spotlight becomes a soft sunrise behind the fold.
+   large centred headline, and a big centred closing line.
+
+   The palette is taken from the logo artwork: a deep navy at the
+   arrowhead, a mid blue through the body, and a pale periwinkle at
+   the tips. Those three become the accent, the ramp and the glow, so
+   the page and the mark are drawn from one set of colours rather than
+   from two that merely coexist.
 
    Layer 1 primitives → layer 2 semantic tokens → components.
-   No dark mode by request: one palette, stated once.
+   Components read only layer-2 names, so the dark palette below
+   redefines tokens and never touches a component rule.
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
   color-scheme: light;
 
   /* layer 1 — primitives */
-  --paper:#FDFAF7;
-  --paper-2:#F8F2EC;
-  --paper-3:#F2E9E0;
-  --ink-900:#1A1512;
-  --ink-600:#5F564E;
-  --ink-400:#6F655B;   /* 4.5:1 on white — used for small caps labels */
-  --ember-700:#9A3412;
-  --ember-600:#C2410C;
-  --ember-500:#E2560C;
-  --ember-300:#FDBA74;
-  --ember-100:#FFEDE0;
-  --line:#EDE2D8;
-  --line-2:#DFD1C4;
+  --page:#FBFCFE;
+  --page-2:#F1F4FC;
+  --page-3:#E7ECF9;
+  --ink-900:#12141F;
+  --ink-600:#4E5468;
+  --ink-400:#5D6478;   /* 4.5:1 on white — used for small caps labels */
+  --blue-700:#1E2FA8;
+  --blue-600:#3247D6;
+  --blue-500:#4C63E8;
+  --blue-300:#9AB0F0;
+  --blue-100:#E9EDFE;
+  --line:#E3E7F4;
+  --line-2:#CBD3E9;
+
+  /* the card ramp: one twelve-step run, shared by every section
+     so the sections read as one system rather than three */
+  --ramp-1:#8FA6F2;
+  --ramp-2:#7E96EE;
+  --ramp-3:#6E87EA;
+  --ramp-4:#5E79E6;
+  --ramp-5:#4F6BE1;
+  --ramp-6:#455FD8;
+  --ramp-7:#3C53CE;
+  --ramp-8:#3448C2;
+  --ramp-9:#2D3EB3;
+  --ramp-10:#2735A4;
+  --ramp-11:#212D93;
+  --ramp-12:#1B2580;
 
   /* layer 2 — semantic */
-  --bg:var(--paper);
+  --bg:var(--page);
   --surface:#FFFFFF;
-  --surface-2:var(--paper-2);
+  --surface-2:var(--page-2);
   --text:var(--ink-900);
   --text-muted:var(--ink-600);
   --text-faint:var(--ink-400);
   --border:var(--line);
   --border-strong:var(--line-2);
-  --accent:var(--ember-600);
-  --accent-hover:var(--ember-700);
-  --accent-soft:var(--ember-100);
+  --accent:var(--blue-600);
+  --accent-hover:var(--blue-700);
+  --accent-soft:var(--blue-100);
   --btn-fg:#FFFFFF;
-  --code-bg:#1A1512;
-  --code-fg:#F2E9E0;
-  --focus:var(--ember-700);
+  --code-bg:#12141F;
+  --code-fg:#E7ECF9;
+  --focus:var(--blue-700);
+  --code-ink:var(--blue-700);      /* inline <code>, on --accent-soft */
 
-  --shadow-sm:0 1px 2px rgba(26,21,18,.04), 0 2px 8px -4px rgba(26,21,18,.08);
-  --shadow-md:0 1px 3px rgba(26,21,18,.05), 0 12px 32px -16px rgba(154,52,18,.22);
-  --shadow-btn:0 1px 2px rgba(154,52,18,.28), 0 10px 24px -12px rgba(194,65,12,.55);
+  --shadow-sm:0 1px 2px rgba(18,20,31,.04), 0 2px 8px -4px rgba(18,20,31,.08);
+  --shadow-md:0 1px 3px rgba(18,20,31,.05), 0 12px 32px -16px rgba(30,47,168,.22);
+  --shadow-btn:0 1px 2px rgba(30,47,168,.28), 0 10px 24px -12px rgba(50,71,214,.45);
 
   --font:"Schibsted Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -59,6 +79,90 @@
 
   --maxw:70rem;
   --gutter:clamp(1.25rem,5vw,3rem);
+}
+
+
+/* ── dark, three states ──────────────────────────────────────────
+   The viewer's setting is system (the default), light, or dark, so all
+   three are implemented: every token has its value on bare :root, the
+   media query redefines only what changes, and the [data-theme] block
+   repeats those so an explicit toggle beats the system preference in
+   both directions.
+
+   Dark is not the light palette inverted. The ground is a raised
+   near-black rather than #000, elevation comes from lighter surfaces
+   instead of heavier shadows, and the accent is lightened because a
+   saturated blue blooms badly on a dark field. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg:#0B0D16;
+    --surface:#141827;
+    --surface-2:#1A1F33;
+    --text:#EEF1FA;
+    --text-muted:#A9B1CB;
+    --text-faint:#8891AE;
+    --border:#232941;
+    --border-strong:#333B59;
+    --accent:#8098FF;
+    --accent-hover:#A6B7FF;
+    --accent-soft:rgba(128,152,255,.15);
+    --btn-fg:#0B0D16;
+    --code-bg:#06080F;
+    --code-fg:#DDE4F7;
+    --focus:#A6B7FF;
+  --code-ink:#B9C6FF;
+    --code-ink:#B9C6FF;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4), 0 2px 8px -4px rgba(0,0,0,.5);
+    --shadow-md:0 1px 3px rgba(0,0,0,.45), 0 14px 34px -18px rgba(0,0,0,.7);
+    --shadow-btn:0 1px 2px rgba(0,0,0,.5), 0 10px 24px -12px rgba(128,152,255,.45);
+    --ramp-1:#5E79E6;
+    --ramp-2:#6884EA;
+    --ramp-3:#7290ED;
+    --ramp-4:#7C9BF0;
+    --ramp-5:#86A6F2;
+    --ramp-6:#90B0F4;
+    --ramp-7:#9ABAF6;
+    --ramp-8:#A4C2F8;
+    --ramp-9:#AECAF9;
+    --ramp-10:#B7D1FA;
+    --ramp-11:#C0D8FB;
+    --ramp-12:#C9DEFC;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:#0B0D16;
+  --surface:#141827;
+  --surface-2:#1A1F33;
+  --text:#EEF1FA;
+  --text-muted:#A9B1CB;
+  --text-faint:#8891AE;
+  --border:#232941;
+  --border-strong:#333B59;
+  --accent:#8098FF;
+  --accent-hover:#A6B7FF;
+  --accent-soft:rgba(128,152,255,.15);
+  --btn-fg:#0B0D16;
+  --code-bg:#06080F;
+  --code-fg:#DDE4F7;
+  --focus:#A6B7FF;
+  --code-ink:#B9C6FF;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4), 0 2px 8px -4px rgba(0,0,0,.5);
+  --shadow-md:0 1px 3px rgba(0,0,0,.45), 0 14px 34px -18px rgba(0,0,0,.7);
+  --shadow-btn:0 1px 2px rgba(0,0,0,.5), 0 10px 24px -12px rgba(128,152,255,.45);
+  --ramp-1:#5E79E6;
+  --ramp-2:#6884EA;
+  --ramp-3:#7290ED;
+  --ramp-4:#7C9BF0;
+  --ramp-5:#86A6F2;
+  --ramp-6:#90B0F4;
+  --ramp-7:#9ABAF6;
+  --ramp-8:#A4C2F8;
+  --ramp-9:#AECAF9;
+  --ramp-10:#B7D1FA;
+  --ramp-11:#C0D8FB;
+  --ramp-12:#C9DEFC;
 }
 
 /* ── base ────────────────────────────────────────────────────── */
@@ -94,7 +198,7 @@ a:hover { color:var(--accent-hover); }
 code, pre { font-family:var(--mono); }
 code { font-size:.88em; }
 :not(pre) > code {
-  background:var(--accent-soft); color:var(--ember-700);
+  background:var(--accent-soft); color:var(--code-ink);
   padding:.12em .38em; border-radius:4px;
   overflow-wrap:anywhere;            /* long identifiers must not widen the page */
 }
@@ -126,16 +230,28 @@ h1 em, h2 em { font-style:normal; color:var(--accent); }
 .nav-side a { color:var(--text-muted); transition:color var(--dur) var(--ease); }
 .nav-side a:hover { color:var(--accent); }
 
-.brand { display:inline-flex; align-items:center; gap:.6rem; color:var(--text); }
-.brand-tile {
-  display:grid; place-items:center;
-  width:42px; height:42px; border-radius:12px;
-  background:linear-gradient(160deg, #FFFFFF, var(--paper-2));
-  border:1px solid var(--border);
-  box-shadow:var(--shadow-sm);
-  color:var(--accent);
+.brand { display:inline-flex; align-items:center; gap:.65rem; color:var(--text); }
+
+/* The mark is the artwork itself rather than a glyph on a tile: it already
+   carries its own silhouette, and a chrome tile around it only made it
+   smaller. Two files instead of one filter, because the bowstring and its
+   end points are near-black and would disappear on the dark ground —
+   only those are lifted, the blues are identical in both. */
+.brand-mark { display:block; flex:none; line-height:0; }
+.brand-mark img { display:block; width:100%; height:auto; }
+.nav .brand-mark { width:54px; }
+.foot .brand-mark { width:76px; }
+/* Both variants are in the markup, so the hide rule has to out-specify
+   `.brand-mark img` — a bare `.mark-dark` loses to it and both marks render. */
+.brand-mark .mark-dark { display:none; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .brand-mark .mark-light { display:none; }
+  :root:not([data-theme="light"]) .brand-mark .mark-dark { display:block; }
 }
-.brand-star { width:24px; height:24px; }
+:root[data-theme="dark"] .brand-mark .mark-light { display:none; }
+:root[data-theme="dark"] .brand-mark .mark-dark { display:block; }
+
 .brand-word { font-weight:600; font-size:1.05rem; letter-spacing:-.02em; }
 
 
@@ -175,7 +291,7 @@ h1 em, h2 em { font-style:normal; color:var(--accent); }
   border-bottom:1px solid var(--border);
 }
 .preview-bar i { width:9px; height:9px; border-radius:50%; background:var(--border-strong); flex:none; }
-.preview-bar i:first-child { background:var(--ember-300); }
+.preview-bar i:first-child { background:var(--blue-300); }
 .preview-bar em {
   margin-inline:auto;
   font-family:var(--mono); font-style:normal;
@@ -204,8 +320,8 @@ h1 em, h2 em { font-style:normal; color:var(--accent); }
   top:-14rem; left:50%; translate:-50% 0;
   width:min(80rem,150vw); height:44rem;
   background:
-    radial-gradient(48% 42% at 50% 40%, rgba(226,86,12,.16), transparent 70%),
-    radial-gradient(70% 55% at 50% 30%, rgba(253,186,116,.22), transparent 72%);
+    radial-gradient(48% 42% at 50% 40%, rgba(76,99,232,.16), transparent 70%),
+    radial-gradient(70% 55% at 50% 30%, rgba(154,176,240,.26), transparent 72%);
   filter:blur(12px);
 }
 .glow-low { top:-10rem; height:34rem; opacity:.75; }
@@ -240,7 +356,14 @@ h1 em, h2 em { font-style:normal; color:var(--accent); }
   box-shadow:var(--shadow-sm);
   font-size:.83rem; font-weight:500; color:var(--text-muted);
 }
-.eyebrow svg { width:16px; height:16px; color:var(--accent); flex:none; }
+.eyebrow-mark { width:22px; height:auto; flex:none; }
+.eyebrow .mark-dark { display:none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .eyebrow .mark-light { display:none; }
+  :root:not([data-theme="light"]) .eyebrow .mark-dark { display:block; }
+}
+:root[data-theme="dark"] .eyebrow .mark-light { display:none; }
+:root[data-theme="dark"] .eyebrow .mark-dark { display:block; }
 
 h1 {
   margin:0 auto 1.5rem;
@@ -381,34 +504,34 @@ h1 {
 .card em { font-style:normal; font-weight:600; color:var(--text); }
 
 /* 01 Plan */
-#capabilities > .grid:nth-of-type(1) .card:nth-child(1) { --card-line:#F5A524; }
-#capabilities > .grid:nth-of-type(1) .card:nth-child(2) { --card-line:#F09113; }
-#capabilities > .grid:nth-of-type(1) .card:nth-child(3) { --card-line:#EA7F0A; }
+#capabilities > .grid:nth-of-type(1) .card:nth-child(1) { --card-line:var(--ramp-1); }
+#capabilities > .grid:nth-of-type(1) .card:nth-child(2) { --card-line:var(--ramp-2); }
+#capabilities > .grid:nth-of-type(1) .card:nth-child(3) { --card-line:var(--ramp-3); }
 /* 02 Dispatch */
-#capabilities > .grid:nth-of-type(2) .card:nth-child(1) { --card-line:#E36D07; }
-#capabilities > .grid:nth-of-type(2) .card:nth-child(2) { --card-line:#DC5B08; }
-#capabilities > .grid:nth-of-type(2) .card:nth-child(3) { --card-line:#D24C0A; }
+#capabilities > .grid:nth-of-type(2) .card:nth-child(1) { --card-line:var(--ramp-4); }
+#capabilities > .grid:nth-of-type(2) .card:nth-child(2) { --card-line:var(--ramp-5); }
+#capabilities > .grid:nth-of-type(2) .card:nth-child(3) { --card-line:var(--ramp-6); }
 /* 03 Control */
-#capabilities > .grid:nth-of-type(3) .card:nth-child(1) { --card-line:#C8400C; }
-#capabilities > .grid:nth-of-type(3) .card:nth-child(2) { --card-line:#BC380E; }
-#capabilities > .grid:nth-of-type(3) .card:nth-child(3) { --card-line:#AE3210; }
-#capabilities > .grid:nth-of-type(3) .card:nth-child(4) { --card-line:#9F2D11; }
-#capabilities > .grid:nth-of-type(3) .card:nth-child(5) { --card-line:#8F2911; }
-#capabilities > .grid:nth-of-type(3) .card:nth-child(6) { --card-line:#7C2410; }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(1) { --card-line:var(--ramp-7); }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(2) { --card-line:var(--ramp-8); }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(3) { --card-line:var(--ramp-9); }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(4) { --card-line:var(--ramp-10); }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(5) { --card-line:var(--ramp-11); }
+#capabilities > .grid:nth-of-type(3) .card:nth-child(6) { --card-line:var(--ramp-12); }
 
 
 /* Host control: its own run of the ramp. The three capability cards
    take the warm end, the six safeguards the deeper end — so the eye
    reads them as two groups without a heading having to say so. */
-#host > .grid:nth-of-type(1) .card:nth-child(1) { --card-line:#F5A524; }
-#host > .grid:nth-of-type(1) .card:nth-child(2) { --card-line:#EE8A10; }
-#host > .grid:nth-of-type(1) .card:nth-child(3) { --card-line:#E5720A; }
-#host > .grid:nth-of-type(2) .card:nth-child(1) { --card-line:#D9600C; }
-#host > .grid:nth-of-type(2) .card:nth-child(2) { --card-line:#CB520D; }
-#host > .grid:nth-of-type(2) .card:nth-child(3) { --card-line:#BC450E; }
-#host > .grid:nth-of-type(2) .card:nth-child(4) { --card-line:#AC3A10; }
-#host > .grid:nth-of-type(2) .card:nth-child(5) { --card-line:#9B3011; }
-#host > .grid:nth-of-type(2) .card:nth-child(6) { --card-line:#8A2911; }
+#host > .grid:nth-of-type(1) .card:nth-child(1) { --card-line:var(--ramp-1); }
+#host > .grid:nth-of-type(1) .card:nth-child(2) { --card-line:var(--ramp-2); }
+#host > .grid:nth-of-type(1) .card:nth-child(3) { --card-line:var(--ramp-3); }
+#host > .grid:nth-of-type(2) .card:nth-child(1) { --card-line:var(--ramp-4); }
+#host > .grid:nth-of-type(2) .card:nth-child(2) { --card-line:var(--ramp-6); }
+#host > .grid:nth-of-type(2) .card:nth-child(3) { --card-line:var(--ramp-7); }
+#host > .grid:nth-of-type(2) .card:nth-child(4) { --card-line:var(--ramp-8); }
+#host > .grid:nth-of-type(2) .card:nth-child(5) { --card-line:var(--ramp-9); }
+#host > .grid:nth-of-type(2) .card:nth-child(6) { --card-line:var(--ramp-11); }
 
 /* the pull quote — the problem, stated once, in the client's words */
 .pull {
@@ -416,7 +539,7 @@ h1 {
   padding:clamp(1.5rem,3vw,2.25rem);
   border:2px solid var(--accent);
   border-radius:18px;
-  background:linear-gradient(180deg, var(--ember-100), transparent 70%);
+  background:linear-gradient(180deg, var(--blue-100), transparent 70%);
 }
 .pull p {
   margin:0 0 .8rem;
@@ -461,11 +584,11 @@ h1 {
   border:2px solid var(--card-line, var(--border-strong));
   border-radius:18px;
 }
-.dl-grid .dl:nth-child(1) { --card-line:#F5A524; }
-.dl-grid .dl:nth-child(2) { --card-line:#E88A0C; }
-.dl-notes .note:nth-child(1) { --card-line:#D6600B; }
-.dl-notes .note:nth-child(2) { --card-line:#B8380E; }
-.dl-notes .note:nth-child(3) { --card-line:#8F2911; }
+.dl-grid .dl:nth-child(1) { --card-line:var(--ramp-1); }
+.dl-grid .dl:nth-child(2) { --card-line:var(--ramp-2); }
+.dl-notes .note:nth-child(1) { --card-line:var(--ramp-4); }
+.dl-notes .note:nth-child(2) { --card-line:var(--ramp-7); }
+.dl-notes .note:nth-child(3) { --card-line:var(--ramp-11); }
 
 .dl h3, .note h3 {
   font-size:.76rem; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
@@ -491,7 +614,7 @@ pre code { background:none; color:inherit; padding:0; }
 /* The warning keeps a tint and an accent heading on top of the outline.
    Its border is now the same weight as its neighbours', so the border
    alone can no longer be what marks it as a warning. */
-.note-warn { background:linear-gradient(180deg, var(--ember-100), transparent 65%); }
+.note-warn { background:linear-gradient(180deg, var(--blue-100), transparent 65%); }
 .note-warn h3 { color:var(--accent); }
 
 /* ── closing ─────────────────────────────────────────────────── */
@@ -505,7 +628,7 @@ pre code { background:none; color:inherit; padding:0; }
   display:inline-block; vertical-align:baseline;
   padding:.05em .55em; border-radius:999px;
   background:var(--accent-soft); color:var(--accent);
-  border:1px solid var(--ember-300);
+  border:1px solid var(--blue-300);
 }
 
 /* ── footer ──────────────────────────────────────────────────── */
@@ -550,7 +673,7 @@ pre code { background:none; color:inherit; padding:0; }
     body::before {
       content:""; position:fixed; inset:0 auto auto 0; z-index:40;
       height:2px; width:100%; transform-origin:0 50%;
-      background:linear-gradient(90deg, #F5A524, var(--accent), #8A2911);
+      background:linear-gradient(90deg, var(--ramp-1), var(--accent), var(--ramp-11));
       animation:progress linear both;
       animation-timeline:scroll(root block);
     }
