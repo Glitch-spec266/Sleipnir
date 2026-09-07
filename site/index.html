@@ -12,7 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- ?v= is a hand-rolled cache buster: no build step here, so a redeploy
      would otherwise serve a stale stylesheet. Bump it when these change. -->
-<link rel="stylesheet" href="styles.css?v=28">
+<link rel="stylesheet" href="styles.css?v=31">
 <script>
   // Applied before first paint: setting the theme from JS after render is
   // what causes the flash of the wrong palette on every navigation.
@@ -205,7 +205,7 @@
 
     <p class="group reveal"><span>SO</span> It uses the computer, like you would</p>
     <div class="grid">
-      <article class="card reveal">
+      <article class="card card--wide reveal">
         <span class="card-figure" aria-hidden="true">
           <svg viewBox="0 0 48 48">
       <rect x="6" y="10" width="36" height="28" rx="3"/>
@@ -230,7 +230,7 @@
         <h3>Keyboard, mouse and screen</h3>
         <p>When the work is outside the browser it types, clicks and reads the screen through the OS itself — <code>SendInput</code> and GDI on Windows, <code>ydotool</code> on Linux.</p>
       </article>
-      <article class="card reveal">
+      <article class="card card--full reveal">
         <span class="card-figure" aria-hidden="true">
           <svg viewBox="0 0 48 48">
       <path class="dim" d="M9 7 V41 M39 7 V41" stroke-dasharray="3 4"/>
@@ -246,7 +246,7 @@
 
     <p class="group reveal"><span>AND</span> Nothing happens off-screen</p>
     <div class="grid">
-      <article class="card reveal">
+      <article class="card card--wide reveal">
         <span class="card-figure" aria-hidden="true">
           <svg viewBox="0 0 48 48">
       <path d="M9 13 H33 M9 21 H33 M9 29 H26"/>
@@ -279,7 +279,7 @@
         <h3>Off unless you ask for it</h3>
         <p>Host control is an opt-in extra: <code>pip install -e ".[host]"</code>. Skip it and the orchestrator, the console and the whole test suite still run — a headless server has no use for a Chromium download.</p>
       </article>
-      <article class="card reveal">
+      <article class="card card--wide reveal">
         <span class="card-figure" aria-hidden="true">
           <svg viewBox="0 0 48 48">
       <rect x="6" y="7" width="36" height="11" rx="2"/>
@@ -303,7 +303,7 @@
         <h3>It tells you what it cannot reach</h3>
         <p><code>doctor</code> reports exactly what your host will and will not allow before a run starts — including the windows it is not permitted to touch, rather than failing quietly halfway through.</p>
       </article>
-      <article class="card reveal">
+      <article class="card card--wide reveal">
         <span class="card-figure" aria-hidden="true">
           <svg viewBox="0 0 48 48">
       <rect class="solid" x="10" y="8" width="5" height="14" rx="1.8"/>
@@ -357,15 +357,44 @@
 
     <p class="group reveal"><span>01</span> Plan</p>
     <div class="grid">
-      <article class="card reveal">
+      <article class="card card--wide reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <path d="M6 9 H22 M6 15 H18"/>
+      <circle cx="30" cy="12" r="3.5"/>
+      <circle cx="22" cy="27" r="3.5"/>
+      <circle cx="38" cy="27" r="3.5"/>
+      <path d="M27.6 15 L24.4 23.5 M32.4 15 L35.6 23.5"/>
+      <path d="M18 39 l4 4 8 -9" stroke-width="2.4"/>
+          </svg>
+        </span>
         <h3>Prompt → validated task DAG</h3>
         <p>The planner turns one paragraph of intent into typed tasks with real dependencies, and validates the whole graph before a single token is spent.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <circle cx="9" cy="24" r="3.5"/>
+      <path d="M13 24 H20"/>
+      <rect x="20" y="7" width="22" height="8" rx="2" class="dim"/>
+      <rect x="20" y="20" width="22" height="8" rx="2"/>
+      <rect x="20" y="33" width="22" height="8" rx="2" class="dim"/>
+      <path d="M20 24 H14 M14 11 V37"/>
+          </svg>
+        </span>
         <h3>Tier routing, with its reasoning</h3>
         <p>Every task is labelled <code>reason</code>, <code>code</code>, <code>mechanical</code> or <code>extract</code>. The router maps each tier to the cheapest model that clears it — and <code>explain</code> prints why.</p>
       </article>
-      <article class="card reveal">
+      <article class="card card--full reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <rect x="8" y="7" width="32" height="9" rx="2"/>
+      <rect x="8" y="19" width="32" height="9" rx="2" class="dim"/>
+      <rect x="8" y="31" width="32" height="9" rx="2" class="dim"/>
+      <path d="M14 11.5 h6 M14 23.5 h6 M14 35.5 h6" class="dim"/>
+      <path d="M44 9 V38" stroke-width="2.4"/>
+          </svg>
+        </span>
         <h3>Policy you write, in TOML</h3>
         <p>A backend order per tier. The shipped example keeps Claude first for reasoning and OpenRouter first for cheap mechanical work — so the tight window is spent on thinking.</p>
       </article>
@@ -373,15 +402,43 @@
 
     <p class="group reveal"><span>02</span> Dispatch</p>
     <div class="grid">
-      <article class="card reveal">
+      <article class="card card--wide reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <circle cx="24" cy="24" r="5"/>
+      <path d="M24 19 V8 M24 29 V40 M19 24 H8 M29 24 H40"/>
+      <rect x="18" y="3" width="12" height="5" rx="1.6" class="dim"/>
+      <rect x="18" y="40" width="12" height="5" rx="1.6" class="dim"/>
+      <rect x="3" y="21" width="5" height="6" rx="1.6" class="dim"/>
+      <rect x="40" y="21" width="5" height="6" rx="1.6" class="dim"/>
+          </svg>
+        </span>
         <h3>Four backends, zero re-implemented auth</h3>
         <p><code>claude -p</code> and <code>codex exec</code> shell out to the official CLIs and inherit their credentials; the rest is plain HTTP against an OpenAI-compatible endpoint. No adapter runs an OAuth flow.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <rect x="4" y="12" width="12" height="24" rx="2"/>
+      <rect x="18" y="12" width="12" height="24" rx="2"/>
+      <rect x="32" y="12" width="12" height="24" rx="2"/>
+      <path d="M7 20 h6 M21 20 h6 M35 20 h6" class="dim"/>
+      <path d="M17 6 V42 M31 6 V42" class="dim" stroke-dasharray="3 4"/>
+          </svg>
+        </span>
         <h3>Parallel work in isolated workspaces</h3>
         <p>Readiness comes from the graph, not a queue: a concurrency cap, cancellation, timeouts and tree kill. Each attempt gets its own directory, so nothing leaks sideways.</p>
       </article>
-      <article class="card reveal">
+      <article class="card card--full reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <rect x="4" y="17" width="13" height="14" rx="2"/>
+      <path d="M17 24 H26"/>
+      <path d="M26 12 V36" stroke-width="2.4"/>
+      <path d="M31 16 l3 3 6 -7" stroke-width="2.4"/>
+      <path d="M32 30 L40 38 M40 30 L32 38" class="dim" stroke-width="2.2"/>
+          </svg>
+        </span>
         <h3>Acceptance checks</h3>
         <p>Tasks carry checks that have to pass before the work counts. A task is not finished because a model said it was finished.</p>
       </article>
@@ -389,27 +446,81 @@
 
     <p class="group reveal"><span>03</span> Control</p>
     <div class="grid">
-      <article class="card reveal">
+      <article class="card card--wide reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <path d="M6 34 a18 18 0 0 1 36 0"/>
+      <path d="M42 10 V38" class="dim" stroke-width="2.4"/>
+      <path d="M24 34 L33 20" stroke-width="2.4"/>
+      <circle class="solid" cx="24" cy="34" r="2.6"/>
+      <path d="M30 41 l5 -5 M35 36 v4 h-4" class="dim"/>
+          </svg>
+        </span>
         <h3>Budget governor</h3>
         <p>Five-hour window accounting across providers, with automatic downshift to cheaper tiers <em>before</em> the wall — not an error after it.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <path d="M5 24 H43" class="dim" stroke-dasharray="3 5"/>
+      <circle cx="12" cy="24" r="1.8" class="dim"/>
+      <circle cx="20" cy="24" r="1.8" class="dim"/>
+      <circle cx="36" cy="24" r="1.8" class="dim"/>
+      <circle class="solid" cx="28" cy="24" r="5"/>
+      <path d="M28 13 V17 M28 31 V35"/>
+          </svg>
+        </span>
         <h3>Sparse brain</h3>
         <p>Costs nothing while workers succeed. At a terminal impasse it gets the bounded manifest plus at most four urgent task specs — 24k characters, hard capped.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <circle cx="11" cy="12" r="3.2"/>
+      <path d="M11 15 V36 a3 3 0 0 0 3 3 h6"/>
+      <circle cx="11" cy="24" r="3.2" class="dim"/>
+      <circle class="dim" cx="30" cy="24" r="11" stroke-dasharray="3 4"/>
+      <circle class="solid" cx="30" cy="24" r="3.2"/>
+          </svg>
+        </span>
         <h3>Audited plan revisions</h3>
         <p>Blast radius is computed locally before anything is written. Routing-only retargets can auto-apply; semantic changes wait for <code>apply-revision</code>.</p>
       </article>
-      <article class="card reveal">
+      <article class="card card--wide reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <rect x="5" y="9" width="38" height="30" rx="3"/>
+      <path d="M5 17 H43"/>
+      <circle class="solid" cx="10" cy="13" r="1.4"/>
+      <path d="M11 33 l7 -8 6 5 8 -11" stroke-width="2.2"/>
+      <path d="M11 26 h3" class="dim"/>
+          </svg>
+        </span>
         <h3>Live terminal dashboard</h3>
         <p><code>tui</code> shows DAG, routing and budget. Dependency-free, offline in read-only mode, and it never prints subagent output.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <path d="M10 10 h28 M10 18 h28 M10 26 h20"/>
+      <path d="M10 34 h14" class="dim"/>
+      <circle cx="34" cy="34" r="6"/>
+      <path d="M34 31 v3 l2.4 1.6"/>
+          </svg>
+        </span>
         <h3>Append-only run log</h3>
         <p><code>results.jsonl</code>, fsynced per record. Status is a pure fold of results over the plan, so a run resumes exactly where it stopped.</p>
       </article>
-      <article class="card reveal">
+      <article class="card card--wide reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <path d="M8 24 H20"/>
+      <circle class="solid" cx="20" cy="24" r="2.6"/>
+      <path d="M22.6 24 H28 l6 -12 h8"/>
+      <path d="M22.6 24 H42"/>
+      <path d="M22.6 24 H28 l6 12 h8"/>
+          </svg>
+        </span>
         <h3>One OS seam, three platforms</h3>
         <p>Process trees, file locking, raw console mode and input injection go through one platform layer picked at import — <code>ydotool</code> on Linux, <code>SendInput</code> and job objects on Windows, Quartz <code>CGEventPost</code> on macOS.</p>
       </article>
