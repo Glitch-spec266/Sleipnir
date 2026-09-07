@@ -3,8 +3,10 @@
 The public surface. Everything here is platform-neutral: it validates what a
 caller asked for, records it, and hands the raw action to whichever backend
 this machine has -- ``_linux`` (ydotool, injecting through ``/dev/uinput``)
-or ``_windows`` (``SendInput`` and GDI). The two mechanisms differ in what
-they can reach; the vocabulary a caller speaks does not.
+``_windows`` (``SendInput`` and GDI) or ``_darwin`` (Quartz ``CGEventPost``
+and ``screencapture``). The three mechanisms differ in what they can reach
+and in what has to be granted before they reach anything; the vocabulary a
+caller speaks does not.
 
 **Auditing lives here and nowhere else.** Every function in the original
 single-file module audited itself, and splitting it into backends is exactly
@@ -30,6 +32,8 @@ from sleipnir.capabilities.computer._backend import CapabilityError, Probe
 
 if platform.IS_WINDOWS:  # pragma: win32 cover
     from sleipnir.capabilities.computer import _windows as _impl
+elif platform.IS_MACOS:  # pragma: darwin cover
+    from sleipnir.capabilities.computer import _darwin as _impl
 else:  # pragma: posix cover
     from sleipnir.capabilities.computer import _linux as _impl
 
@@ -46,7 +50,9 @@ KEYCODES: dict[str, int] = _impl.KEYCODES
 #: public.
 BUTTON_CODES = _impl.BUTTON_CODES
 
-#: Start the input daemon if this platform has one. A no-op on Windows.
+#: Start the input daemon if this platform has one. A no-op on Windows;
+#: on macOS it has no daemon to start either, but it is where the
+#: Accessibility grant is enforced — see ``_darwin.ensure_daemon``.
 #: Called by name from each public function below rather than through
 #: ``_impl`` so there is exactly one interceptable seam.
 ensure_daemon = _impl.ensure_daemon
