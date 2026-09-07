@@ -66,6 +66,8 @@
   --code-fg:#E7ECF9;
   --focus:var(--blue-700);
   --code-ink:var(--blue-700);      /* inline <code>, on --accent-soft */
+  --os-apple:#111111;              /* Apple's mark: black on light, white on dark */
+  --os-linux:#E0A400;              /* Tux, darkened just enough to read on white */
 
   --shadow-sm:0 1px 2px rgba(18,20,31,.04), 0 2px 8px -4px rgba(18,20,31,.08);
   --shadow-md:0 1px 3px rgba(18,20,31,.05), 0 12px 32px -16px rgba(30,47,168,.22);
@@ -112,7 +114,13 @@
     --code-fg:#DDE4F7;
     --focus:#A6B7FF;
   --code-ink:#B9C6FF;
+  --os-apple:#F2F5FF;
+  --os-linux:#FCC624;
     --code-ink:#B9C6FF;
+  --os-apple:#F2F5FF;
+  --os-linux:#FCC624;
+    --os-apple:#F2F5FF;
+    --os-linux:#FCC624;
     --shadow-sm:0 1px 2px rgba(0,0,0,.4), 0 2px 8px -4px rgba(0,0,0,.5);
     --shadow-md:0 1px 3px rgba(0,0,0,.45), 0 14px 34px -18px rgba(0,0,0,.7);
     --shadow-btn:0 1px 2px rgba(0,0,0,.5), 0 10px 24px -12px rgba(128,152,255,.45);
@@ -148,6 +156,8 @@
   --code-fg:#DDE4F7;
   --focus:#A6B7FF;
   --code-ink:#B9C6FF;
+  --os-apple:#F2F5FF;
+  --os-linux:#FCC624;
   --shadow-sm:0 1px 2px rgba(0,0,0,.4), 0 2px 8px -4px rgba(0,0,0,.5);
   --shadow-md:0 1px 3px rgba(0,0,0,.45), 0 14px 34px -18px rgba(0,0,0,.7);
   --shadow-btn:0 1px 2px rgba(0,0,0,.5), 0 10px 24px -12px rgba(128,152,255,.45);
@@ -426,6 +436,17 @@ h1 {
 .stats dt { font-size:clamp(1.7rem,3vw,2.35rem); font-weight:600; letter-spacing:-.035em; line-height:1; }
 .stats dd { margin:.5rem 0 0; font-size:.82rem; line-height:1.5; color:var(--text-muted); }
 
+
+/* ── available on ───────────────────────────────────────────────
+   Sits above the backend strip and answers the other first question:
+   not what it talks to, but whether it runs where you are. Shares the
+   `.logos` layout so the two strips read as a pair rather than as two
+   separate inventions. */
+.availability {
+  max-width:var(--maxw); margin-inline:auto;
+  padding:clamp(1.5rem,4vw,2.5rem) var(--gutter) 0;
+}
+.availability .kicker { margin-bottom:1.5rem; color:var(--text-faint); }
 
 /* ── connected to ────────────────────────────────────────────────
    Official brand marks in their own colours, sitting on white tiles
