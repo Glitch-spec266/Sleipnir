@@ -448,6 +448,34 @@ h1 {
 }
 .availability .kicker { margin-bottom:1.5rem; color:var(--text-faint); }
 
+/* One button per platform. They lead to that platform's install block
+   rather than to a file: the project installs from source, and a button
+   that says Download and then downloads nothing is worse than one that
+   takes you to the commands. */
+.logo-cta {
+  display:inline-flex; align-items:center; gap:.3rem;
+  margin-top:.55rem; padding:.34rem .8rem;
+  border:1px solid var(--border-strong); border-radius:999px;
+  background:var(--surface);
+  font-size:.76rem; font-weight:600; letter-spacing:-.01em;
+  color:var(--accent);
+  box-shadow:var(--shadow-sm);
+  transition:border-color var(--dur) var(--ease), transform var(--dur) var(--ease),
+             background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.logo-cta:hover {
+  border-color:var(--accent); background:var(--accent); color:var(--btn-fg);
+  transform:translateY(-2px);
+}
+.logo-cta .btn-arrow { transition:transform var(--dur) var(--ease); }
+.logo-cta:hover .btn-arrow { transform:translateX(2px); }
+
+/* announced to screen readers, never painted */
+.sr-only {
+  position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+  overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0;
+}
+
 /* ── connected to ────────────────────────────────────────────────
    Official brand marks in their own colours, sitting on white tiles
    so a light mark (OpenRouter's slate) still separates from the warm
@@ -476,7 +504,13 @@ h1 {
 .logo svg { width:27px; height:27px; fill:var(--brand); }
 .logo-name { font-size:.82rem; font-weight:500; color:var(--text-muted); letter-spacing:-.01em; }
 
-@media (max-width:520px) { .logos { gap:1.5rem 1.75rem; } .logo { width:48px; height:48px; } .logo svg { width:23px; height:23px; } }
+@media (max-width:520px) {
+  .logos { gap:1.5rem 1.75rem; }
+  .logo { width:48px; height:48px; }
+  .logo svg { width:23px; height:23px; }
+  /* a 32px pill is under the 44px minimum for a finger */
+  .logo-cta { padding:.72rem 1.05rem; font-size:.8rem; }
+}
 
 /* ── bands ───────────────────────────────────────────────────── */
 .band { max-width:var(--maxw); margin-inline:auto; padding:clamp(3.5rem,8vw,6rem) var(--gutter); }
