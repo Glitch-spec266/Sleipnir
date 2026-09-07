@@ -12,7 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- ?v= is a hand-rolled cache buster: no build step here, so a redeploy
      would otherwise serve a stale stylesheet. Bump it when these change. -->
-<link rel="stylesheet" href="styles.css?v=22">
+<link rel="stylesheet" href="styles.css?v=24">
 <script>
   // Applied before first paint: setting the theme from JS after render is
   // what causes the flash of the wrong palette on every navigation.
@@ -177,14 +177,39 @@
     <p class="group reveal"><span>SO</span> It uses the computer, like you would</p>
     <div class="grid">
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <rect x="6" y="10" width="36" height="28" rx="3"/>
+      <path d="M6 19 H42"/>
+      <circle class="solid" cx="11.5" cy="14.5" r="1.5"/>
+      <path d="M15 29 q9-7 18 0 q-9 7-18 0Z"/>
+      <circle class="solid" cx="24" cy="29" r="2.6"/>
+          </svg>
+        </span>
         <h3>A real browser, headed by default</h3>
         <p>Not a scraper and not a hidden window. Chromium opens on your screen so you can watch every step — and because many signup flows detect and block headless browsers anyway.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <rect x="7" y="7" width="34" height="21" rx="2.5"/>
+      <rect x="5" y="35" width="24" height="9" rx="2"/>
+      <path d="M10 39.5 h3 M17 39.5 h3 M24 39.5 h1"/>
+      <path class="solid" d="M35 33 l9 5 -3.8 1.4 -1.4 3.8Z"/>
+          </svg>
+        </span>
         <h3>Keyboard, mouse and screen</h3>
         <p>When the work is outside the browser it types, clicks and reads the screen through the OS itself — <code>SendInput</code> and GDI on Windows, <code>ydotool</code> on Linux.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <path class="dim" d="M9 7 V41 M39 7 V41" stroke-dasharray="3 4"/>
+      <circle cx="19" cy="24" r="6"/>
+      <path d="M25 24 H41"/>
+      <path d="M33 24 v5 M38 24 v5"/>
+          </svg>
+        </span>
         <h3>Sessions that survive the run</h3>
         <p>A persistent profile, so it does not ask you to sign in again on every task. You log in once, in a window you can see, and the next run picks up where it left off.</p>
       </article>
@@ -193,26 +218,70 @@
     <p class="group reveal"><span>AND</span> Nothing happens off-screen</p>
     <div class="grid">
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <path d="M9 13 H33 M9 21 H33 M9 29 H26"/>
+      <path d="M33 30 v9 M28.5 34.5 L33 39.5 L37.5 34.5"/>
+          </svg>
+        </span>
         <h3>Every action is written down</h3>
         <p>An append-only log at <code>~/.sleipnir/capability-audit.jsonl</code>, fsynced per record and never rewritten. A tool that can type into any window is only reasonable if there is an honest record of what it typed.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <circle cx="11" cy="17" r="5.5"/>
+      <path d="M16.5 17 H40"/>
+      <path d="M33 12.5 L40 17 L33 21.5"/>
+      <rect class="dim" x="14" y="33" width="20" height="9" rx="2"/>
+      <path d="M11 45 L37 30" stroke-width="2.4"/>
+          </svg>
+        </span>
         <h3>Your passwords never travel</h3>
         <p>When a credential is needed, the console prompts you in its own frame, injects the value directly and wipes it. No file, no pipe and no environment variable ever holds it — and keystrokes are logged by length, never content.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <rect x="5" y="16" width="38" height="17" rx="8.5"/>
+      <circle class="solid" cx="14" cy="24.5" r="5.4"/>
+          </svg>
+        </span>
         <h3>Off unless you ask for it</h3>
         <p>Host control is an opt-in extra: <code>pip install -e ".[host]"</code>. Skip it and the orchestrator, the console and the whole test suite still run — a headless server has no use for a Chromium download.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <rect x="6" y="7" width="36" height="11" rx="2"/>
+      <circle class="solid" cx="13" cy="12.5" r="2.2"/>
+      <rect class="dim" x="6" y="22" width="36" height="10" rx="2"/>
+      <rect class="dim" x="6" y="36" width="36" height="10" rx="2"/>
+      <path d="M19 37 L29 45 M29 37 L19 45" stroke-width="2.2"/>
+          </svg>
+        </span>
         <h3>No admin rights, no kernel driver</h3>
         <p>It runs as you, with your permissions, using the same public input APIs an accessibility tool uses. Nothing is installed into the kernel and nothing asks you to elevate.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <path d="M7 15 H27 M7 33 H27"/>
+      <path d="M33 15 l4 4 7 -8" stroke-width="2.4"/>
+      <path d="M34 29 L44 37 M44 29 L34 37" stroke-width="2.4"/>
+          </svg>
+        </span>
         <h3>It tells you what it cannot reach</h3>
         <p><code>doctor</code> reports exactly what your host will and will not allow before a run starts — including the windows it is not permitted to touch, rather than failing quietly halfway through.</p>
       </article>
       <article class="card reveal">
+        <span class="card-figure" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+      <rect class="solid" x="10" y="8" width="5" height="14" rx="1.8"/>
+      <rect class="solid" x="20" y="8" width="5" height="14" rx="1.8"/>
+      <path d="M22 26 L22 45 L27 40 L30 46 L34 44 L31 38 L37 37Z" stroke-width="2"/>
+          </svg>
+        </span>
         <h3>You can take the wheel</h3>
         <p>The browser is yours while it works. Watch it, stop it, or finish a step by hand — it is a window on your desktop, not a service running somewhere you cannot see.</p>
       </article>

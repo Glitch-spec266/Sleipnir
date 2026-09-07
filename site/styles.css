@@ -548,6 +548,47 @@ h1 {
 }
 .pull cite { font-style:normal; font-size:.92rem; color:var(--text-muted); }
 
+
+/* ── card figures ───────────────────────────────────────────────
+   Diagrams, not icons. Each one draws the mechanism its card
+   describes — a window that is actually visible, a credential that
+   bypasses disk, a kernel band never entered — so the picture
+   carries information the heading does not repeat.
+
+   They take `currentColor` from --card-line, so every figure lands
+   on its own step of the shared ramp and the section keeps reading
+   as one system rather than nine decorations. */
+.card-figure {
+  display:block;
+  width:54px; height:54px;
+  margin:0 0 1.15rem auto;        /* right, with the text */
+  color:var(--card-line, var(--accent));
+}
+.card-figure svg {
+  display:block; width:100%; height:100%;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:2;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  overflow:visible;
+}
+.card-figure .solid { fill:currentColor; stroke:none; }
+.card-figure .dim { opacity:.38; }
+
+/* The figure is the one thing that moves on hover: a card that
+   lifts silently reads as a hover state, a card whose diagram
+   sharpens reads as a response. */
+.card-figure { transition:transform var(--dur) var(--ease); }
+.card:hover .card-figure { transform:translateY(-2px) scale(1.04); }
+
+@media (prefers-reduced-motion: reduce) {
+  .card:hover .card-figure { transform:none; }
+}
+@media (max-width:700px) {
+  .card-figure { width:46px; height:46px; margin-bottom:.9rem; }
+}
+
 /* ── the property panel ──────────────────────────────────────── */
 .panel {
   max-width:44rem; margin-inline:auto;
