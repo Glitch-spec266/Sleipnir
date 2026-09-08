@@ -40,8 +40,6 @@ import shlex
 import shutil
 import sys
 import tempfile
-import termios
-import tty
 import uuid
 from collections import abc, deque
 from dataclasses import dataclass, field, replace
@@ -49,7 +47,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from sleipnir import chat, theme
+from sleipnir import chat, platform, theme
 from sleipnir.process import ProcessRunner
 
 FRAME_INTERVAL_S = 1 / 12  # fast enough for flicker, cheap enough to ignore
@@ -58,7 +56,7 @@ FRAME_INTERVAL_S = 1 / 12  # fast enough for flicker, cheap enough to ignore
 # has. Workers never see this text — they keep the confined sandbox.
 CAPABILITY_BRIEF = """\
 You are running inside Sleipnir, a harness that extends you with host control.
-These are real shell commands available to you via Bash:
+These are real shell commands available to you via {shell}:
 
   {exe} computer screenshot <path>     capture the screen to a PNG you can read
   {exe} computer type <text>           type into the focused window
@@ -80,15 +78,30 @@ These are real shell commands available to you via Bash:
   {exe} secret prompt "<label>" --browser-selector "<css>"
                                          fill a browser field without relying on focus
 
-Input is injected at the kernel level, so it reaches every window on this
-Wayland desktop exactly as a physical keyboard would. Take a screenshot and
-look at it before clicking blind.
+{injection}Take a screenshot and look at it before clicking blind.
 
 The last command matters most: you never see credentials. `secret prompt` opens
 a field inside Sleipnir, the operator types the value, and it is injected
 straight into the focused window. It is never stored, logged, or shown to you.
 When a flow needs a login, call it rather than asking the operator to paste
 anything into this conversation.
+"""
+
+
+#: What the injection actually is, per platform. This is prompt content the
+#: model plans around, so it has to be true: told "kernel level, reaches every
+#: window" on Windows, a model retries a click that UIPI will never deliver
+#: instead of reporting that it cannot reach an elevated window.
+_INJECTION_LINUX = """\
+Input is injected at the kernel level, so it reaches every window on this
+Wayland desktop exactly as a physical keyboard would.
+"""
+
+_INJECTION_WINDOWS = """\
+Input is injected through the OS's own SendInput API, so it reaches ordinary
+windows on this Windows desktop as a physical keyboard would. It cannot reach
+a window belonging to an elevated process, and never reaches the UAC secure
+desktop — if input there appears to do nothing, say so rather than retrying.
 """
 
 
@@ -100,7 +113,11 @@ def capability_brief() -> str:
     "command not found" looks to the model like the feature does not exist.
     """
     executable = shutil.which("sleipnir") or f"{sys.executable} -m sleipnir.cli"
-    return CAPABILITY_BRIEF.format(exe=executable)
+    return CAPABILITY_BRIEF.format(
+        exe=executable,
+        shell="your shell (PowerShell or cmd)" if platform.IS_WINDOWS else "Bash",
+        injection=_INJECTION_WINDOWS if platform.IS_WINDOWS else _INJECTION_LINUX,
+    )
 
 
 @dataclass
@@ -732,29 +749,30 @@ def raw_terminal():
 
     Restoring in a ``finally`` is not optional: leaving cbreak mode set after a
     crash leaves the user's shell with no echo, which looks like a hung
-    machine.
+    machine. The raw-mode mechanics themselves are platform's job
+    (termios/tty on POSIX, console mode bits on Windows) -- this function
+    only owns the part both platforms share: painting and clearing the
+    alt-screen around whatever `platform.raw_console()` does.
     """
-    stream = sys.stdin
-    if not stream.isatty():
-        yield False
-        return
-    saved = termios.tcgetattr(stream)
-    try:
-        tty.setcbreak(stream.fileno())
-        sys.stdout.write(
-            theme.ENTER_FULLSCREEN + theme.ENABLE_BRACKETED_PASTE + theme.HIDE_CURSOR
-        )
+    with platform.raw_console() as interactive:
+        if not interactive:
+            yield False
+            return
+        # Bracketed paste is a terminal-emulator feature, not a tty mode, so it
+        # sits here rather than in platform.raw_console. Without it a pasted
+        # block arrives as a burst of ordinary keystrokes and a newline inside
+        # it submits half the paste.
+        paste = theme.ENABLE_BRACKETED_PASTE if not platform.IS_WINDOWS else ""
+        unpaste = theme.DISABLE_BRACKETED_PASTE if not platform.IS_WINDOWS else ""
+        sys.stdout.write(theme.ENTER_FULLSCREEN + paste + theme.HIDE_CURSOR)
         sys.stdout.flush()
-        yield True
-    finally:
-        termios.tcsetattr(stream, termios.TCSADRAIN, saved)
-        sys.stdout.write(
-            theme.DISABLE_BRACKETED_PASTE
-            + theme.SHOW_CURSOR
-            + theme.RESET
-            + theme.EXIT_FULLSCREEN
-        )
-        sys.stdout.flush()
+        try:
+            yield True
+        finally:
+            sys.stdout.write(
+                unpaste + theme.SHOW_CURSOR + theme.RESET + theme.EXIT_FULLSCREEN
+            )
+            sys.stdout.flush()
 
 
 def _paint(text: str) -> None:
@@ -915,6 +933,14 @@ def apply_key(state: ConsoleState, char: str) -> str | None:
         return None
     if char == "\x15":  # ctrl-u, clear line
         state.input_buffer = ""
+        return None
+    if len(char) > 1:
+        # A named token from platform.key_reader for an arrow/home/end/...
+        # key (e.g. "<up>"), not literal text. The buffer has no
+        # cursor-motion or history support yet, so the correct behaviour is
+        # to drop it -- not type its characters into the prompt, which is
+        # what an unhandled arrow key used to do (an ESC "[" "A" sequence
+        # decoded one char at a time inserted a literal "[A").
         return None
     if char.isprintable():
         state.input_buffer += char
@@ -1293,79 +1319,102 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
             for event in decoder.feed(data):
                 keys.put_nowait(event)
 
-        if interactive:
+        @contextlib.contextmanager
+        def _input_reader():
+            """Raw bytes on POSIX, characters on Windows.
+
+            The paste decoder needs bytes, and only a POSIX tty can give them:
+            ``platform.key_reader`` decodes to characters because the Windows
+            console API it wraps has no byte stream to offer and no bracketed
+            paste to detect. Windows therefore loses paste *events* — a pasted
+            block still arrives, one character at a time — and that is a real
+            terminal difference rather than a shortcut.
+            """
+            if not interactive:
+                yield
+                return
+            if platform.IS_WINDOWS:
+                with platform.key_reader(loop, keys.put_nowait):
+                    yield
+                return
             loop.add_reader(sys.stdin.fileno(), _on_readable)
-        if splash:
-            await play_splash(colour=colour, skip_requested=lambda: not keys.empty())
-        if not interactive:
-            return 0
+            try:
+                yield
+            finally:
+                loop.remove_reader(sys.stdin.fileno())
 
-        def dispatch(text: str) -> None:
-            state.add("you", text)
-            task = asyncio.create_task(_handle(state, text))
-            pending_tasks.add(task)
-            task.add_done_callback(pending_tasks.discard)
+        with _input_reader():
+            if splash:
+                await play_splash(colour=colour, skip_requested=lambda: not keys.empty())
+            if not interactive:
+                return 0
 
-        welcome = (
-            f"Ready. Talking to {state.provider} with host control attached — keyboard, "
-            "mouse, screen, browser and shell. Ordinary requests use the guarded "
-            "fast lane; /project <goal> starts the multi-model workflow. /use codex "
-            "switches provider; /help lists commands."
-            if state.permission_mode == "bypassPermissions"
-            else "Ready. Host actions will be confirmed with you before they run. "
-            "/project <goal> starts the multi-model workflow; /help lists commands."
-        )
-        state.add("sleipnir", welcome)
-        try:
-            while True:
-                width, height = shutil.get_terminal_size((90, 26))
-                _paint(render(state, width=width, height=height, colour=colour))
-                state.frame += 1
-                if state.frame % 8 == 0:
-                    poll_secret_request(state)
-                try:
-                    event = await asyncio.wait_for(keys.get(), timeout=FRAME_INTERVAL_S)
-                except TimeoutError:
-                    drain_pending(state, dispatch)
-                    continue  # no key this frame; the border still flickers
-                if isinstance(event, PastedText):
-                    if event.text:
-                        state.input_buffer += _clean_paste(event.text)
-                    else:
-                        # Some terminals emit an empty bracketed paste when the
-                        # clipboard owns an image rather than text.
+            def dispatch(text: str) -> None:
+                state.add("you", text)
+                task = asyncio.create_task(_handle(state, text))
+                pending_tasks.add(task)
+                task.add_done_callback(pending_tasks.discard)
+
+            welcome = (
+                f"Ready. Talking to {state.provider} with host control attached — keyboard, "
+                "mouse, screen, browser and shell. Ordinary requests use the guarded "
+                "fast lane; /project <goal> starts the multi-model workflow. /use codex "
+                "switches provider; /help lists commands."
+                if state.permission_mode == "bypassPermissions"
+                else "Ready. Host actions will be confirmed with you before they run. "
+                "/project <goal> starts the multi-model workflow; /help lists commands."
+            )
+            state.add("sleipnir", welcome)
+            try:
+                while True:
+                    width, height = shutil.get_terminal_size((90, 26))
+                    _paint(render(state, width=width, height=height, colour=colour))
+                    state.frame += 1
+                    if state.frame % 8 == 0:
+                        poll_secret_request(state)
+                    try:
+                        event = await asyncio.wait_for(keys.get(), timeout=FRAME_INTERVAL_S)
+                    except TimeoutError:
+                        drain_pending(state, dispatch)
+                        continue  # no key this frame; the border still flickers
+                    if isinstance(event, PastedText):
+                        if event.text:
+                            state.input_buffer += _clean_paste(event.text)
+                        else:
+                            # Some terminals emit an empty bracketed paste when the
+                            # clipboard owns an image rather than text.
+                            paste_system_clipboard(
+                                state, allow_images=state.secret_request is None
+                            )
+                        continue
+                    char = event
+                    if char == INTERRUPT:
+                        return 0
+                    if char == CLIPBOARD_PASTE:
                         paste_system_clipboard(
                             state, allow_images=state.secret_request is None
                         )
-                    continue
-                char = event
-                if char == INTERRUPT:
-                    return 0
-                if char == CLIPBOARD_PASTE:
-                    paste_system_clipboard(
-                        state, allow_images=state.secret_request is None
-                    )
-                    continue
-                if state.secret_request is not None:
-                    # While a credential is being typed the buffer is a secret,
-                    # not a message: it must not reach the transcript or a model.
-                    if char in ENTER:
-                        typed = state.input_buffer
-                        state.input_buffer = ""
-                        await submit_secret(state, typed)
-                    else:
-                        apply_key(state, char)
-                    continue
-                submitted = apply_key(state, char)
-                if submitted:
-                    handle_submitted(state, submitted, dispatch)
-        finally:
-            if interactive:
-                loop.remove_reader(sys.stdin.fileno())
-            for task in pending_tasks:
-                task.cancel()
-            with contextlib.suppress(Exception):
-                await asyncio.shield(asyncio.wait_for(state.aclose(), timeout=3.0))
+                        continue
+                    if state.secret_request is not None:
+                        # While a credential is being typed the buffer is a secret,
+                        # not a message: it must not reach the transcript or a model.
+                        if char in ENTER:
+                            typed = state.input_buffer
+                            state.input_buffer = ""
+                            await submit_secret(state, typed)
+                        else:
+                            apply_key(state, char)
+                        continue
+                    submitted = apply_key(state, char)
+                    if submitted:
+                        handle_submitted(state, submitted, dispatch)
+            finally:
+                if interactive:
+                    loop.remove_reader(sys.stdin.fileno())
+                for task in pending_tasks:
+                    task.cancel()
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(asyncio.wait_for(state.aclose(), timeout=3.0))
 
 
 __all__ = [

@@ -37,3 +37,19 @@ jobs:
           name: python-package-distributions
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-npm:
+    name: Publish npm launcher
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # npm trusted publishing requires Node 22.14+ and npm 11.5.1+.
+          node-version: 22.14.0
+          registry-url: https://registry.npmjs.org
+      - run: npm pack --dry-run
+      - run: npm publish --access public --provenance

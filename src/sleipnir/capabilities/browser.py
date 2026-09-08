@@ -19,9 +19,7 @@ suite — still runs on a machine where the browser was never installed.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
-import signal
 import stat
 import time
 import uuid
@@ -29,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sleipnir import platform
 from sleipnir.capabilities import audit
 from sleipnir.capabilities.computer import CapabilityError
 
@@ -160,7 +159,7 @@ async def ensure_browser(profile_dir: Path = DEFAULT_PROFILE, *, headless: bool 
         argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        **platform.CHILD_SPAWN_KWARGS,
     )
     _publish_pid(process.pid)
 
@@ -170,8 +169,7 @@ async def ensure_browser(profile_dir: Path = DEFAULT_PROFILE, *, headless: bool 
             audit.record("browser.daemon_started", {"endpoint": CDP_ENDPOINT})
             return CDP_ENDPOINT
         await asyncio.sleep(0.2)
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    platform.kill_pid_tree(process.pid)
     PID_FILE.unlink(missing_ok=True)
     raise CapabilityError(
         f"the browser did not open a debugging port on {CDP_ENDPOINT} within 20s"
@@ -186,19 +184,36 @@ def available() -> bool:
     return True
 
 
+
+def _pid_is_our_browser(pid: int) -> bool:
+    """Prove the pid still names our Chromium before signalling its group.
+
+    A pid file outlives the process it names, and pids are recycled, so this
+    check is what stops a stale file from killing a stranger. It has two halves
+    and only the first is portable: ``/proc`` supplies the argv proof on Linux,
+    and on POSIX the group-leader test makes ``killpg``'s blast radius exactly
+    the browser's own group. Windows has neither -- ``stop_pid_group`` there
+    signals a process tree rather than a group -- so the pid file's own
+    integrity checks in :func:`_read_pid` are the identity it can offer.
+    """
+    if Path("/proc").is_dir() and not _pid_matches_browser(pid):
+        return False
+    if hasattr(os, "getpgid"):
+        try:
+            if os.getpgid(pid) != pid:
+                return False
+        except (ProcessLookupError, PermissionError):
+            return False
+    return True
+
+
 def stop_browser(timeout_s: float = 8.0) -> bool:
     """Terminate the detached browser, if one is running. True if it stopped."""
     pid = _read_pid()
-    if pid is None or not _pid_matches_browser(pid):
+    if pid is None or not _pid_is_our_browser(pid):
         PID_FILE.unlink(missing_ok=True)
         return False
-    try:
-        group = os.getpgid(pid)
-        if group != pid:
-            PID_FILE.unlink(missing_ok=True)
-            return False
-        os.killpg(group, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
+    if not platform.stop_pid_group(pid):
         PID_FILE.unlink(missing_ok=True)
         return False
 
@@ -208,8 +223,7 @@ def stop_browser(timeout_s: float = 8.0) -> bool:
             break
         time.sleep(0.2)
     else:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        platform.kill_pid_tree(pid)
     PID_FILE.unlink(missing_ok=True)
     return True
 

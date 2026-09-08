@@ -67,8 +67,14 @@ src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
 src/sleipnir/console.py      guarded chat + `/project` multi-model front door
 src/sleipnir/chat.py         Claude session transport + tool-free fast-lane gate
 src/sleipnir/capabilities/ios.py  xtool/SwiftPM iOS bridge for Linux and Windows
-src/sleipnir/cli.py          plan / run / status / explain / tui / orchestrate / ios
-tests/                       528 tests, including the executable form of the
+src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate / ios
+src/sleipnir/platform/       the one seam between Sleipnir and the OS:
+                             POSIX, macOS and Windows backends behind one API
+src/sleipnir/capabilities/computer/
+                             desktop control: ydotool on Linux, Quartz on
+                             macOS, SendInput and GDI on Windows, audited
+                             in one place
+tests/                       593 tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -121,6 +127,13 @@ To install the current GitHub version before a PyPI release, use:
 uv tool install git+https://github.com/Glitch-spec266/Sleipnir.git
 ```
 
+For an npm-style global install, use the npm launcher:
+
+```sh
+npm install -g sleipnir-cli
+sleipnir --help
+```
+
 Python 3.12 or later is required. The host/browser integration is deliberately
 optional; add it only on a machine that needs it:
 
@@ -134,6 +147,48 @@ uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python "pydantic>=2.7" "httpx>=0.27" "pytest>=8"
 .venv/bin/python -m pytest -q
 ```
+
+On Windows the same three commands, with the interpreter where Windows puts it:
+
+```powershell
+uv venv --python 3.12 .venv
+uv pip install --python .venv\Scripts\python.exe "pydantic>=2.7" "httpx>=0.27" "pytest>=8"
+.venv\Scripts\python.exe -m pytest -q
+```
+
+## Windows
+
+Linux and Windows are both first-class. Every OS call — process trees, file
+locking, console raw mode, shell selection, input injection, screen capture —
+goes through `src/sleipnir/platform/`, which picks a backend once at import;
+no other module branches on the platform. Nothing extra is installed and
+nothing needs administrator rights: input is `user32.SendInput`, capture is
+GDI plus a stdlib PNG encoder, and process containment is a job object.
+
+Four differences are real and worth knowing before you rely on them:
+
+- **Input injection is user-mode, not kernel-level.** ydotool writes to
+  `/dev/uinput`, below the input stack. `SendInput` sits above it, so UIPI
+  blocks it from reaching windows owned by an elevated process, the UAC secure
+  desktop is unreachable by design, and software that checks `LLMHF_INJECTED`
+  (anti-cheat, DRM, some banking apps) can tell the input is synthetic.
+  `sleipnir doctor` reports whether this process is elevated for that reason.
+- **A POSIX shell is a soft prerequisite.** `CommandCheck` commands in a
+  `plan.json` are written POSIX-style, so Sleipnir prefers `sh` — from
+  `$SLEIPNIR_SHELL`, then `PATH`, then a Git for Windows install — and falls
+  back to `cmd.exe` with a loud `doctor` warning. `sleipnir setup` offers
+  `winget install --id Git.Git` when none is found.
+- **Codex's worker sandbox is weaker.** Its `workspace-write` mode is kernel-
+  enforced on Linux and macOS; on Windows it is closer to an intention than a
+  guarantee. Sleipnir cannot fix that, and says so rather than implying a
+  containment it is not getting.
+- **Parent-death containment is *stronger*.** `PR_SET_PDEATHSIG` sends a
+  signal a provider CLI can trap; a job object with `KILL_ON_JOB_CLOSE` is
+  unconditional and covers the whole descendant tree, so a hard-killed
+  Sleipnir cannot leave a spending orphan behind.
+
+State lives in `~/.sleipnir/` and `~/.cache/sleipnir/` on both platforms —
+one location is easier to explain, and moving it would orphan existing runs.
 
 ## Terminal dashboard
 

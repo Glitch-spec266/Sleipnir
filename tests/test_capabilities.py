@@ -2,8 +2,19 @@
 
 Nothing here may inject a real keystroke, move the real pointer, or open a real
 browser: a test suite that types into whatever window happens to be focused is
-a hazard, not a test.  Every host call is intercepted at the subprocess
-boundary — the same discipline the executor tests use for provider spawns.
+a hazard, not a test.  Every host call is intercepted — at the subprocess
+boundary for the ydotool backend, at the single ``SendInput`` seam for the
+Windows one, and at the backend module itself for the platform-neutral public
+layer.
+
+The file is in three parts on purpose, mirroring the package:
+
+* **public layer** — validation and auditing, exercised against a fake backend
+  so these run identically on both platforms;
+* **``_linux``** — ydotool argv. Runs everywhere: the module has no OS-gated
+  imports, so a Windows machine still checks the Linux backend's logic;
+* **``_windows``** — SendInput/GDI. Windows only, because importing it needs
+  ``user32``.
 """
 
 from __future__ import annotations
@@ -11,11 +22,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 
 import pytest
 
 from sleipnir import cli
 from sleipnir.capabilities import audit, browser, clipboard, computer, ios, secrets
+from sleipnir.capabilities.computer import _linux, _png
+
+windows_only = pytest.mark.skipif(
+    sys.platform != "win32", reason="Windows SendInput/GDI backend"
+)
 
 
 @pytest.fixture
@@ -23,6 +40,47 @@ def audit_log(tmp_path, monkeypatch):
     path = tmp_path / "audit.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_LOG", path)
     return path
+
+
+class _Recorder:
+    """Stand-in for whichever backend this machine has.
+
+    Records the call the public layer decided to make, which is the only
+    thing the public layer is responsible for — the injection itself is the
+    backends' business and is tested against each backend directly below.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def type_text(self, text: str, *, key_delay_ms: int) -> None:
+        self.calls.append(("type_text", text, key_delay_ms))
+
+    def key_chord(self, codes: list[int]) -> None:
+        self.calls.append(("key_chord", list(codes)))
+
+    def move_mouse(self, x: int, y: int) -> None:
+        self.calls.append(("move_mouse", x, y))
+
+    def click(self, button: str) -> None:
+        self.calls.append(("click", button))
+
+    def scroll(self, amount: int) -> None:
+        self.calls.append(("scroll", amount))
+
+    def screenshot(self, destination) -> str:
+        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
+        self.calls.append(("screenshot", destination))
+        return "fake"
+
+
+@pytest.fixture
+def fake_backend(monkeypatch):
+    """Intercept the platform backend, keeping validation and audit real."""
+    recorder = _Recorder()
+    monkeypatch.setattr(computer, "_impl", recorder)
+    monkeypatch.setattr(computer, "ensure_daemon", lambda *a, **k: None)
+    return recorder
 
 
 @pytest.fixture
@@ -40,8 +98,7 @@ def fake_ydotool(monkeypatch):
 
         return Result()
 
-    monkeypatch.setattr(computer.subprocess, "run", _run)
-    monkeypatch.setattr(computer, "ensure_daemon", lambda *a, **k: None)
+    monkeypatch.setattr(_linux.subprocess, "run", _run)
     return calls
 
 
@@ -61,7 +118,7 @@ def test_audit_never_writes_a_secret_value(audit_log):
     assert "x" in body  # non-sensitive detail is kept
 
 
-def test_typed_text_is_recorded_by_length_not_content(audit_log, fake_ydotool):
+def test_typed_text_is_recorded_by_length_not_content(audit_log, fake_backend):
     computer.type_text("my-api-key-value")
     body = audit_log.read_text()
     assert "my-api-key-value" not in body
@@ -80,9 +137,76 @@ def test_audit_log_never_follows_a_precreated_symlink(tmp_path):
 
 # --- keyboard / mouse ----------------------------------------------------
 
+def test_every_public_action_is_audited(audit_log, fake_backend, tmp_path):
+    # The reason auditing lives in __init__ and not in the backends: one
+    # place to forget, and this test notices if it is forgotten there.
+    computer.type_text("hi")
+    computer.key("ctrl", "c")
+    computer.move_mouse(4, 5)
+    computer.click("right")
+    computer.scroll(-2)
+    computer.screenshot(tmp_path / "shot.png")
+    recorded = [entry["action"] for entry in _entries(audit_log)]
+    assert recorded == [
+        "desktop.type",
+        "desktop.key",
+        "desktop.move_mouse",
+        "desktop.click",
+        "desktop.scroll",
+        "desktop.screenshot",
+    ]
 
-def test_chord_releases_modifiers_in_reverse_order(audit_log, fake_ydotool):
+
+# --- keyboard / mouse: the platform-neutral contract ----------------------
+
+
+def test_chord_presses_in_order_and_releases_in_reverse(audit_log, fake_backend):
+    # The public layer owns the ordering contract; each backend only has to
+    # speak it. Codes are this host's — evdev or VK — so the test asserts
+    # against the table rather than hard-coded numbers.
     computer.key("ctrl", "shift", "t")
+    assert fake_backend.calls == [
+        ("key_chord", [computer.KEYCODES[name] for name in ("ctrl", "shift", "t")])
+    ]
+
+
+@windows_only
+def test_key_names_are_the_same_vocabulary_on_both_backends():
+    # A name that exists on one platform and not the other would make
+    # `sleipnir computer key ...` silently platform-specific. Checked where
+    # both backends import at once, which is Windows: `_linux` imports
+    # anywhere, `_windows` needs `user32`.
+    from sleipnir.capabilities.computer import _windows
+
+    assert set(_windows.KEYCODES) == set(_linux.KEYCODES)
+    assert set(_windows.BUTTON_CODES) == set(_linux.BUTTON_CODES)
+
+
+def test_unknown_key_is_refused_rather_than_silently_dropped(audit_log, fake_backend):
+    with pytest.raises(computer.CapabilityError, match="unknown key"):
+        computer.key("ctrl", "hyperspace")
+    assert fake_backend.calls == []
+
+
+def test_unknown_mouse_button_is_refused(audit_log, fake_backend):
+    with pytest.raises(computer.CapabilityError, match="unknown mouse button"):
+        computer.click("elbow")
+    assert fake_backend.calls == []
+
+
+def test_screenshot_returns_the_resolved_path_and_makes_its_parent(
+    audit_log, fake_backend, tmp_path
+):
+    destination = computer.screenshot(tmp_path / "nested" / "shot.png")
+    assert destination.exists()
+    assert _entries(audit_log)[0]["detail"]["tool"] == "fake"
+
+
+# --- the ydotool backend -------------------------------------------------
+
+
+def test_chord_releases_modifiers_in_reverse_order(fake_ydotool):
+    _linux.key_chord([_linux.KEYCODES[name] for name in ("ctrl", "shift", "t")])
     argv = fake_ydotool[0]
     assert argv[:2] == ["ydotool", "key"]
     # ctrl(29) shift(42) t(20) down, then released t, shift, ctrl.
@@ -114,14 +238,17 @@ def test_unknown_mouse_button_is_refused(audit_log, fake_ydotool):
 
 def test_type_passes_a_double_dash_so_text_cannot_become_flags(audit_log, fake_ydotool):
     computer.type_text("--help --socket-path=/tmp/evil")
+
+def test_type_passes_a_double_dash_so_text_cannot_become_flags(fake_ydotool):
+    _linux.type_text("--help --socket-path=/tmp/evil", key_delay_ms=12)
     argv = fake_ydotool[0]
     assert "--" in argv
     assert argv.index("--") < argv.index("--help --socket-path=/tmp/evil")
 
 
 def test_probe_reports_notes_instead_of_raising(monkeypatch):
-    monkeypatch.setattr(computer.shutil, "which", lambda name: None)
-    result = computer.probe()
+    monkeypatch.setattr(_linux.shutil, "which", lambda name: None)
+    result = _linux.probe()
     assert result.ready is False
     assert any("ydotool" in note for note in result.notes)
 
@@ -226,14 +353,190 @@ def test_clipboard_image_rejects_a_symlinked_destination(audit_log, tmp_path, mo
 
 def test_grim_is_not_selected_on_kde(monkeypatch):
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
-    monkeypatch.setattr(computer.shutil, "which", lambda name: f"/usr/bin/{name}" if name in ("grim", "spectacle") else None)
-    assert computer._screenshot_tool() == "spectacle"
+    monkeypatch.setattr(_linux.shutil, "which", lambda name: f"/usr/bin/{name}" if name in ("grim", "spectacle") else None)
+    assert _linux._screenshot_tool() == "spectacle"
 
 
 def test_grim_is_selected_when_it_is_the_only_option_off_kde(monkeypatch):
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "sway")
-    monkeypatch.setattr(computer.shutil, "which", lambda name: "/usr/bin/grim" if name == "grim" else None)
-    assert computer._screenshot_tool() == "grim"
+    monkeypatch.setattr(_linux.shutil, "which", lambda name: "/usr/bin/grim" if name == "grim" else None)
+    assert _linux._screenshot_tool() == "grim"
+
+
+# --- the SendInput backend -----------------------------------------------
+
+
+@pytest.fixture
+def fake_send(monkeypatch):
+    """Capture INPUT structs instead of injecting them.
+
+    Only requested by ``windows_only`` tests: importing the backend off
+    Windows fails at ``ctypes.WinDLL``, which is an ``AttributeError`` rather
+    than the ``ImportError`` an ``importorskip`` would catch.
+    """
+    from sleipnir.capabilities.computer import _windows
+
+    batches: list[list] = []
+    monkeypatch.setattr(_windows, "_send", lambda events: batches.append(list(events)))
+    return batches
+
+
+@windows_only
+def test_typed_text_never_becomes_an_argument_at_all(fake_send):
+    from sleipnir.capabilities.computer import _windows
+
+    _windows.type_text("--help", key_delay_ms=0)
+    # The Linux backend needs a `--` guard because text reaches ydotool as
+    # argv. Here there is no argv: every character is a KEYEVENTF_UNICODE
+    # scan code, so flag injection is not a shape this backend has.
+    units = [batch[0].ki.wScan for batch in fake_send]
+    assert "".join(chr(unit) for unit in units) == "--help"
+    assert all(batch[0].ki.wVk == 0 for batch in fake_send)
+
+
+@windows_only
+def test_newline_is_typed_as_return_not_as_a_literal_character(fake_send):
+    from sleipnir.capabilities.computer import _windows
+
+    _windows.type_text("a\nb", key_delay_ms=0)
+    return_batch = fake_send[1]
+    assert return_batch[0].ki.wVk == _windows.KEYCODES["enter"]
+    assert return_batch[0].ki.wScan == 0
+
+
+@windows_only
+def test_astral_characters_are_sent_as_surrogate_pairs(fake_send):
+    from sleipnir.capabilities.computer import _windows
+
+    _windows.type_text("\U0001f600", key_delay_ms=0)
+    units = [batch[0].ki.wScan for batch in fake_send]
+    assert units == [0xD83D, 0xDE00]
+
+
+@windows_only
+def test_windows_chord_is_one_batch_pressed_then_released_in_reverse(fake_send):
+    from sleipnir.platform import _win32
+    from sleipnir.capabilities.computer import _windows
+
+    codes = [_windows.KEYCODES[name] for name in ("ctrl", "shift", "t")]
+    _windows.key_chord(codes)
+    # One batch: a chord split across SendInput calls can be interleaved with
+    # another process's input and leave a modifier stuck down.
+    assert len(fake_send) == 1
+    events = fake_send[0]
+    assert [event.ki.wVk for event in events] == codes + list(reversed(codes))
+    ups = [bool(event.ki.dwFlags & _win32.KEYEVENTF_KEYUP) for event in events]
+    assert ups == [False, False, False, True, True, True]
+
+
+@windows_only
+def test_arrow_keys_are_flagged_extended(fake_send):
+    from sleipnir.platform import _win32
+    from sleipnir.capabilities.computer import _windows
+
+    _windows.key_chord([_windows.KEYCODES["home"]])
+    flags = fake_send[0][0].ki.dwFlags
+    # Without the extended flag this delivers as the numpad `7`.
+    assert flags & _win32.KEYEVENTF_EXTENDEDKEY
+
+
+@windows_only
+def test_mouse_is_normalised_against_the_whole_virtual_desktop(fake_send, monkeypatch):
+    from sleipnir.platform import _win32
+    from sleipnir.capabilities.computer import _windows
+
+    # A second monitor to the left of the primary one: the origin is
+    # negative, and normalising against the primary monitor would send every
+    # click to the wrong screen.
+    monkeypatch.setattr(_windows, "virtual_screen", lambda: (-1920, 0, 3840, 1080))
+    _windows.move_mouse(-1920, 0)
+    event = fake_send[0][0].mi
+    assert (event.dx, event.dy) == (0, 0)
+    assert event.dwFlags & _win32.MOUSEEVENTF_VIRTUALDESK
+
+    _windows.move_mouse(1919, 1079)
+    event = fake_send[1][0].mi
+    assert (event.dx, event.dy) == (65535, 65535)
+
+
+@windows_only
+def test_scroll_keeps_positive_meaning_up(fake_send):
+    from sleipnir.platform import _win32
+    from sleipnir.capabilities.computer import _windows
+
+    _windows.scroll(2)
+    assert fake_send[0][0].mi.mouseData == 2 * _win32.WHEEL_DELTA
+    _windows.scroll(-1)
+    # ``mouseData`` is a DWORD, so a scroll down reads back as the unsigned
+    # two's complement of -120 -- which is the bit pattern Windows itself
+    # interprets as signed. Asserting the raw field keeps that explicit.
+    assert fake_send[1][0].mi.mouseData == (-_win32.WHEEL_DELTA) & 0xFFFFFFFF
+
+
+@windows_only
+def test_click_sends_a_down_then_an_up(fake_send):
+    from sleipnir.platform import _win32
+    from sleipnir.capabilities.computer import _windows
+
+    _windows.click("right")
+    down, up = fake_send[0]
+    assert down.mi.dwFlags == _win32.MOUSEEVENTF_RIGHTDOWN
+    assert up.mi.dwFlags == _win32.MOUSEEVENTF_RIGHTUP
+
+
+@windows_only
+def test_capture_conversion_drops_alpha_and_swaps_channels():
+    from sleipnir.capabilities.computer import _windows
+
+    # GDI hands back BGRA; PNG wants RGB.
+    assert _windows._bgra_to_rgb(bytes([1, 2, 3, 255, 4, 5, 6, 0])) == bytes(
+        [3, 2, 1, 6, 5, 4]
+    )
+
+
+@windows_only
+def test_probe_reports_a_windows_shaped_machine():
+    from sleipnir.capabilities.computer import _windows
+
+    result = _windows.probe()
+    assert result.session_type == "windows"
+    assert result.daemon_running is True  # nothing to start
+    assert result.screenshot_tool
+
+
+# --- the PNG encoder -----------------------------------------------------
+
+
+def test_png_round_trips_through_a_stdlib_decode():
+    import struct
+    import zlib
+
+    pixels = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30])
+    blob = _png.encode_rgb(pixels, 2, 2)
+    assert blob[:8] == b"\x89PNG\r\n\x1a\n"
+
+    chunks = {}
+    position = 8
+    while position < len(blob):
+        length = struct.unpack(">I", blob[position : position + 4])[0]
+        tag = blob[position + 4 : position + 8]
+        body = blob[position + 8 : position + 8 + length]
+        crc = struct.unpack(">I", blob[position + 8 + length : position + 12 + length])[0]
+        # A wrong CRC is the one PNG error a viewer reports as "corrupt file"
+        # with no hint which chunk, so it is worth asserting per chunk here.
+        assert crc == zlib.crc32(tag + body) & 0xFFFFFFFF, tag
+        chunks[tag] = body
+        position += 12 + length
+
+    assert list(chunks) == [b"IHDR", b"IDAT", b"IEND"]
+    assert struct.unpack(">IIBBBBB", chunks[b"IHDR"]) == (2, 2, 8, 2, 0, 0, 0)
+    # Each scanline is prefixed with filter type 0.
+    assert zlib.decompress(chunks[b"IDAT"]) == b"\x00" + pixels[:6] + b"\x00" + pixels[6:]
+
+
+def test_png_refuses_a_buffer_that_does_not_match_the_dimensions():
+    with pytest.raises(ValueError, match="expected 12 bytes"):
+        _png.encode_rgb(b"\x00" * 11, 2, 2)
 
 
 # --- secrets -------------------------------------------------------------
@@ -271,7 +574,7 @@ def test_capture_records_only_the_label_and_length(audit_log, monkeypatch):
     assert secret.consume() == "correct horse"
 
 
-def test_typing_a_secret_wipes_it_and_logs_nothing_sensitive(audit_log, fake_ydotool):
+def test_typing_a_secret_wipes_it_and_logs_nothing_sensitive(audit_log, fake_backend):
     secret = secrets.Secret("aws key", bytearray(b"AKIAsecretvalue"))
     secrets.type_into_focused_window(secret, submit=True)
     assert len(secret) == 0
@@ -406,3 +709,280 @@ def test_ios_host_level_commands_do_not_require_a_project(tmp_path, action):
     ios.run(action, root=tmp_path, executable="/usr/bin/true",
             run=lambda argv, **k: (calls.append(argv), Done())[1])
     assert calls, "a host-level command must still reach xtool"
+
+# ── _darwin ──────────────────────────────────────────────────────────────
+#
+# Quartz. Runs everywhere: the backend loads CoreGraphics lazily rather than
+# at import, so its whole logic — key vocabulary, chord flags, the consent
+# gate, capture argv — is testable off a Mac. Only the real CGEventPost is
+# not, and that is the one thing a fake cannot honestly stand in for.
+
+
+class _FakeQuartz:
+    """Records what would have been posted instead of posting it.
+
+    Stands in for both CoreGraphics and ApplicationServices, since the
+    backend loads them as a pair.
+    """
+
+    def __init__(self, *, trusted=True, display=1):
+        self.posted: list[list] = []
+        self.released = 0
+        self._trusted = trusted
+        self._display = display
+        self._next = 1000
+        self._flags: dict[int, int] = {}
+        self._unicode: dict[int, tuple[int, ...]] = {}
+
+    def _create(self, kind, payload):
+        self._next += 1
+        self.posted.append([kind, payload, 0, self._next, False])
+        return self._next
+
+    def CGEventCreateKeyboardEvent(self, source, keycode, down):
+        return self._create("key", (keycode, bool(down)))
+
+    def CGEventCreateMouseEvent(self, source, kind, point, button):
+        return self._create("mouse", (kind, round(point.x), round(point.y), button))
+
+    def CGEventCreateScrollWheelEvent(self, source, unit, count, amount):
+        return self._create("scroll", (unit, count, amount))
+
+    def CGEventCreate(self, source):
+        return self._create("cursor", ())
+
+    def CGEventSetFlags(self, event, flags):
+        self._flags[event] = flags
+
+    def CGEventKeyboardSetUnicodeString(self, event, length, buffer):
+        self._unicode[event] = tuple(buffer[i] for i in range(length))
+
+    def CGEventPost(self, tap, event):
+        for record in self.posted:
+            if record[3] == event:
+                record[2] = self._flags.get(event, 0)
+                record[4] = True
+                if event in self._unicode:
+                    record[1] = ("unicode", self._unicode[event])
+
+    def CFRelease(self, event):
+        self.released += 1
+
+    def CGEventGetLocation(self, event):
+        from sleipnir.capabilities.computer._darwin import _CGPoint
+
+        return _CGPoint(410.0, 320.0)
+
+    def CGMainDisplayID(self):
+        return self._display
+
+    def CGDisplayPixelsWide(self, display):
+        return 1920
+
+    def CGDisplayPixelsHigh(self, display):
+        return 1080
+
+    def AXIsProcessTrusted(self):
+        return self._trusted
+
+    def events(self, kind):
+        return [(rec[1], rec[2]) for rec in self.posted if rec[0] == kind and rec[4]]
+
+
+@pytest.fixture
+def quartz(monkeypatch):
+    from sleipnir.capabilities.computer import _darwin
+
+    fake = _FakeQuartz()
+    monkeypatch.setattr(_darwin, "_load", lambda: (fake, fake))
+    return fake
+
+
+def test_darwin_speaks_the_same_key_vocabulary_as_the_other_backends():
+    """The names are the cross-platform contract; the numbers are not.
+
+    A plan that says ``key("ctrl", "t")`` has to mean the same thing on
+    every host, so this is the one thing that must never drift.
+    """
+    from sleipnir.capabilities.computer import _darwin
+
+    assert set(_darwin.KEYCODES) == set(_linux.KEYCODES)
+    assert set(_darwin.BUTTON_CODES) == set(_linux.BUTTON_CODES)
+
+
+def test_darwin_super_and_meta_are_the_same_physical_key():
+    from sleipnir.capabilities.computer import _darwin
+
+    assert _darwin.KEYCODES["super"] == _darwin.KEYCODES["meta"]
+
+
+def test_darwin_chord_presses_in_order_and_releases_in_reverse(quartz):
+    from sleipnir.capabilities.computer import _darwin
+
+    codes = [_darwin.KEYCODES["ctrl"], _darwin.KEYCODES["shift"], _darwin.KEYCODES["t"]]
+    _darwin.key_chord(codes)
+
+    events = quartz.events("key")
+    assert [payload[0] for payload, _ in events] == codes + list(reversed(codes))
+    assert [payload[1] for payload, _ in events] == [True] * 3 + [False] * 3
+
+
+def test_darwin_chord_sets_the_modifier_mask_not_just_the_key(quartz):
+    """Cmd-T has to open a tab rather than type a "t".
+
+    A modifier posted only as a key event is honoured by some applications
+    and ignored by others, so the accumulated flag mask rides along too.
+    """
+    from sleipnir.capabilities.computer import _darwin
+
+    _darwin.key_chord([_darwin.KEYCODES["super"], _darwin.KEYCODES["t"]])
+
+    command = _darwin.MODIFIER_FLAGS[_darwin.KEYCODES["super"]]
+    flags_on_t = quartz.events("key")[1][1]
+    assert flags_on_t & command
+
+
+def test_darwin_every_created_event_is_released(quartz):
+    """One retained CGEvent per action is a leak that only shows up late in
+    a long run, which is exactly when it is hardest to attribute.
+
+    Every path is exercised, not just typing: ``type_text`` posts and
+    releases inline while the others go through ``_post``, so a test that
+    only typed would pass with the shared helper leaking on every click.
+    """
+    from sleipnir.capabilities.computer import _darwin
+
+    _darwin.type_text("hi", key_delay_ms=0)
+    _darwin.key_chord([_darwin.KEYCODES["ctrl"], _darwin.KEYCODES["c"]])
+    _darwin.click("left")
+    _darwin.scroll(2)
+    _darwin.move_mouse(10, 10)
+
+    assert quartz.released == len(quartz.posted)
+
+
+def test_darwin_types_text_as_unicode_not_as_keycodes(quartz):
+    """No layout assumption anywhere: a character is delivered as text."""
+    from sleipnir.capabilities.computer import _darwin
+
+    _darwin.type_text("é", key_delay_ms=0)
+    payloads = [payload for payload, _ in quartz.events("key")]
+    assert all(payload[0] == "unicode" for payload in payloads)
+    assert payloads[0][1] == (ord("é"),)
+
+
+def test_darwin_sends_an_astral_character_as_two_surrogates(quartz):
+    from sleipnir.capabilities.computer import _darwin
+
+    _darwin.type_text("\U0001f600", key_delay_ms=0)
+    assert len(quartz.events("key")[0][0][1]) == 2
+
+
+def test_darwin_newline_is_the_return_key_not_a_character(quartz):
+    from sleipnir.capabilities.computer import _darwin
+
+    _darwin.type_text("a\nb", key_delay_ms=0)
+    keycodes = [payload[0] for payload, _ in quartz.events("key") if payload[0] != "unicode"]
+    assert _darwin.KEYCODES["enter"] in keycodes
+
+
+def test_darwin_click_happens_where_the_cursor_already_is(quartz):
+    """A Quartz click carries its own coordinates, so failing to read the
+    cursor first would teleport the pointer to (0, 0) on every click."""
+    from sleipnir.capabilities.computer import _darwin
+
+    _darwin.click("left")
+    assert {(p[1], p[2]) for p, _ in quartz.events("mouse")} == {(410, 320)}
+
+
+def test_darwin_scroll_sign_matches_the_cross_platform_contract(quartz):
+    from sleipnir.capabilities.computer import _darwin
+
+    _darwin.scroll(3)
+    assert quartz.events("scroll")[0][0][2] == 3
+
+
+def test_darwin_refuses_to_act_without_the_accessibility_grant(monkeypatch):
+    """The failure this backend exists to prevent.
+
+    Without the grant CGEventPost still succeeds and the event goes
+    nowhere, so a caller would believe it had typed. Stopping first is the
+    reason ensure_daemon is not a no-op here as it is on Windows.
+    """
+    from sleipnir.capabilities.computer import _darwin
+
+    denied = _FakeQuartz(trusted=False)
+    monkeypatch.setattr(_darwin, "_load", lambda: (denied, denied))
+
+    with pytest.raises(computer.CapabilityError, match="Accessibility"):
+        _darwin.ensure_daemon()
+
+
+def test_darwin_refuses_when_there_is_no_window_server(monkeypatch):
+    from sleipnir.capabilities.computer import _darwin
+
+    headless = _FakeQuartz(display=0)
+    monkeypatch.setattr(_darwin, "_load", lambda: (headless, headless))
+
+    with pytest.raises(computer.CapabilityError, match="window server"):
+        _darwin.ensure_daemon()
+
+
+def test_darwin_probe_is_not_ready_without_accessibility(monkeypatch):
+    from sleipnir.capabilities.computer import _darwin
+
+    denied = _FakeQuartz(trusted=False)
+    monkeypatch.setattr(_darwin, "_load", lambda: (denied, denied))
+    monkeypatch.setattr(_darwin, "_screenshot_tool", lambda: "/usr/sbin/screencapture")
+
+    report = _darwin.probe()
+    assert report.input_injection is False
+    assert report.ready is False
+    assert any("Accessibility" in note for note in report.notes)
+
+
+def test_darwin_probe_warns_about_the_permission_that_fails_quietly(quartz, monkeypatch):
+    """Screen Recording cannot be probed without taking a capture and
+    inspecting it, and without it a capture still succeeds while other
+    apps' windows come back blank. So it is said out loud."""
+    from sleipnir.capabilities.computer import _darwin
+
+    monkeypatch.setattr(_darwin, "_screenshot_tool", lambda: "/usr/sbin/screencapture")
+    report = _darwin.probe()
+
+    assert report.ready is True
+    assert report.session_type == "aqua"
+    assert report.daemon_running is True
+    assert any("Screen Recording" in note for note in report.notes)
+
+
+def test_darwin_screenshot_runs_screencapture_without_the_shutter(monkeypatch, tmp_path):
+    from sleipnir.capabilities.computer import _darwin
+
+    destination = tmp_path / "shot.png"
+    seen: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(argv)
+        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
+        return type("R", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr(_darwin, "_screenshot_tool", lambda: "/usr/sbin/screencapture")
+    monkeypatch.setattr(_darwin.subprocess, "run", fake_run)
+
+    assert _darwin.screenshot(destination) == "screencapture"
+    assert "-x" in seen[0]
+
+
+def test_darwin_screenshot_raises_rather_than_returning_a_missing_file(monkeypatch, tmp_path):
+    from sleipnir.capabilities.computer import _darwin
+
+    monkeypatch.setattr(_darwin, "_screenshot_tool", lambda: "/usr/sbin/screencapture")
+    monkeypatch.setattr(
+        _darwin.subprocess,
+        "run",
+        lambda argv, **kw: type("R", (), {"returncode": 1, "stderr": "denied"})(),
+    )
+
+    with pytest.raises(computer.CapabilityError, match="screencapture failed"):
+        _darwin.screenshot(tmp_path / "nope.png")

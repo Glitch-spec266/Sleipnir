@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sleipnir import platform
 from sleipnir.schema import AttemptFinished, OutputContract, ProducedArtifact
 
 SUMMARY_FILENAME = "summary.md"
@@ -68,7 +69,7 @@ def contained_regular_file(path: Path, root: Path) -> bool:
             return False
         current = path
         while current != root:
-            if current.is_symlink():
+            if platform.is_reparse_point(current):
                 return False
             current = current.parent
         return True
@@ -123,7 +124,7 @@ class AttemptWorkspace:
     def prepare(self) -> None:
         """Ensure an already-claimed workspace remains a real local directory."""
         if self.dir.exists():
-            if self.dir.is_symlink() or not self.dir.is_dir():
+            if platform.is_reparse_point(self.dir) or not self.dir.is_dir():
                 raise WorkspaceCollisionError(f"unsafe attempt workspace: {self.dir}")
             return
         self.prepare_fresh()
@@ -137,7 +138,7 @@ class AttemptWorkspace:
         parent = self.dir.parent
         artifacts_root = self.run_root / "artifacts"
         if artifacts_root.exists():
-            if artifacts_root.is_symlink() or not artifacts_root.is_dir():
+            if platform.is_reparse_point(artifacts_root) or not artifacts_root.is_dir():
                 raise WorkspaceCollisionError(
                     f"attempt workspace root is unsafe: {artifacts_root}"
                 )
@@ -147,9 +148,9 @@ class AttemptWorkspace:
             parent.mkdir()
         except FileExistsError:
             pass
-        if parent.is_symlink() or not parent.is_dir():
+        if platform.is_reparse_point(parent) or not parent.is_dir():
             raise WorkspaceCollisionError(
-                f"attempt workspace parent is unsafe: {parent}"
+                f"attempt workspace parent is a symlink: {parent}"
             )
         try:
             self.dir.mkdir()

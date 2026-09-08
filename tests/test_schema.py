@@ -79,6 +79,28 @@ def test_repository_input_paths_cannot_escape_the_run_root(path: str):
 
 @pytest.mark.parametrize(
     "path",
+    [
+        r"C:\Windows\System32\config\SAM",
+        "C:/Windows/System32/config/SAM",
+        r"\\server\share\secret.txt",
+        r"..\..\secret",
+        r"a\..\..\secret",
+        "C:secret",
+    ],
+)
+def test_windows_shaped_paths_cannot_escape_the_run_root(path: str):
+    """A plan may be authored on one platform and run on the other, so a
+    Windows-shaped escape (drive letter, UNC share, backslash-separated
+    upward walk) must be rejected the same as a POSIX one regardless of
+    which platform Sleipnir is running on. Before this test existed, only
+    ``/etc/passwd``-shaped paths were checked -- exactly why the gap these
+    cases cover went unnoticed."""
+    with pytest.raises(ValueError, match="must not escape|relative"):
+        InputContract(files=[path])
+
+
+@pytest.mark.parametrize(
+    "path",
     ["summary.md", "prompt.txt", "stdout.log", "stderr.log", ".checks/result.out"],
 )
 def test_outputs_cannot_overwrite_harness_owned_files(path: str):
@@ -238,6 +260,15 @@ def test_artifact_ref_rejects_wildcard_everything():
 def test_artifact_ref_rejects_path_escape():
     with pytest.raises(ValidationError, match="escape upward"):
         ArtifactRef(task_id="a", path="../../etc/passwd", reason="entirely legitimate use")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [r"C:\Windows\System32\config\SAM", r"\\server\share\x", r"..\..\secret"],
+)
+def test_artifact_ref_rejects_windows_shaped_path_escape(path: str):
+    with pytest.raises(ValidationError, match="escape upward"):
+        ArtifactRef(task_id="a", path=path, reason="entirely legitimate use")
 
 
 def test_artifact_budget_must_fit_max_input_bytes():

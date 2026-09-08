@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import pytest
+from conftest import make_junction, requires_junction, requires_symlink
 from test_schema import make_task
 
-from sleipnir.artifacts import AttemptWorkspace
+from sleipnir import platform
+from sleipnir.artifacts import AttemptWorkspace, WorkspaceCollisionError
 from sleipnir.context import resolve_inputs
 from sleipnir.schema import (
     ArtifactRef, ExpectedOutput, FileExistsCheck, InputContract, OutputContract, OutputKind,
 )
 
 
+@requires_symlink
 def test_repository_file_symlink_cannot_escape_the_run_root(tmp_path):
     run_root = tmp_path / "run"
     run_root.mkdir()
@@ -30,6 +34,7 @@ def test_repository_file_symlink_cannot_escape_the_run_root(tmp_path):
     assert "file:linked.txt" in resolved.missing
 
 
+@requires_symlink
 def test_dependency_artifact_symlink_cannot_escape_its_attempt(tmp_path):
     artifact_dir = tmp_path / "producer"
     artifact_dir.mkdir()
@@ -69,7 +74,12 @@ def test_a_declared_dependency_artifact_is_staged_and_referenced_not_inlined(tmp
     """
     artifact_dir = tmp_path / "producer"
     artifact_dir.mkdir()
-    (artifact_dir / "roman.py").write_text("VALUE = 4\n")
+    # write_bytes, not write_text: staging reads the file as raw bytes (see
+    # AttemptWorkspace.stage_inputs), and write_text's default newline
+    # translation turns "\n" into "\r\n" on Windows -- a real byte-count
+    # mismatch (11 vs. 10) that has nothing to do with the behaviour this
+    # test checks.
+    (artifact_dir / "roman.py").write_bytes(b"VALUE = 4\n")
     task = make_task(
         "consumer",
         deps=["producer"],
@@ -96,6 +106,7 @@ def test_a_declared_dependency_artifact_is_staged_and_referenced_not_inlined(tmp
     assert resolved.total_bytes == len("VALUE = 4\n".encode())
 
 
+@requires_symlink
 def test_a_symlinked_dependency_artifact_is_never_staged(tmp_path):
     artifact_dir = tmp_path / "producer"
     artifact_dir.mkdir()
@@ -214,3 +225,53 @@ def test_a_file_exists_check_is_described_by_path_not_contract_name(tmp_path):
     assert "`src/generated.py`" in resolved.prompt
     assert "artifact_label" not in resolved.prompt
     assert "['" not in resolved.prompt, "no raw Python list repr in a prompt"
+
+@requires_junction
+def test_a_junction_is_a_reparse_point_even_though_it_is_not_a_symlink(tmp_path):
+    """The single fact the whole junction defence rests on.
+
+    ``Path.is_symlink()`` is False for a junction, so the pre-port containment
+    checks would have walked straight through one. Pinned here because the
+    regression is silent: every other test in this file would still pass.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = tmp_path / "link"
+    make_junction(link, outside)
+
+    assert not link.is_symlink()
+    assert platform.is_reparse_point(link)
+
+
+@requires_junction
+def test_attempt_workspace_junction_is_refused_before_anything_is_written(tmp_path):
+    """``prepare()`` is where the reparse check is the *only* guard.
+
+    The containment walk in ``contained_regular_file`` is backed up by a
+    ``resolve()`` comparison, so a junction there is caught twice. Here it is
+    not: if this check missed a junction, every artifact, stdout and summary
+    of the attempt would be written straight into the junction's target.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    workspace = AttemptWorkspace(tmp_path, "a", 1)
+    workspace.dir.parent.mkdir(parents=True)
+    make_junction(workspace.dir, outside)
+
+    with pytest.raises(WorkspaceCollisionError, match="unsafe attempt workspace"):
+        workspace.prepare()
+    assert list(outside.iterdir()) == []
+
+
+@requires_junction
+def test_attempt_workspace_parent_junction_is_refused(tmp_path):
+    """Same gap one level up: the per-task directory, not the attempt's own."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    workspace = AttemptWorkspace(tmp_path, "a", 1)
+    (tmp_path / "artifacts").mkdir()
+    make_junction(workspace.dir.parent, outside)
+
+    with pytest.raises(WorkspaceCollisionError, match="symlink"):
+        workspace.prepare()
+    assert list(outside.iterdir()) == []

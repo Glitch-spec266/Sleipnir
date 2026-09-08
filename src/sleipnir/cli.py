@@ -36,7 +36,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from sleipnir import __version__
+from sleipnir import __version__, platform
 from sleipnir.adapters import (
     AnthropicAdapter,
     ClaudeAdapter,
@@ -275,7 +275,7 @@ async def cmd_plan(args: argparse.Namespace) -> int:
                 handle.write(plan.model_dump_json(indent=2))
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temporary, target)
+            platform.replace_atomic(temporary, target)
             print(f"wrote {target} — {len(plan.tasks)} tasks")
             for task in plan.tasks:
                 deps = f" <- {', '.join(task.depends_on)}" if task.depends_on else ""
@@ -977,19 +977,68 @@ async def cmd_doctor(args: argparse.Namespace) -> int:
     from sleipnir.capabilities import browser, clipboard, computer
 
     probe = computer.probe()
-    rows = [
-        ("session", probe.session_type),
-        ("input injection (ydotool)", "yes" if probe.input_injection else "NO"),
-        ("/dev/uinput writable", "yes" if probe.uinput_writable else "NO"),
-        ("input daemon running", "yes" if probe.daemon_running else "not yet (starts on demand)"),
-        ("screenshot tool", probe.screenshot_tool or "NONE"),
-        ("Wayland clipboard", "yes" if clipboard.available() else "NO"),
-        ("browser control", "yes" if browser.available() else "NO"),
-    ]
+    # The Probe fields are deliberately shared across platforms; only what
+    # each one *means* here differs, so this branches on labels rather than
+    # on structure. See capabilities/computer/_backend.py.
+    if platform.IS_WINDOWS:
+        rows = [
+            ("session", probe.session_type),
+            ("input injection (SendInput)", "yes" if probe.input_injection else "NO"),
+            ("interactive desktop session", "yes" if probe.uinput_writable else "NO"),
+            ("input daemon running", "n/a (none needed)"),
+            ("screenshot", probe.screenshot_tool or "NONE"),
+            ("browser control", "yes" if browser.available() else "NO"),
+            ("shell for plan checks", platform.shell_kind()),
+        ]
+    elif platform.IS_MACOS:
+        rows = [
+            ("session", probe.session_type),
+            ("input injection (Quartz)", "yes" if probe.input_injection else "NO"),
+            ("Accessibility granted", "yes" if probe.input_injection else "NO"),
+            ("window server present", "yes" if probe.uinput_writable else "NO"),
+            ("input daemon running", "n/a (none needed)"),
+            ("screenshot", probe.screenshot_tool or "NONE"),
+            ("browser control", "yes" if browser.available() else "NO"),
+        ]
+    else:
+        rows = [
+            ("session", probe.session_type),
+            ("input injection (ydotool)", "yes" if probe.input_injection else "NO"),
+            ("/dev/uinput writable", "yes" if probe.uinput_writable else "NO"),
+            ("input daemon running", "yes" if probe.daemon_running else "not yet (starts on demand)"),
+            ("screenshot tool", probe.screenshot_tool or "NONE"),
+            ("Wayland clipboard", "yes" if clipboard.available() else "NO"),
+            ("browser control", "yes" if browser.available() else "NO"),
+        ]
     for label, value in rows:
         print(f"  {label:<28} {value}")
     for note in probe.notes:
         print(f"  ! {note}")
+    if platform.IS_WINDOWS and platform.shell_kind() == "cmd":
+        # Loud, because the failure it predicts is confusing: a plan authored
+        # anywhere else uses POSIX `CommandCheck` commands, and cmd.exe fails
+        # them with a syntax error that names neither the shell nor the plan.
+        print(
+            "  ! no POSIX shell found — plan CommandChecks will run under "
+            "cmd.exe, and any using pipes, globs or `ls`/`grep` will fail.\n"
+            "    Install Git for Windows (`winget install --id Git.Git`) or "
+            "set SLEIPNIR_SHELL to an `sh`."
+        )
+    if platform.IS_WINDOWS:
+        print(
+            "  ! Codex's worker sandbox is kernel-enforced on Linux and macOS "
+            "but not here; treat `workspace-write` as an intention on Windows."
+        )
+    if platform.IS_MACOS and not probe.input_injection:
+        # Said plainly because the checkbox people go looking for does not
+        # exist: TCC attributes the grant to the process that owns the
+        # terminal, so Sleipnir never appears in that list under its own name.
+        print(
+            "  ! grant Accessibility to your terminal app, not to Sleipnir — "
+            "System Settings → Privacy & Security → Accessibility lists "
+            "Terminal or iTerm, and the grant only takes effect after that "
+            "app is restarted."
+        )
     if not browser.available():
         print("  ! playwright is not installed — run `sleipnir setup`")
     if not clipboard.available():
@@ -1006,8 +1055,44 @@ _UDEV_RULE = 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_nod
 _UDEV_PATH = "/etc/udev/rules.d/60-sleipnir-uinput.rules"
 
 
+def _playwright_steps() -> list[tuple[str, str, bool]]:
+    """The browser half of setup, identical on every platform."""
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        return [
+            ("install the browser-control library", f"{sys.executable} -m pip install playwright", False),
+            ("download the Chromium build it drives", f"{sys.executable} -m playwright install chromium", False),
+        ]
+    return []
+
+
+def _windows_setup_steps() -> list[tuple[str, str, bool]]:
+    """(description, shell command, needs_root) for a Windows host.
+
+    Nothing here needs administrator rights, which is the point: input
+    injection is ``SendInput``, so there is no device node to grant, no udev
+    rule to write and no group to join. The only host dependency left is a
+    POSIX shell, and only because ``plan.json`` files are written to be
+    portable — Sleipnir itself runs fine without one.
+    """
+    steps: list[tuple[str, str, bool]] = []
+    if platform.posix_shell() is None:
+        steps.append(
+            (
+                "install Git for Windows (provides the `sh` that plan "
+                "CommandChecks are written for)",
+                "winget install --id Git.Git --source winget",
+                False,
+            )
+        )
+    return steps + _playwright_steps()
+
+
 def _setup_steps() -> list[tuple[str, str, bool]]:
     """(description, shell command, needs_root) for this host."""
+    if platform.IS_WINDOWS:
+        return _windows_setup_steps()
     if shutil.which("dnf"):
         install = "dnf install -y ydotool"
     elif shutil.which("apt-get"):
@@ -1048,14 +1133,7 @@ def _setup_steps() -> list[tuple[str, str, bool]]:
                 True,
             )
         )
-    try:
-        import playwright  # noqa: F401
-    except ImportError:
-        steps.append(
-            ("install the browser-control library", f"{sys.executable} -m pip install playwright", False)
-        )
-        steps.append(("download the Chromium build it drives", f"{sys.executable} -m playwright install chromium", False))
-    return steps
+    return steps + _playwright_steps()
 
 
 async def cmd_setup(args: argparse.Namespace) -> int:
@@ -1088,7 +1166,12 @@ async def cmd_setup(args: argparse.Namespace) -> int:
             print(f"error: step failed ({description}); stopping here.", file=sys.stderr)
             return 2
 
-    print("\ndone. Log out and back in so the `input` group applies, then run `sleipnir doctor`.")
+    if platform.IS_WINDOWS:
+        # No group membership to pick up, so no re-login; a fresh shell is
+        # still needed for a just-installed `sh` to appear on PATH.
+        print("\ndone. Open a new terminal (so PATH refreshes), then run `sleipnir doctor`.")
+    else:
+        print("\ndone. Log out and back in so the `input` group applies, then run `sleipnir doctor`.")
     return 0
 
 
@@ -1465,6 +1548,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Must happen before anything prints: a stock Windows console's default
+    # code page cannot encode the box-drawing glyphs in theme.py/tui.py, and
+    # the first frame would otherwise crash with UnicodeEncodeError before
+    # any UI is on screen. A no-op on POSIX, where the terminal is already
+    # UTF-8 in the overwhelming common case.
+    platform.prepare_stdio_encoding()
     args = build_parser().parse_args(argv)
     args.run_root_explicit = hasattr(args, "run_root")
     if not args.run_root_explicit:
