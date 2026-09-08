@@ -1,0 +1,34 @@
+{
+  "name": "sleipnir-cli",
+  "version": "0.1.0",
+  "description": "npm launcher for the Sleipnir agentic orchestrator",
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "orchestrator",
+    "sleipnir"
+  ],
+  "homepage": "https://github.com/Glitch-spec266/Sleipnir",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Glitch-spec266/Sleipnir.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Glitch-spec266/Sleipnir/issues"
+  },
+  "type": "module",
+  "bin": {
+    "sleipnir": "npm/sleipnir.mjs"
+  },
+  "files": [
+    "npm/sleipnir.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@dataiku/uv": "0.12.0"
+  }
+}

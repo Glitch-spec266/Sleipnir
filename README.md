@@ -110,6 +110,20 @@ To install the current GitHub version before a PyPI release, use:
 uv tool install git+https://github.com/Glitch-spec266/Sleipnir.git
 ```
 
+For an npm-style global install, use the npm launcher:
+
+```sh
+npm install -g sleipnir-cli
+sleipnir --help
+```
+
+Until the npm release is published, the same launcher can be installed directly
+from GitHub:
+
+```sh
+npm install -g git+https://github.com/Glitch-spec266/Sleipnir.git
+```
+
 Python 3.12 or later is required. The host/browser integration is deliberately
 optional; add it only on a machine that needs it:
 
