@@ -643,3 +643,39 @@ def test_file_blocks_write_nested_paths(tmp_path: Path):
     written = materialize_file_blocks("```file:pkg/mod.py\nx = 1\n```", tmp_path)
     assert written == ["pkg/mod.py"]
     assert (tmp_path / "pkg" / "mod.py").read_text() == "x = 1\n"
+
+
+def test_a_non_sse_two_hundred_is_parsed_rather_than_discarded(tmp_path: Path):
+    """An endpoint that ignores `stream:true` still returned a usable answer.
+
+    Self-hosted and OpenAI-compatible services vary here. Reading only
+    ``data:`` lines turned a complete, parseable completion into empty content,
+    which surfaced as "response contained no file: blocks" — an acceptance
+    failure, retried at full cost, for a response the provider had delivered.
+    """
+    body = json.dumps({
+        "id": "gen-1",
+        "model": "vendor/model-x",
+        "choices": [{"message": {"content": "Hello"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+    }).encode()
+    adapter = openrouter(lambda request: httpx.Response(200, content=body))
+    outcome = run(adapter.dispatch(request_for(tmp_path)))
+
+    assert outcome.status is AttemptStatus.SUCCEEDED
+    assert outcome.response_text == "Hello"
+    assert outcome.usage.input_tokens == 100
+    assert outcome.usage.output_tokens == 20
+
+
+def test_a_two_hundred_that_is_neither_sse_nor_json_is_a_provider_error(tmp_path: Path):
+    """Empty content is the provider's failure, not the model's.
+
+    Classifying it as an acceptance failure sends it into the ordinary retry
+    ladder, so a broken endpoint is paid for once per attempt.
+    """
+    adapter = openrouter(lambda request: httpx.Response(200, content=b"<html>gateway</html>"))
+    outcome = run(adapter.dispatch(request_for(tmp_path)))
+
+    assert outcome.status is AttemptStatus.FAILED
+    assert outcome.failure_kind is FailureKind.PROVIDER_ERROR

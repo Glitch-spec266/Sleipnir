@@ -435,3 +435,94 @@ def test_a_real_spawn_asks_for_a_stream_limit_the_default_would_not_give():
     session = ChatSession(provider="codex")
     asyncio.run(collect(CodexTransport(session, spawn=spawn).turn("go")))
     assert seen[0]["limit"] >= 8 * 1024 * 1024
+
+
+def test_changing_the_model_mid_session_relaunches_with_resume():
+    """A routing change must reach the process, not just the footer.
+
+    The model is fixed in argv at spawn time, so a live persistent process
+    cannot adopt a new alias. Before this, `/model` and `/effort` read as
+    applied and were silently ignored for the rest of the session — the exact
+    failure `push_routing` was written to prevent, one layer further down.
+    """
+    argvs: list[list[str]] = []
+    procs: list[ScriptedProcess] = []
+
+    async def spawn(*argv, **kwargs):
+        argvs.append(list(argv))
+        proc = ScriptedProcess()
+        procs.append(proc)
+        for event in claude_events():
+            proc.feed(event)
+        return proc
+
+    session = ChatSession(provider="claude", session_id="abc-123")
+    transport = ClaudeTransport(session, spawn=spawn, model="sonnet")
+
+    async def two_turns() -> None:
+        await collect(transport.turn("one"))
+        transport.model = "opus"
+        for event in claude_events():
+            procs[0].feed(event)
+        await collect(transport.turn("two"))
+
+    asyncio.run(two_turns())
+
+    assert len(argvs) == 2, "the changed alias must force a relaunch"
+    assert argvs[0][argvs[0].index("--model") + 1] == "sonnet"
+    assert argvs[1][argvs[1].index("--model") + 1] == "opus"
+    # Relaunching is only safe because context lives provider-side.
+    assert "--resume" in argvs[1] and "abc-123" in argvs[1]
+
+
+def test_an_unchanged_model_still_reuses_the_process():
+    """The relaunch guard must not undo the persistent-process saving."""
+    argvs: list[list[str]] = []
+    procs: list[ScriptedProcess] = []
+
+    async def spawn(*argv, **kwargs):
+        argvs.append(list(argv))
+        proc = ScriptedProcess()
+        procs.append(proc)
+        for event in claude_events():
+            proc.feed(event)
+        return proc
+
+    session = ChatSession(provider="claude", session_id="abc-123")
+    transport = ClaudeTransport(session, spawn=spawn, model="sonnet")
+
+    async def two_turns() -> None:
+        await collect(transport.turn("one"))
+        transport.model = "sonnet"  # /model with the value already in force
+        for event in claude_events():
+            procs[0].feed(event)
+        await collect(transport.turn("two"))
+
+    asyncio.run(two_turns())
+    assert len(argvs) == 1, "an unchanged alias must not pay a fresh spawn"
+
+
+def test_changing_the_effort_mid_session_relaunches():
+    argvs: list[list[str]] = []
+    procs: list[ScriptedProcess] = []
+
+    async def spawn(*argv, **kwargs):
+        argvs.append(list(argv))
+        proc = ScriptedProcess()
+        procs.append(proc)
+        for event in claude_events():
+            proc.feed(event)
+        return proc
+
+    session = ChatSession(provider="claude", session_id="abc-123")
+    transport = ClaudeTransport(session, spawn=spawn, model="sonnet")
+
+    async def two_turns() -> None:
+        await collect(transport.turn("one"))
+        transport.effort = "high"
+        for event in claude_events():
+            procs[0].feed(event)
+        await collect(transport.turn("two"))
+
+    asyncio.run(two_turns())
+    assert len(argvs) == 2, "a changed effort must reach the process"

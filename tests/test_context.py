@@ -6,7 +6,9 @@ from test_schema import make_task
 
 from sleipnir.artifacts import AttemptWorkspace
 from sleipnir.context import resolve_inputs
-from sleipnir.schema import ArtifactRef, InputContract
+from sleipnir.schema import (
+    ArtifactRef, ExpectedOutput, FileExistsCheck, InputContract, OutputContract, OutputKind,
+)
 
 
 def test_repository_file_symlink_cannot_escape_the_run_root(tmp_path):
@@ -194,3 +196,21 @@ def test_a_dependency_is_not_staged_over_this_task_s_own_output(tmp_path):
 
     assert resolved.staged == []
     assert "VALUE = 4" in resolved.prompt   # still readable, just not on disk
+
+
+def test_a_file_exists_check_is_described_by_path_not_contract_name(tmp_path):
+    """The model was told to write a path; naming the contract label asks it
+    to satisfy a check on an identifier it has never been shown."""
+    task = make_task(
+        "t",
+        outputs=OutputContract(outputs=[ExpectedOutput(
+            name="artifact_label", kind=OutputKind.FILE,
+            path="src/generated.py", description="the generated module")]),
+        acceptance=[FileExistsCheck(outputs=["artifact_label"], min_bytes=1)],
+    )
+    resolved = resolve_inputs(
+        task, goal="goal", run_root=tmp_path, summaries={}, artifact_dir_for=lambda _: None
+    )
+    assert "`src/generated.py`" in resolved.prompt
+    assert "artifact_label" not in resolved.prompt
+    assert "['" not in resolved.prompt, "no raw Python list repr in a prompt"

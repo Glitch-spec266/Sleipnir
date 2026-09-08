@@ -162,7 +162,17 @@ class ConsoleState:
     #: Alias for ordinary requests after a separate tool-free capability check.
     #: A false negative costs a stronger turn; a false positive can act
     #: incorrectly on the live desktop, so uncertainty falls back to ``model``.
-    fast_model: str | None = "haiku"
+    #:
+    #: Off by default, and the reason is arithmetic. The check is a fresh
+    #: one-shot ``claude -p``, and a spawn is the expensive thing here:
+    #: MEASURED over 85 real sessions, a session's first turn costs a median
+    #: 51,297 input tokens (p25 31,568, p75 56,546). The turn it is gating
+    #: would otherwise have cost no spawn at all, because the conversation
+    #: runs on a persistent process. Paying ~51k window tokens to move one
+    #: short reply from the strong alias to the fast one loses on every
+    #: ordinary message. Opt in with --fast-model when a session is genuinely
+    #: dominated by long tool-using turns.
+    fast_model: str | None = None
     #: Set while a credential is being typed: the buffer is not echoed and is
     #: never added to the transcript.
     secret_request: object | None = None
@@ -1156,12 +1166,11 @@ async def _handle(state: ConsoleState, text: str) -> None:
             state.queued_for_brain.clear()
         prompt = f"{capability_brief()}\n\n{text}" if first_turn else text
         # A pasted image lands in a fresh private directory, and a persistent
-        # process cannot gain an allowed root after launch. Relaunching is safe:
-        # the transport resumes the same session, so no context is lost.
-        dirs = _claude_dirs(state)
-        if state.provider == "claude" and getattr(transport, "add_dirs", ()) != dirs:
-            await transport.close()
-            transport.add_dirs = dirs
+        # process cannot gain an allowed root after launch. The transport's own
+        # launch-key guard relaunches when this changes, resuming the same
+        # session, so no context is lost.
+        if state.provider == "claude":
+            transport.add_dirs = _claude_dirs(state)
         # The gate is a separate one-shot turn; only its verdict reaches here.
         lane = await _lane_model(state, prompt + queued)
         restore_model = getattr(transport, "model", None)

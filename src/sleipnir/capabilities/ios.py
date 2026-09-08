@@ -30,9 +30,15 @@ class IOSProbe:
         return bool(self.xtool and self.swift and self.package_manifest and self.xtool_config)
 
 
-def probe(root: Path = Path.cwd()) -> IOSProbe:
-    """Inspect prerequisites without downloading SDKs or contacting Apple."""
-    root = root.resolve()
+def probe(root: Path | None = None) -> IOSProbe:
+    """Inspect prerequisites without downloading SDKs or contacting Apple.
+
+    ``root`` resolves when called, never at import: a default of ``Path.cwd()``
+    is evaluated once when the module loads, so a long-lived process — the
+    console, which can move its run root with ``/run-root`` — would keep
+    answering about whatever directory it started in.
+    """
+    root = (Path.cwd() if root is None else root).resolve()
     xtool = shutil.which("xtool")
     swift = shutil.which("swift")
     package_manifest = (root / "Package.swift").is_file()
@@ -95,7 +101,9 @@ def run(
     tool = executable or shutil.which("xtool")
     if tool is None:
         raise IOSCapabilityError("xtool is not on PATH; install it from https://xtool.sh")
-    if action in {"build", "ipa", "run"}:
+    # install and launch act on the built product of the project in `root`,
+    # so they need the same manifest as the commands that produce it.
+    if action in {"build", "ipa", "run", "install", "launch"}:
         missing = [name for name in ("Package.swift", "xtool.yml") if not (root / name).is_file()]
         if missing:
             raise IOSCapabilityError(

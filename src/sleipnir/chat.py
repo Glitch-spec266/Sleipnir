@@ -335,11 +335,27 @@ class ClaudeTransport:
         self.timeout_s = timeout_s
         self._spawn: Spawner = spawn or _default_spawn
         self._proc: Any | None = None
+        self._launched_with: tuple[Any, ...] | None = None
         self._stderr_tail = ""
+
+    @property
+    def _launch_key(self) -> tuple[Any, ...]:
+        """Everything fixed in argv at spawn time.
+
+        A live ``claude -p`` cannot adopt a new alias: the model, effort,
+        permission mode and allowed roots are all decided in argv. Without
+        comparing them, ``/model`` and ``/effort`` update the footer and are
+        silently ignored for the rest of the session.
+        """
+        return (self.model, self.effort, self.permission_mode, tuple(self.add_dirs))
 
     async def _ensure_process(self) -> Any:
         if self._proc is not None and self._proc.returncode is None:
-            return self._proc
+            if self._launched_with == self._launch_key:
+                return self._proc
+            # Relaunching costs one spawn and loses nothing: the resume below
+            # picks the conversation up provider-side.
+            await self.close()
         argv = claude_stream_argv(
             self.session.session_id,
             # Resume whenever the session was ever opened, including across a
@@ -359,6 +375,7 @@ class ClaudeTransport:
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
+        self._launched_with = self._launch_key
         self._stderr_tail = ""
         asyncio.ensure_future(self._drain_stderr(self._proc))
         return self._proc

@@ -365,3 +365,44 @@ def test_bad_browser_arguments_fail_before_browser_start(monkeypatch):
     args = argparse.Namespace(action="fill", args=["#field"], headless=False)
     with pytest.raises(cli.CliError, match="exactly 2"):
         asyncio.run(cli.cmd_browser(args))
+
+
+def test_ios_probe_resolves_the_working_directory_when_called(tmp_path, monkeypatch):
+    """A default of ``Path.cwd()`` binds at import, not at call.
+
+    The console is long-lived and can move its run root, so a default frozen
+    when the module loaded answers confidently about the wrong directory.
+    """
+    (tmp_path / "Package.swift").write_text("// swift-tools-version:5.9\n")
+    (tmp_path / "xtool.yml").write_text("version: 1\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = ios.probe()
+
+    assert result.package_manifest is True
+    assert result.xtool_config is True
+    assert not [note for note in result.notes if "xtool.yml" in note]
+
+
+@pytest.mark.parametrize("action", ["build", "ipa", "run", "install", "launch"])
+def test_ios_project_commands_refuse_a_directory_that_is_not_an_xtool_app(tmp_path, action):
+    """install and launch act on the built product of the project in `root`,
+    so a directory with no manifest is the same category error there."""
+    with pytest.raises(ios.IOSCapabilityError, match="not an xtool SwiftPM app"):
+        ios.run(action, root=tmp_path, executable="/usr/bin/true",
+                run=lambda *a, **k: pytest.fail("xtool must not be invoked"))
+
+
+@pytest.mark.parametrize("action", ["doctor", "setup", "auth", "sdk", "new", "devices"])
+def test_ios_host_level_commands_do_not_require_a_project(tmp_path, action):
+    """A host-level command is not project-scoped and must stay usable."""
+    if action == "doctor":
+        pytest.skip("doctor reports rather than dispatching")
+    calls: list[list[str]] = []
+
+    class Done:
+        returncode = 0
+
+    ios.run(action, root=tmp_path, executable="/usr/bin/true",
+            run=lambda argv, **k: (calls.append(argv), Done())[1])
+    assert calls, "a host-level command must still reach xtool"

@@ -34,6 +34,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from sleipnir import __version__
 from sleipnir.adapters import (
     AnthropicAdapter,
@@ -191,7 +193,18 @@ def load_plan(run_root: Path) -> Plan:
     path = run_root / PLAN_FILENAME
     if not path.exists():
         raise CliError(f"no plan at {path}. Run `sleipnir plan \"<prompt>\"` first.")
-    return Plan.model_validate_json(path.read_text(encoding="utf-8"))
+    try:
+        return Plan.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValidationError as exc:
+        # A malformed config already reports itself as one `error:` line. A
+        # malformed plan used to answer with a pydantic stack trace, which
+        # reads as a crash in Sleipnir rather than a fault in the operator's
+        # file — and buries the one line that says which task is wrong.
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or 'plan'}: {error['msg']}"
+            for error in exc.errors()[:5]
+        )
+        raise CliError(f"{path} is not a valid plan — {problems}") from exc
 
 
 def result_log(run_root: Path) -> ResultLog:
@@ -956,7 +969,7 @@ async def cmd_console(args: argparse.Namespace) -> int:
     if effort and effort not in EFFORT_LEVELS:
         raise CliError(f"unknown effort {effort!r}; choose one of {', '.join(EFFORT_LEVELS)}")
     state.effort = effort
-    state.fast_model = getattr(args, "fast_model", "haiku") or None
+    state.fast_model = getattr(args, "fast_model", "") or None
     return await run_console(state, splash=not getattr(args, "no_splash", False))
 
 
@@ -1367,9 +1380,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     console_parser.add_argument(
         "--fast-model",
-        default="haiku",
+        default="",
         help="model alias for ordinary requests that pass a tool-free capability "
-             "check (default: haiku); pass an empty string to disable the fast lane",
+             "check; off by default because the check is a fresh spawn, and a "
+             "spawn costs a measured median 51k input tokens while the turn it "
+             "gates would have cost none (pass e.g. --fast-model haiku to opt in)",
     )
     console_parser.set_defaults(func=cmd_console)
 

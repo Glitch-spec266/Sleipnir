@@ -51,6 +51,13 @@ models = [{ id = "replace/with-an-approved-model" }]
 name = "codex-sub"
 adapter = "codex"
 billing = "subscription"
+# MEASURED on CLI 0.153.3: a `codex exec` dispatch that wrote a 9-byte file
+# from an 847-byte prompt reported 66,944 tokens — 59,392 of them cache reads
+# before any work. A second run of two trivial tasks came to 171,648. The floor
+# is more than twice `claude -p`'s, so declaring it as zero told the router a
+# Codex dispatch was free of fixed cost and made it the cheap-looking choice
+# for exactly the small tasks where the floor is the whole bill.
+dispatch_overhead_tokens = 60000
 # Bulk code goes here before Claude so the scarce Claude window is reserved for
 # decomposition and control. This sentinel deliberately omits `--model`, so
 # the authenticated Codex CLI uses the account's current supported default.

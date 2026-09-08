@@ -126,7 +126,15 @@ Bounded on-demand frontier task specs (never artifact content):
 
 
 def build_control_task(manifest: Manifest, plan: Plan | None = None) -> Task:
-    prompt = control_instructions(manifest, plan)
+    """The task record for one control call. The prompt is built at dispatch.
+
+    Deliberately carries no copy of that prompt. ``InputContract.instructions``
+    caps at 4,000 characters — a sane bound on planner-written context, and a
+    quarter of the assembled control prompt. Slicing it to fit kept the header
+    and half a JSON schema while discarding the entire bounded manifest and the
+    frontier drill-down: the one thing the brain exists to read. The copy was
+    never dispatched and never counted toward routing, so it was pure risk.
+    """
     return Task(
         id=CONTROL_TASK_ID,
         description="Choose the next safe harness action from the bounded run manifest.",
@@ -139,7 +147,6 @@ def build_control_task(manifest: Manifest, plan: Plan | None = None) -> Task:
         )]),
         no_downshift=True,
         timeout_s=900,
-        inputs={"instructions": prompt[:4_000]},
     )
 
 

@@ -211,7 +211,7 @@ def _output_section(task: Task) -> list[str]:
     if task.acceptance:
         lines += ["", "# Acceptance criteria", "Your work is checked by:"]
         for check in task.acceptance:
-            lines.append(f"- {_describe_check(check)}")
+            lines.append(f"- {_describe_check(check, task)}")
 
     lines += [
         "",
@@ -225,13 +225,26 @@ def _output_section(task: Task) -> list[str]:
     return lines
 
 
-def _describe_check(check: object) -> str:
+def _paths_for(names: list[str], task: Task | None) -> list[str]:
+    if task is None:
+        return list(names)
+    by_name = {output.name: output.path for output in task.outputs.outputs}
+    return [by_name.get(name, name) for name in names]
+
+
+def _describe_check(check: object, task: Task | None = None) -> str:
     kind = getattr(check, "type", "unknown")
     match kind:
         case "command":
             return f"running `{getattr(check, 'command', '')}` and requiring exit code 0"
         case "file_exists":
-            return f"checking these outputs exist and are non-empty: {getattr(check, 'outputs', [])}"
+            # A file_exists check names outputs by contract name, which the
+            # model is never shown. Naming `['a']` at it asks for a file it has
+            # no way to identify; the paths are what it was told to write.
+            paths = _paths_for(getattr(check, "outputs", []), task)
+            return "checking these files exist and are non-empty: " + ", ".join(
+                f"`{path}`" for path in paths
+            )
         case "json_schema":
             return f"validating `{getattr(check, 'output', '')}` against a JSON schema"
         case "llm_judge":

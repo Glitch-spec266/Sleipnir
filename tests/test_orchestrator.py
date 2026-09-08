@@ -15,6 +15,7 @@ from sleipnir.adapters.base import DispatchOutcome
 from sleipnir.orchestrator import (
     ControlAction,
     ControlError,
+    build_control_task,
     control_instructions,
     run_control_cycle,
 )
@@ -34,6 +35,30 @@ def test_control_prompt_contains_bounded_manifest_but_no_artifact_content(tmp_pa
     assert manifest.model_dump_json() in prompt
     assert plan.by_id["a"].description in prompt
     assert "artifact content" not in manifest.model_dump_json().lower()
+
+
+def test_the_control_task_carries_no_truncated_copy_of_its_own_prompt(tmp_path):
+    """Clip the goal, never the prompt — and never keep a clipped duplicate.
+
+    The prompt is built at dispatch. A second copy sliced to the schema's
+    4,000-character instructions cap discards the whole bounded manifest and
+    the frontier drill-down, keeping only the header and half a JSON schema.
+    It was never read and never counted toward routing, so its only possible
+    effect was to hand a manifest-less prompt to anyone who later routed
+    control through the ordinary prompt path.
+    """
+    now = datetime(2026, 8, 19, tzinfo=UTC)
+    plan = plan_of(make_task("a"))
+    budget = BudgetSnapshot(window_start=now, window_end=now + timedelta(hours=5), observed_at=now)
+    manifest = build_manifest(plan, [], budget, generated_at=now)
+
+    task = build_control_task(manifest, plan)
+    prompt = control_instructions(manifest, plan)
+
+    assert len(prompt) > 4_000, "the guarded case is a prompt longer than the cap"
+    assert task.inputs.instructions is None, (
+        "a sliced copy of the control prompt is worse than no copy"
+    )
 
 
 def test_control_cycle_parses_a_typed_stop_decision(tmp_path):

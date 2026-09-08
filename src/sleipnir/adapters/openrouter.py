@@ -225,6 +225,19 @@ class OpenRouterAdapter(BaseAdapter):
         finally:
             await client.aclose()
 
+        if not content and not payload:
+            # Nothing came back that could be read as a completion. That is the
+            # provider failing, not the model failing acceptance: classifying it
+            # as the latter feeds it to the ordinary retry ladder and pays for
+            # the same broken endpoint once per attempt.
+            return DispatchOutcome(
+                status=AttemptStatus.FAILED,
+                failure_kind=FailureKind.PROVIDER_ERROR,
+                billing_mode=BillingMode.METERED,
+                stderr_tail=f"{url} returned a body that is neither an SSE stream nor JSON",
+                exit_code=1,
+            )
+
         outcome = DispatchOutcome(
             status=AttemptStatus.SUCCEEDED,
             billing_mode=BillingMode.METERED,
@@ -328,6 +341,7 @@ class OpenRouterAdapter(BaseAdapter):
                     payload.setdefault("id", chunk.get("id"))
                     payload.setdefault("model", chunk.get("model"))
 
+                whole = bytearray()
                 async for chunk_bytes in response.aiter_bytes():
                     wire_bytes += len(chunk_bytes)
                     if wire_bytes > self.max_response_bytes:
@@ -335,13 +349,29 @@ class OpenRouterAdapter(BaseAdapter):
                             f"provider stream exceeded {self.max_response_bytes:,} bytes"
                         )
                     sink.write(chunk_bytes)
+                    whole.extend(chunk_bytes)
                     pending.extend(chunk_bytes)
                     while (newline := pending.find(b"\n")) >= 0:
                         consume(bytes(pending[:newline]))
                         del pending[: newline + 1]
                 if pending:
                     consume(bytes(pending))
+        if not parts and not payload:
+            # The endpoint ignored `stream:true` and answered with an ordinary
+            # body. Discarding a complete, parseable completion showed up as an
+            # acceptance failure and was retried at full cost — for work the
+            # provider had already done and charged for.
+            return self._parse_whole_body(bytes(whole))
         return "".join(parts), payload
+
+    def _parse_whole_body(self, raw: bytes) -> tuple[str, dict[str, Any]]:
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return "", {}
+        if not isinstance(payload, dict):
+            return "", {}
+        return self._content_of(payload), payload
 
     def _http_error(self, response: httpx.Response) -> DispatchOutcome:
         return self._classify_status(response.status_code, response.text)

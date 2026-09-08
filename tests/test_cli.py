@@ -547,6 +547,35 @@ def test_missing_plan_is_a_clean_error(workspace: Path, capsys):
     assert "no plan at" in capsys.readouterr().err
 
 
+def test_a_malformed_plan_is_a_clean_error_not_a_traceback(workspace: Path, capsys):
+    """A bad config already answers with one `error:` line; a bad plan did not.
+
+    A pydantic stack trace reads as a crash inside Sleipnir rather than a fault
+    in the operator's file, and buries the one line naming the offending task.
+    """
+    (workspace / "plan.json").write_text(json.dumps({
+        "schema_version": 1,
+        "plan_id": "p",
+        "goal": "a goal that is long enough to validate",
+        "created_at": "2026-09-08T00:00:00Z",
+        "tasks": [{
+            "id": "t",
+            "description": "a described unit of work",
+            "tier": "code",
+            "outputs": {"outputs": [{
+                "name": "a", "kind": "file", "path": "o.txt", "description": "an output",
+            }]},
+            "acceptance": [{"type": "file_exists", "outputs": ["not-a-declared-output"]}],
+        }],
+    }))
+
+    assert invoke(workspace, "status") == 2
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err and "Traceback" not in captured.out
+    assert "is not a valid plan" in captured.err
+    assert "undeclared outputs" in captured.err
+
+
 def test_no_catalogue_and_no_network_refuses_to_run(workspace: Path, monkeypatch, capsys):
     """Deleting the cache is not enough — the fetch must actually be blocked.
 
