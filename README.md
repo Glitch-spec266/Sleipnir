@@ -25,6 +25,8 @@ manifest.
 | 5 | CLI | complete |
 | 6 | end-to-end resume gate, review, pentest | complete |
 | 7 | dependency-free live TUI + sparse-control console | complete |
+| 8 | interactive console + audited host/browser/credential control | complete |
+| 9 | phase gate + automatic escalation before scarce-brain wakeup | complete |
 
 Read [`DESIGN.md`](DESIGN.md) for the tradeoffs, the manifest size math, and the
 open decisions.
@@ -51,9 +53,12 @@ src/sleipnir/budget.py       5-hour window accounting and downshift
 src/sleipnir/planner.py      prompt -> validated task DAG
 src/sleipnir/revisions.py    typed, audited mid-run plan changes
 src/sleipnir/orchestrator.py sparse bounded-context brain decisions
+src/sleipnir/gate.py         constant-size phase verdict + finite escalation
 src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
+src/sleipnir/console.py      guarded chat + `/project` multi-model front door
+src/sleipnir/chat.py         Claude session transport + tool-free fast-lane gate
 src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate
-tests/                       415 tests, including the executable form of the
+tests/                       503 tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -97,6 +102,39 @@ console; plan revisions reload live and review-required proposals are surfaced.
 Read-only/watch modes are catalogue-free and offline; their usage line derives
 metered dollars, Claude-window tokens, and Codex tokens directly from the log.
 All untrusted display values are stripped of terminal control characters.
+
+## Interactive console
+
+Bare `sleipnir` opens the full-screen console. Ordinary messages first receive
+a tool-free Haiku capability check in a disposable session. Built-in tools are
+disabled and MCP discovery is replaced by an explicit empty configuration, so
+the classifier cannot touch the host; the binary protocol replaces its default
+agent system prompt. Only an exact one-turn affirmative lets Haiku act in the
+separate durable session. Declines and malformed verdicts go to Sonnet with the
+untouched request. A failed action is never automatically replayed because it
+may already have had a side effect. `--fast-model` and `--model` override the
+two aliases, and an empty `--fast-model` disables the gate.
+
+`/project <goal>` is the explicit boundary for larger work. It bypasses ordinary
+chat and runs the existing `plan` then `orchestrate` commands, so decomposition,
+tier routing, budgets, acceptance checks, phase-gate escalation, and review gates
+remain the same pipeline as batch operation. In a bare console every invocation
+gets a fresh named workspace beneath `./runs`; `--run-root` opts into one exact
+workspace instead.
+
+The console enables terminal bracketed-paste mode, so Ctrl+Shift+V inserts
+multiline text atomically instead of leaking CSI markers or submitting halfway
+through. Clipboard images cannot travel through a text PTY; when the terminal
+forwards the paste event, Sleipnir reads the image MIME with `wl-paste`, saves it
+as a private `0600` attachment, and gives Claude the path. The agent-facing
+`sleipnir computer copy` and `sleipnir computer paste` commands emit real
+Ctrl+Shift+C/V chords, preserving either text or image MIME in the focused app.
+For browser credentials, `secret prompt "<label>" --browser-selector "<css>"`
+fills the persistent page over CDP; focusing the console to type the masked
+value therefore cannot steal the target field.
+
+The splash uses a letter-free eight-legged horse emblem; the frame title carries
+the product name, so the mark itself is a logo rather than another nameplate.
 
 ## Sparse brain control
 

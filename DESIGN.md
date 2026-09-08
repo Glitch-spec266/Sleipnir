@@ -339,6 +339,12 @@ Five findings, four of which would have produced a silently wrong budget:
 5. **There is no cost field at all.** Cost must be computed, which makes the
    OpenRouter pricing fetch load-bearing for the governor rather than
    decorative.
+6. **Server tools are counted outside token fields.** `server_tool_use` reports
+   search and fetch requests. Those counts survive normalization; the frozen
+   route snapshot prices searches independently from tokens. A provider total
+   remains authoritative, so its already-included tool charge is not added a
+   second time. Fetch request count is retained even though Anthropic currently
+   charges only for the resulting tokens, not for the fetch itself.
 
 The parser will still be written defensively in Phase 4 — this is one CLI
 version on one machine, and `BudgetSnapshot.parse_warnings` exists so
@@ -523,6 +529,45 @@ reads the number as economic truth.
   provider CLI survive when the executor itself receives `SIGKILL`. On Linux,
   real subprocesses now pass through `process_guard.py`, which installs
   `PR_SET_PDEATHSIG` and forwards parent death to the provider process group.
+  The guard owns the final escalation as well: after one second it sends
+  `SIGKILL`, so a descendant that ignores `SIGTERM` cannot outlive an executor
+  that is no longer present to run normal cancellation cleanup.
+- **An agent-controlled workspace becomes hostile after dispatch.** Harness
+  metadata is written only inside a previously claimed directory using
+  no-follow file opens. Workspace roots are checked before child directories
+  are created, preventing a pre-created `artifacts` symlink from causing even
+  a rejected claim to mutate an external directory.
+- **Detached-process PID files are untrusted hints.** Browser shutdown verifies
+  the live process command line, debugging port, profile and session-leader
+  identity before signaling its group. PID publication uses atomic replacement,
+  so a symlink or recycled integer cannot become authority to kill a process.
+- **Credential prompts require a live local claimant.** The console accepts
+  only bounded, no-follow request files whose filename, embedded ID and live
+  same-user requester PID agree. Answers are private write-once status files;
+  neither arbitrary payloads nor stale requests can trigger credential entry.
+- **Persistent host paths reject redirection.** Capability audit files are
+  opened append-only/no-follow with private mode; clipboard attachment and
+  browser-profile directories must be real directories. A failed trust check
+  happens before creating anything through the suspect path.
+- **Interactive projects never default to the source tree.** Bare `/project`
+  allocates a fresh timestamped directory beneath the console's `runs/` base
+  and carries discovered configuration into it. An exact run root is used only
+  when the operator supplied `--run-root` explicitly.
+- **Fast-lane classification and action are different security domains.** The
+  classifier has a replacement binary-verdict system prompt, a disposable
+  session, no built-in tools, and strict empty MCP configuration. This last
+  control is independent: a live run proved `--tools ""` alone still permits
+  plugin MCP tools. The chosen action model receives the untouched request in
+  the durable session, so gate instructions cannot poison a Sonnet fallback.
+- **Gate escalation has crossed a real provider boundary.** A seeded terminal
+  module was the only failed ID in the verdict; the gate persisted a one-tier,
+  one-attempt revision and real Codex produced the declared proof on attempt
+  two. A separate PTY `/project` run planned and completed reason/code modules,
+  proving the interactive command reaches the routed executor rather than chat.
+- **Browser secrets use browser identity, not desktop focus.** A waiting tool
+  request may name a selector; the console keeps polling during the active model
+  turn, accepts masked input, fills the persistent page over CDP, and wipes the
+  value. Physical injection remains for non-browser applications.
 - **Revision invalidation must cause execution.** `SUPERSEDED` means the task's
   own contract changed; `STALE` means an upstream contract changed. The
   executor schedules both as work and requires freshly `DONE` dependencies,
@@ -637,13 +682,14 @@ into a 2-task DAG, `--dry-run --explain` showed the routing without spending,
 
 ## Still open
 
-- **The OpenRouter catalogue shape is unverified.** This environment's egress
-  policy denies CONNECT to openrouter.ai, so the parser was written defensively
-  rather than confirmed. Verify on a machine with network access.
+- **The OpenRouter catalogue shape is live-verified and still parsed
+  defensively.** Network access later confirmed per-token prompt/completion,
+  cache and per-search fields plus negative dynamic-price sentinels.
 - **`codex` is verified** against CLI 0.148.0, including its JSONL usage shape.
-- **`cache_read_weight` defaults to 1.0**, which over-estimates window
-  consumption roughly tenfold. Still awaiting a decision on what the 5-hour
-  window actually meters.
+- **`cache_read_weight` defaults to 1.0**, which over-estimates local window
+  consumption roughly tenfold. The provider exposes utilization as a percentage,
+  not its weighting formula, so the governor self-calibrates an implied limit
+  from that percentage instead of pretending the weighting is known.
 
 ---
 

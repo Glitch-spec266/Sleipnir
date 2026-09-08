@@ -8,11 +8,14 @@ boundary — the same discipline the executor tests use for provider spawns.
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import json
 
 import pytest
 
-from sleipnir.capabilities import audit, browser, computer, secrets
+from sleipnir import cli
+from sleipnir.capabilities import audit, browser, clipboard, computer, secrets
 
 
 @pytest.fixture
@@ -65,6 +68,16 @@ def test_typed_text_is_recorded_by_length_not_content(audit_log, fake_ydotool):
     assert '"chars": 16' in body
 
 
+def test_audit_log_never_follows_a_precreated_symlink(tmp_path):
+    outside = tmp_path / "outside"
+    outside.write_text("keep", encoding="utf-8")
+    linked = tmp_path / "audit.jsonl"
+    linked.symlink_to(outside)
+    with pytest.raises(OSError):
+        audit.record("desktop.test", log=linked)
+    assert outside.read_text(encoding="utf-8") == "keep"
+
+
 # --- keyboard / mouse ----------------------------------------------------
 
 
@@ -74,6 +87,18 @@ def test_chord_releases_modifiers_in_reverse_order(audit_log, fake_ydotool):
     assert argv[:2] == ["ydotool", "key"]
     # ctrl(29) shift(42) t(20) down, then released t, shift, ctrl.
     assert argv[2:] == ["29:1", "42:1", "20:1", "20:0", "42:0", "29:0"]
+
+
+def test_copy_and_paste_use_linux_terminal_chords_without_touching_payload(
+    audit_log, fake_ydotool
+):
+    computer.copy()
+    computer.paste()
+    assert fake_ydotool[0][2:] == ["29:1", "42:1", "46:1", "46:0", "42:0", "29:0"]
+    assert fake_ydotool[1][2:] == ["29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]
+    body = audit_log.read_text()
+    assert "desktop.clipboard_copy" in body
+    assert "desktop.clipboard_paste" in body
 
 
 def test_unknown_key_is_refused_rather_than_silently_dropped(audit_log, fake_ydotool):
@@ -99,6 +124,58 @@ def test_probe_reports_notes_instead_of_raising(monkeypatch):
     result = computer.probe()
     assert result.ready is False
     assert any("ydotool" in note for note in result.notes)
+
+
+# --- clipboard -----------------------------------------------------------
+
+
+def test_wayland_clipboard_reads_text_without_logging_it(audit_log, monkeypatch):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        stdout = b"text/plain;charset=utf-8\n" if "--list-types" in argv else b"private text"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": b""})()
+
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: "/usr/bin/wl-paste")
+    monkeypatch.setattr(clipboard.subprocess, "run", fake_run)
+    payload = clipboard.read()
+
+    assert payload.kind == "text"
+    assert payload.text == "private text"
+    assert "--no-newline" in calls[1]
+    assert "private text" not in audit_log.read_text()
+
+
+def test_wayland_clipboard_materialises_an_image_privately(audit_log, tmp_path, monkeypatch):
+    def fake_run(argv, **kwargs):
+        stdout = b"image/png\ntext/plain\n" if "--list-types" in argv else b"\x89PNGpixels"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": b""})()
+
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: "/usr/bin/wl-paste")
+    monkeypatch.setattr(clipboard.subprocess, "run", fake_run)
+    payload = clipboard.read(destination_dir=tmp_path)
+
+    assert payload.kind == "image"
+    assert payload.mime_type == "image/png"
+    assert payload.path is not None and payload.path.read_bytes() == b"\x89PNGpixels"
+    assert payload.path.stat().st_mode & 0o777 == 0o600
+
+
+def test_clipboard_image_rejects_a_symlinked_destination(audit_log, tmp_path, monkeypatch):
+    def fake_run(argv, **kwargs):
+        stdout = b"image/png\n" if "--list-types" in argv else b"pixels"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": b""})()
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = tmp_path / "clipboard"
+    linked.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: "/usr/bin/wl-paste")
+    monkeypatch.setattr(clipboard.subprocess, "run", fake_run)
+    with pytest.raises(clipboard.ClipboardError, match="unsafe"):
+        clipboard.read(destination_dir=linked)
+    assert list(outside.iterdir()) == []
 
 
 def test_grim_is_not_selected_on_kde(monkeypatch):
@@ -170,3 +247,75 @@ def test_browser_profile_defaults_outside_the_repo():
     # accident sooner or later; keep it in the user's home.
     assert "Sleipnir" not in str(browser.DEFAULT_PROFILE)
     assert browser.DEFAULT_PROFILE.name == "browser-profile"
+
+
+def test_browser_pid_is_published_without_following_an_old_symlink(tmp_path):
+    pid_file = tmp_path / "browser.pid"
+    outside = tmp_path / "outside"
+    outside.write_text("do not overwrite", encoding="utf-8")
+    pid_file.symlink_to(outside)
+    browser._publish_pid(1234, pid_file)
+    assert pid_file.is_symlink() is False
+    assert pid_file.read_text(encoding="ascii") == "1234"
+    assert outside.read_text(encoding="utf-8") == "do not overwrite"
+
+
+def test_browser_pid_reader_rejects_symlink_and_implausible_pid(tmp_path):
+    real = tmp_path / "real"
+    real.write_text("1234", encoding="ascii")
+    linked = tmp_path / "linked"
+    linked.symlink_to(real)
+    assert browser._read_pid(linked) is None
+    real.write_text("1", encoding="ascii")
+    assert browser._read_pid(real) is None
+
+
+def test_browser_pid_must_match_the_expected_port_and_profile(tmp_path):
+    proc = tmp_path / "proc"
+    cmdline = proc / "4321" / "cmdline"
+    cmdline.parent.mkdir(parents=True)
+    profile = tmp_path / "profile"
+    cmdline.write_bytes(
+        b"/chromium\0--remote-debugging-port=9333\0"
+        + f"--user-data-dir={profile}".encode()
+        + b"\0"
+    )
+    assert browser._pid_matches_browser(4321, profile, proc_root=proc)
+    assert not browser._pid_matches_browser(4321, tmp_path / "other", proc_root=proc)
+
+    cmdline.write_bytes(b"/unrelated\0--remote-debugging-port=9333\0")
+    assert not browser._pid_matches_browser(4321, profile, proc_root=proc)
+
+
+def test_browser_rejects_a_symlinked_profile_before_launch(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = tmp_path / "profile"
+    linked.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(browser, "_cdp_alive", lambda: False)
+    with pytest.raises(computer.CapabilityError, match="unsafe browser profile"):
+        asyncio.run(browser.ensure_browser(linked))
+
+
+def test_browser_close_does_not_start_a_browser(audit_log, monkeypatch, capsys):
+    monkeypatch.setattr(browser, "stop_browser", lambda: False)
+
+    class MustNotStart:
+        def __init__(self, **kwargs):
+            raise AssertionError("close must not construct or attach a browser")
+
+    monkeypatch.setattr(browser, "Browser", MustNotStart)
+    args = argparse.Namespace(action="close", args=[], headless=False)
+    assert asyncio.run(cli.cmd_browser(args)) == 0
+    assert "not running" in capsys.readouterr().out
+
+
+def test_bad_browser_arguments_fail_before_browser_start(monkeypatch):
+    class MustNotStart:
+        def __init__(self, **kwargs):
+            raise AssertionError("invalid input must not construct a browser")
+
+    monkeypatch.setattr(browser, "Browser", MustNotStart)
+    args = argparse.Namespace(action="fill", args=["#field"], headless=False)
+    with pytest.raises(cli.CliError, match="exactly 2"):
+        asyncio.run(cli.cmd_browser(args))

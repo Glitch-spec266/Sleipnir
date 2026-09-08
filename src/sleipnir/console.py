@@ -12,10 +12,16 @@ Routing has two axes:
   provider with per-provider session continuity.  Switching providers keeps
   each conversation separate, so ``claude → codex → claude`` resumes two
   independent threads.
+* **Lane** (assessed): an ordinary awake message first passes a tool-free
+  capability check.  A confident check lets the fast alias act; anything else
+  fails closed to the conversation alias with the request untouched.
+  ``/project`` skips both lanes and launches the planner and routed
+  multi-model orchestration pipeline instead.
 * **Wakefulness** (derived): while a run owns the lock there is no conversation
   to have — waking the reason tier for "how's it going?" would burn the exact
   context the whole design protects.  A cheap OpenRouter duty officer answers
   from the bounded manifest instead, or files the message for the brain.
+
 
 Replies stream.  Tokens render into a growing message at the frame rate, so
 the wait ends when the model's first token lands rather than when its last one
@@ -25,18 +31,23 @@ does.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import contextlib
 import os
+import re
 import shutil
 import sys
 import termios
+import tempfile
 import tty
+import uuid
 from collections import abc, deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sleipnir import chat, theme
+from sleipnir.process import ProcessRunner
 
 FRAME_INTERVAL_S = 1 / 12  # fast enough for flicker, cheap enough to ignore
 
@@ -49,6 +60,8 @@ These are real shell commands available to you via Bash:
   {exe} computer screenshot <path>     capture the screen to a PNG you can read
   {exe} computer type <text>           type into the focused window
   {exe} computer key <combo>           press a chord, e.g. ctrl+shift+t
+  {exe} computer copy                  press ctrl+shift+c; preserves text/image MIME
+  {exe} computer paste                 press ctrl+shift+v into the focused app
   {exe} computer click [left|right]    click at the pointer
   {exe} computer move <x> <y>          move the pointer
   {exe} computer scroll <amount>       scroll the focused window
@@ -56,7 +69,9 @@ These are real shell commands available to you via Bash:
   {exe} browser text [selector]        read the current page
   {exe} browser click <selector>
   {exe} browser fill <selector> <text>
-  {exe} secret prompt "<label>"        ask the operator for a credential
+  {exe} secret prompt "<label>"        ask the operator; inject into focused app
+  {exe} secret prompt "<label>" --browser-selector "<css>"
+                                         fill a browser field without relying on focus
 
 Input is injected at the kernel level, so it reaches every window on this
 Wayland desktop exactly as a physical keyboard would. Take a screenshot and
@@ -103,6 +118,13 @@ class ConsoleState:
     status: str = "ready"
     busy: bool = False
     run_dir: Path | None = None
+    #: Base under which a bare console allocates one fresh run per `/project`.
+    project_base: Path | None = None
+    #: An operator-supplied --run-root is exact and must not be silently nested.
+    run_root_explicit: bool = False
+    config_path: Path | None = None
+    cache_read_weight: float = 1.0
+    session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     frame: int = 0
     #: Host control is the product, so the console does not stop to ask before
     #: every click and keystroke.  Narrowing this to ``acceptEdits`` turns
@@ -123,6 +145,13 @@ class ConsoleState:
     #: Lines typed while a reply was streaming. Nothing typed here is ever
     #: dropped: each one dispatches the moment the turn in flight finishes.
     pending_submissions: deque[str] = field(default_factory=deque)
+    #: Directories containing clipboard images explicitly attached by the
+    #: operator. Added to Claude's allowed roots; never available to workers.
+    attachment_dirs: set[Path] = field(default_factory=set)
+    #: Alias for ordinary requests after a separate tool-free capability check.
+    #: A false negative costs a stronger turn; a false positive can act
+    #: incorrectly on the live desktop, so uncertainty falls back to ``model``.
+    fast_model: str | None = "haiku"
     #: Set while a credential is being typed: the buffer is not echoed and is
     #: never added to the transcript.
     secret_request: object | None = None
@@ -364,9 +393,8 @@ def render(state: ConsoleState, *, width: int, height: int, colour: bool = True)
     body_height = max(6, height - 6)
     lines: list[str] = []
 
-    # The banner is all-or-nothing. Drawing the top row of a five-row wordmark
-    # renders as broken debris, which is what shipped: `art[:1]` looked like a
-    # tidy truncation and is not one.
+    # The banner is all-or-nothing. Drawing one row of a multi-row emblem
+    # renders as broken debris; `art[:1]` looks like tidy truncation and is not.
     art = theme.logo_lines(width)
     if height >= len(art) + 12:
         lines.extend(theme.paint(line, theme.NORMAL + 1, colour=colour) for line in art)
@@ -451,12 +479,19 @@ def raw_terminal():
     saved = termios.tcgetattr(stream)
     try:
         tty.setcbreak(stream.fileno())
-        sys.stdout.write(theme.ENTER_FULLSCREEN + theme.HIDE_CURSOR)
+        sys.stdout.write(
+            theme.ENTER_FULLSCREEN + theme.ENABLE_BRACKETED_PASTE + theme.HIDE_CURSOR
+        )
         sys.stdout.flush()
         yield True
     finally:
         termios.tcsetattr(stream, termios.TCSADRAIN, saved)
-        sys.stdout.write(theme.SHOW_CURSOR + theme.RESET + theme.EXIT_FULLSCREEN)
+        sys.stdout.write(
+            theme.DISABLE_BRACKETED_PASTE
+            + theme.SHOW_CURSOR
+            + theme.RESET
+            + theme.EXIT_FULLSCREEN
+        )
         sys.stdout.flush()
 
 
@@ -491,6 +526,100 @@ ENTER = ("\r", "\n")
 #: as multi-byte escape sequences, which the reader would have to buffer.
 MENU_NEXT = ("\t", "\x0e")
 MENU_PREVIOUS = "\x10"
+
+CLIPBOARD_PASTE = "\x16"  # Ctrl+V when the terminal forwards Ctrl+Shift+V
+BRACKETED_PASTE_START = "\x1b[200~"
+BRACKETED_PASTE_END = "\x1b[201~"
+_CSI = re.compile(r"^\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+@dataclass(frozen=True)
+class PastedText:
+    text: str
+
+
+class TerminalInputDecoder:
+    """Turn a byte stream into keys and atomic bracketed-paste events."""
+
+    def __init__(self) -> None:
+        self._utf8 = codecs.getincrementaldecoder("utf-8")("ignore")
+        self._buffer = ""
+        self._paste: list[str] | None = None
+
+    @staticmethod
+    def _partial_suffix(value: str, marker: str) -> int:
+        return max(
+            (length for length in range(1, min(len(value), len(marker) - 1) + 1)
+             if marker.startswith(value[-length:])),
+            default=0,
+        )
+
+    def feed(self, data: bytes) -> list[str | PastedText]:
+        self._buffer += self._utf8.decode(data)
+        events: list[str | PastedText] = []
+        while self._buffer:
+            if self._paste is not None:
+                end = self._buffer.find(BRACKETED_PASTE_END)
+                if end >= 0:
+                    self._paste.append(self._buffer[:end])
+                    events.append(PastedText("".join(self._paste)))
+                    self._paste = None
+                    self._buffer = self._buffer[end + len(BRACKETED_PASTE_END):]
+                    continue
+                held = self._partial_suffix(self._buffer, BRACKETED_PASTE_END)
+                self._paste.append(self._buffer[:-held] if held else self._buffer)
+                self._buffer = self._buffer[-held:] if held else ""
+                break
+
+            if self._buffer.startswith(BRACKETED_PASTE_START):
+                self._buffer = self._buffer[len(BRACKETED_PASTE_START):]
+                self._paste = []
+                continue
+            if BRACKETED_PASTE_START.startswith(self._buffer):
+                break
+            if self._buffer.startswith("\x1b"):
+                match = _CSI.match(self._buffer)
+                if match:
+                    self._buffer = self._buffer[match.end():]
+                    continue
+                # Hold a split CSI sequence, but discard an unsupported escape
+                # once another complete byte proves it is not bracketed paste.
+                if self._buffer.startswith("\x1b[") and not re.search(
+                    r"[@-~]$", self._buffer[2:]
+                ):
+                    break
+                self._buffer = self._buffer[1:]
+                continue
+            events.append(self._buffer[0])
+            self._buffer = self._buffer[1:]
+        return events
+
+
+def _clean_paste(text: str) -> str:
+    """Keep human text and line structure; drop terminal control bytes."""
+    normalised = text.replace("\r\n", "\n").replace("\r", "\n")
+    return "".join(char for char in normalised if char in "\n\t" or char.isprintable())
+
+
+def paste_system_clipboard(state: ConsoleState, *, allow_images: bool = True) -> str:
+    """Insert clipboard text, or attach an image by private filesystem path."""
+    from sleipnir.capabilities import clipboard
+
+    try:
+        payload = clipboard.read()
+    except clipboard.ClipboardError as error:
+        state.add("error", str(error))
+        return "failed"
+    if payload.kind == "text":
+        state.input_buffer += _clean_paste(payload.text or "")
+        return "text"
+    if not allow_images or payload.path is None:
+        state.add("error", "An image cannot be pasted into a credential field.")
+        return "failed"
+    state.attachment_dirs.add(payload.path.parent)
+    spacer = "\n" if state.input_buffer else ""
+    state.input_buffer += f"{spacer}[Attached clipboard image: {payload.path}]"
+    return "image"
 
 
 def apply_key(state: ConsoleState, char: str) -> str | None:
@@ -591,6 +720,89 @@ def run_digest(run_dir: Path) -> str:
     )
 
 
+def project_goal(text: str) -> str | None:
+    """Return the goal for an exact ``/project`` command, else ``None``."""
+    command, separator, remainder = text.strip().partition(" ")
+    if command != "/project":
+        return None
+    return remainder.strip() if separator else ""
+
+
+def _project_argv(state: ConsoleState, *command: str) -> list[str]:
+    """Build a child CLI invocation using the console's own workspace policy."""
+    run_root = state.run_dir or Path.cwd()
+    argv = [
+        sys.executable,
+        "-m",
+        "sleipnir.cli",
+        "--run-root",
+        str(run_root),
+        "--cache-read-weight",
+        str(state.cache_read_weight),
+    ]
+    if state.config_path is not None:
+        argv += ["--config", str(state.config_path)]
+    return [*argv, *command]
+
+
+def _allocate_project_run(state: ConsoleState, goal: str) -> Path:
+    """Choose a collision-resistant workspace for one `/project` invocation."""
+    if state.run_root_explicit:
+        if state.run_dir is None:  # pragma: no cover - cmd_console establishes it
+            raise RuntimeError("explicit project run root is unavailable")
+        state.run_dir.mkdir(parents=True, exist_ok=True)
+        return state.run_dir
+    base = state.project_base or Path.cwd()
+    slug = re.sub(r"[^a-z0-9]+", "-", goal.lower()).strip("-")[:40] or "project"
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    run_dir = base / "runs" / f"{stamp}-{slug}-{uuid.uuid4().hex[:6]}"
+    run_dir.mkdir(parents=True)
+    state.run_dir = run_dir
+    return run_dir
+
+
+async def _run_project_stage(
+    state: ConsoleState,
+    *command: str,
+    runner: ProcessRunner | None = None,
+) -> str:
+    """Run one project stage without letting its output corrupt the console."""
+    process_runner = runner or ProcessRunner()
+    with tempfile.TemporaryDirectory(prefix="sleipnir-project-") as temporary:
+        directory = Path(temporary)
+        stdout_path = directory / "stdout.log"
+        stderr_path = directory / "stderr.log"
+        result = await process_runner.run(
+            _project_argv(state, *command),
+            cwd=state.run_dir or Path.cwd(),
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            timeout_s=None,
+        )
+        out = stdout_path.read_text(encoding="utf-8", errors="replace").strip()
+        err = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+        if result.exit_code != 0:
+            detail = (err or out or "no diagnostic output")[-2_000:]
+            raise RuntimeError(
+                f"project stage {command[0]!r} exited {result.exit_code}: {detail}"
+            )
+        return "\n".join(part for part in (out, err) if part)
+
+
+async def _run_project(state: ConsoleState, goal: str) -> None:
+    """Plan and execute a goal through Sleipnir's real multi-model pipeline."""
+    _allocate_project_run(state, goal)
+    state.status = "project · planning"
+    plan_output = await _run_project_stage(state, "plan", goal)
+    state.add(
+        "sleipnir",
+        f"Project plan created. Starting routed execution.\n{plan_output[-2_000:]}",
+    )
+    state.status = "project · orchestrating"
+    run_output = await _run_project_stage(state, "orchestrate")
+    state.add("sleipnir", f"Project workflow finished.\n{run_output[-4_000:]}")
+
+
 async def _ask_duty_officer(state: ConsoleState, text: str) -> None:
     """Answer from bounded run state without spending a reason-tier spawn."""
     from sleipnir.config import SleipnirConfig
@@ -615,12 +827,68 @@ async def _ask_duty_officer(state: ConsoleState, text: str) -> None:
         state.add("sleipnir", f"Queued for the orchestrator: {queued}")
 
 
+def _claude_dirs(state: ConsoleState) -> tuple[Path, ...]:
+    directories = set(state.attachment_dirs)
+    if state.run_dir is not None:
+        directories.add(state.run_dir)
+    return tuple(sorted(directories))
+
+
+async def _lane_model(state: ConsoleState, prompt: str) -> str | None:
+    """Pick the alias for this turn; the fast one only on a confident check.
+
+    The classification runs one-shot in a throwaway session with physically no
+    tools, so a check that fails cannot have acted and the untouched request is
+    simply routed to the strong alias. It deliberately does not reuse the
+    durable session: gate instructions there would poison the turn that follows.
+    """
+    if not state.fast_model or state.provider != "claude":
+        return state.model
+    state.status = "checking · fast lane"
+    try:
+        assessment = await chat.ask_claude(
+            prompt,
+            str(uuid.uuid4()),
+            resume=False,
+            permission_mode=state.permission_mode,
+            model=state.fast_model,
+            tools=(),
+            system_prompt=chat.FAST_LANE_ASSESSMENT,
+        )
+    except chat.ChatError:
+        state.status = "escalating · strong lane"
+        state.add(
+            "sleipnir",
+            "The tool-free capability check was unavailable; routing the untouched "
+            f"request to {state.model or 'the strong model'}.",
+        )
+        return state.model
+    if chat.fast_lane_capable(assessment):
+        state.status = "acting · fast lane"
+        state.add("sleipnir", f"Fast lane approved; {state.fast_model} is acting.")
+        return state.fast_model
+    state.status = "escalating · strong lane"
+    state.add(
+        "sleipnir",
+        "Fast lane declined or failed closed; routing the untouched request to "
+        f"{state.model or 'the strong model'}.",
+    )
+    return state.model
+
+
 async def _handle(state: ConsoleState, text: str) -> None:
     """Send one operator message to whoever is on duty, streaming the reply."""
     refresh_brain_state(state)
     state.busy = True
     state.status = "thinking" if state.brain_awake else "routing"
     try:
+        goal = project_goal(text)
+        if goal is not None:
+            if not goal:
+                state.add("error", "Usage: /project <goal>")
+                return
+            await _run_project(state, goal)
+            return
         if not state.brain_awake:
             await _ask_duty_officer(state, text)
             return
@@ -635,14 +903,31 @@ async def _handle(state: ConsoleState, text: str) -> None:
             )
             state.queued_for_brain.clear()
         prompt = f"{capability_brief()}\n\n{text}" if first_turn else text
+        # A pasted image lands in a fresh private directory, and a persistent
+        # process cannot gain an allowed root after launch. Relaunching is safe:
+        # the transport resumes the same session, so no context is lost.
+        dirs = _claude_dirs(state)
+        if state.provider == "claude" and getattr(transport, "add_dirs", ()) != dirs:
+            await transport.close()
+            transport.add_dirs = dirs
+        # The gate is a separate one-shot turn; only its verdict reaches here.
+        lane = await _lane_model(state, prompt + queued)
+        restore_model = getattr(transport, "model", None)
+        transport.model = lane
         streaming = state.add(state.provider, "")
         final_text: str | None = None
-        async for event in transport.turn(prompt + queued):
-            if event.kind == "delta":
-                streaming.text += event.text
-            elif event.kind == "final":
-                final_text = event.text
-                session.opened = True
+        try:
+            async for event in transport.turn(prompt + queued):
+                if event.kind == "delta":
+                    streaming.text += event.text
+                elif event.kind == "final":
+                    final_text = event.text
+                    session.opened = True
+        finally:
+            # Lane selection is per turn. A failed fast action may have touched
+            # the host and is never replayed, but it must not silently promote
+            # the fast alias to the session's configured model either.
+            transport.model = restore_model
         # The final event's text is authoritative; deltas are only the preview.
         streaming.text = final_text if final_text is not None else streaming.text
         if not streaming.text.strip():
@@ -654,7 +939,7 @@ async def _handle(state: ConsoleState, text: str) -> None:
         state.status = "ready"
 
 
-def submit_secret(state: ConsoleState, typed: str) -> str:
+async def submit_secret(state: ConsoleState, typed: str) -> str:
     """Fulfil a pending credential request from the console's own input.
 
     The plaintext lives in a byte buffer for the duration of one injection and
@@ -673,7 +958,15 @@ def submit_secret(state: ConsoleState, typed: str) -> str:
         return "cancelled"
     secret = secrets.Secret(label=request.label, _buffer=bytearray(typed.encode("utf-8")))
     try:
-        secrets.type_into_focused_window(secret, submit=request.submit)
+        if request.browser_selector:
+            from sleipnir.capabilities.browser import Browser
+
+            async with Browser() as web:
+                await web.fill_secret(request.browser_selector, secret)
+                if request.submit:
+                    await web.press(request.browser_selector, "Enter")
+        else:
+            secrets.type_into_focused_window(secret, submit=request.submit)
         handoff.answer(request, "supplied")
         state.add("sleipnir", f"Credential for {request.label!r} typed into the focused window.")
         return "supplied"
@@ -731,12 +1024,13 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
 
     with raw_terminal() as interactive:
         loop = asyncio.get_running_loop()
-        keys: asyncio.Queue[str] = asyncio.Queue()
+        keys: asyncio.Queue[str | PastedText] = asyncio.Queue()
+        decoder = TerminalInputDecoder()
 
         def _on_readable() -> None:
-            data = os.read(sys.stdin.fileno(), 1024).decode("utf-8", "ignore")
-            for char in data:
-                keys.put_nowait(char)
+            data = os.read(sys.stdin.fileno(), 8192)
+            for event in decoder.feed(data):
+                keys.put_nowait(event)
 
         if interactive:
             loop.add_reader(sys.stdin.fileno(), _on_readable)
@@ -753,10 +1047,12 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
 
         welcome = (
             f"Ready. Talking to {state.provider} with host control attached — keyboard, "
-            "mouse, screen, browser and shell. /use codex switches provider; /help "
-            "lists commands."
+            "mouse, screen, browser and shell. Ordinary requests use the guarded "
+            "fast lane; /project <goal> starts the multi-model workflow. /use codex "
+            "switches provider; /help lists commands."
             if state.permission_mode == "bypassPermissions"
-            else "Ready. Host actions will be confirmed with you before they run. /help lists commands."
+            else "Ready. Host actions will be confirmed with you before they run. "
+            "/project <goal> starts the multi-model workflow; /help lists commands."
         )
         state.add("sleipnir", welcome)
         try:
@@ -767,27 +1063,41 @@ async def run_console(state: ConsoleState | None = None, *, splash: bool = True)
                 if state.frame % 8 == 0:
                     poll_secret_request(state)
                 try:
-                    char = await asyncio.wait_for(keys.get(), timeout=FRAME_INTERVAL_S)
+                    event = await asyncio.wait_for(keys.get(), timeout=FRAME_INTERVAL_S)
                 except TimeoutError:
-                    char = None  # no key this frame; the border still flickers
+                    drain_pending(state, dispatch)
+                    continue  # no key this frame; the border still flickers
+                if isinstance(event, PastedText):
+                    if event.text:
+                        state.input_buffer += _clean_paste(event.text)
+                    else:
+                        # Some terminals emit an empty bracketed paste when the
+                        # clipboard owns an image rather than text.
+                        paste_system_clipboard(
+                            state, allow_images=state.secret_request is None
+                        )
+                    continue
+                char = event
                 if char == INTERRUPT:
                     return 0
-                if char is not None:
-                    if state.secret_request is not None:
-                        # While a credential is being typed the buffer is a secret,
-                        # not a message: it must not reach the transcript or a model.
-                        if char in ENTER:
-                            typed = state.input_buffer
-                            state.input_buffer = ""
-                            submit_secret(state, typed)
-                        else:
-                            apply_key(state, char)
-                        continue
-                    submitted = apply_key(state, char)
-                    if submitted:
-                        handle_submitted(state, submitted, dispatch)
-                else:
-                    drain_pending(state, dispatch)
+                if char == CLIPBOARD_PASTE:
+                    paste_system_clipboard(
+                        state, allow_images=state.secret_request is None
+                    )
+                    continue
+                if state.secret_request is not None:
+                    # While a credential is being typed the buffer is a secret,
+                    # not a message: it must not reach the transcript or a model.
+                    if char in ENTER:
+                        typed = state.input_buffer
+                        state.input_buffer = ""
+                        await submit_secret(state, typed)
+                    else:
+                        apply_key(state, char)
+                    continue
+                submitted = apply_key(state, char)
+                if submitted:
+                    handle_submitted(state, submitted, dispatch)
         finally:
             if interactive:
                 loop.remove_reader(sys.stdin.fileno())
@@ -802,12 +1112,16 @@ __all__ = [
     "ConsoleState",
     "FRAME_INTERVAL_S",
     "Message",
+    "PastedText",
+    "TerminalInputDecoder",
     "apply_key",
     "apply_slash",
     "capability_brief",
     "drain_pending",
     "handle_submitted",
     "play_splash",
+    "paste_system_clipboard",
+    "project_goal",
     "raw_terminal",
     "refresh_brain_state",
     "render",

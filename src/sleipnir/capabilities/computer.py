@@ -180,6 +180,22 @@ def key(*combo: str) -> None:
     audit.record("desktop.key", {"combo": list(combo)})
 
 
+def copy() -> None:
+    """Send the standard Linux terminal copy chord to the focused application.
+
+    The clipboard remains owned by the desktop/application, so its MIME payload
+    is preserved: selected text stays text and a selected image stays an image.
+    """
+    key("ctrl", "shift", "c")
+    audit.record("desktop.clipboard_copy", {"combo": "ctrl+shift+c"})
+
+
+def paste() -> None:
+    """Send the standard Linux terminal paste chord to the focused application."""
+    key("ctrl", "shift", "v")
+    audit.record("desktop.clipboard_paste", {"combo": "ctrl+shift+v"})
+
+
 def move_mouse(x: int, y: int) -> None:
     _ydotool("mousemove", "--absolute", "-x", str(x), "-y", str(y))
     audit.record("desktop.move_mouse", {"x": x, "y": y})
@@ -262,9 +278,11 @@ __all__ = [
     "KEYCODES",
     "Probe",
     "click",
+    "copy",
     "ensure_daemon",
     "key",
     "move_mouse",
+    "paste",
     "probe",
     "run",
     "screenshot",

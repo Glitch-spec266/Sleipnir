@@ -12,10 +12,10 @@ from __future__ import annotations
 import ctypes
 import os
 import signal
-import time
 # Exact argv execution is this module's sole purpose.
 import subprocess  # nosec B404
 import sys
+import time
 
 _PR_SET_PDEATHSIG = 1
 
@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     child: subprocess.Popen[bytes] | None = None
 
     def terminate_group(signum: int, _frame: object) -> None:
-        """Forward parent death/cancellation to every provider descendant."""
+        """Terminate every descendant, including ones that ignore SIGTERM."""
         # Ignore our own group broadcast while provider descendants receive it.
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         try:

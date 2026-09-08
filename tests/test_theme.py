@@ -50,14 +50,14 @@ def test_frame_works_without_colour():
     assert "SLEIPNIR" in rendered
 
 
-def test_logo_has_a_full_wordmark_and_eight_leg_strokes():
+def test_logo_keeps_the_horse_identity_at_full_and_compact_widths():
     full = "\n".join(theme.logo_lines(theme.LOGO_WIDTH + 4))
     compact = "\n".join(theme.logo_lines(20))
 
     assert len(theme.logo_lines(theme.LOGO_WIDTH + 4)) == 7
-    assert theme.COMPACT_LOGO[0] == "SLEIPNIR"
-    assert full.count("╲") == 4 and full.count("╱") == 4
-    assert compact == "SLEIPNIR\n╲╱ ╲╱ ╲╱ ╲╱"
+    assert "◉" in full and "SLEIPNIR" not in full
+    assert compact == "♞  ││ ││ ││ ││\n   ╱╲ ╱╲ ╱╲ ╱╲"
+    assert compact.count("│") == 8
 
 
 def test_every_escape_sequence_is_terminated():
@@ -77,6 +77,13 @@ def test_splash_ends_fully_revealed():
     final = _visible(theme.splash_frame(theme.SPLASH_FRAMES - 1, width=90, height=24))
     assert "▮▮▮▮▮▮▮▮" in final  # all eight legs have struck
     assert "orchestrator" in final
+
+
+def test_logo_is_an_eight_legged_horse_emblem_not_a_nameplate():
+    emblem = "\n".join(theme.LOGO)
+    assert "SLEIPNIR" not in emblem
+    assert emblem.count("│") == 8
+    assert emblem.count("╱╲") == 4
 
 
 def test_colour_is_suppressed_when_no_color_is_set(monkeypatch):

@@ -49,13 +49,18 @@ def redact(detail: dict[str, Any]) -> dict[str, Any]:
 
 def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
     path = DEFAULT_LOG if log is None else log
+    if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+        raise OSError(f"unsafe capability audit directory: {path.parent}")
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = {
         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "action": action,
         "detail": redact(detail or {}),
     }
-    with path.open("a", encoding="utf-8") as handle:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+        os.chmod(handle.fileno(), 0o600)
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
         handle.flush()
         os.fsync(handle.fileno())

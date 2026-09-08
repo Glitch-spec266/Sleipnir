@@ -399,6 +399,8 @@ class OpenRouterAdapter(BaseAdapter):
                 int(completion_details.get("reasoning_tokens") or 0), output_tokens
             ),
             server_tool_use=server_tool_use,
+            web_search_requests=server_tool_use.get("web_search_requests", 0),
+            web_fetch_requests=server_tool_use.get("web_fetch_requests", 0),
         )
 
     # -- dry run ------------------------------------------------------------

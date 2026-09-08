@@ -7,11 +7,15 @@ and untrusted reply text must not be able to move the cursor.
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import pytest
+from fakes import fake_spawner
 
 from sleipnir import chat, console
+from sleipnir.capabilities import clipboard
+from sleipnir.process import ProcessRunner
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -75,6 +79,66 @@ def test_non_printable_keys_are_ignored_rather_than_inserted():
     for char in ("\x1b", "\x00", "\x07"):
         console.apply_key(state, char)
     assert state.input_buffer == ""
+
+
+def test_bracketed_multiline_paste_is_one_atomic_event_even_when_split():
+    decoder = console.TerminalInputDecoder()
+    assert decoder.feed(b"\x1b[20") == []
+    assert decoder.feed(b"0~first\nsecond\x1b[20") == []
+    events = decoder.feed(b"1~")
+    assert events == [console.PastedText("first\nsecond")]
+
+
+def test_terminal_escape_keys_are_discarded_not_inserted_as_text():
+    decoder = console.TerminalInputDecoder()
+    assert decoder.feed(b"\x1b[") == []
+    assert decoder.feed(b"A") == []  # up arrow
+    assert decoder.feed("é".encode()) == ["é"]
+
+
+def test_clipboard_text_is_inserted_without_submitting(monkeypatch):
+    monkeypatch.setattr(
+        clipboard,
+        "read",
+        lambda: clipboard.ClipboardPayload(
+            kind="text", mime_type="text/plain", text="line one\nline two"
+        ),
+    )
+    state = console.ConsoleState()
+    assert console.paste_system_clipboard(state) == "text"
+    assert state.input_buffer == "line one\nline two"
+    assert state.messages == []
+
+
+def test_clipboard_image_becomes_an_allowed_attachment(tmp_path, monkeypatch):
+    image = tmp_path / "clipboard.png"
+    image.write_bytes(b"pixels")
+    monkeypatch.setattr(
+        clipboard,
+        "read",
+        lambda: clipboard.ClipboardPayload(
+            kind="image", mime_type="image/png", path=image
+        ),
+    )
+    state = console.ConsoleState()
+    assert console.paste_system_clipboard(state) == "image"
+    assert str(image) in state.input_buffer
+    assert tmp_path in state.attachment_dirs
+
+
+def test_clipboard_image_is_refused_in_a_secret_field(tmp_path, monkeypatch):
+    image = tmp_path / "clipboard.png"
+    monkeypatch.setattr(
+        clipboard,
+        "read",
+        lambda: clipboard.ClipboardPayload(
+            kind="image", mime_type="image/png", path=image
+        ),
+    )
+    state = console.ConsoleState(secret_request=object())
+    assert console.paste_system_clipboard(state, allow_images=False) == "failed"
+    assert state.input_buffer == ""
+    assert state.messages[-1].role == "error"
 
 
 # --- routing -------------------------------------------------------------
@@ -174,12 +238,19 @@ def test_queued_lines_show_in_the_prompt_rather_than_vanishing():
 
 
 class FakeTransport:
-    def __init__(self, events):
+    def __init__(self, events, *, error=None):
         self.events = list(events)
         self.prompts: list[str] = []
+        self.models: list[str | None] = []
+        self.model: str | None = None
+        self.add_dirs = ()
+        self.error = error
 
     async def turn(self, prompt):
         self.prompts.append(prompt)
+        self.models.append(self.model)
+        if self.error is not None:
+            raise self.error
         for event in self.events:
             yield event
 
@@ -190,7 +261,7 @@ class FakeTransport:
 async def _stream_into_state(events, opened=False):
     from sleipnir.chat import ChatEvent
 
-    state = console.ConsoleState()
+    state = console.ConsoleState(fast_model=None)
     session = state.session_for("claude")
     session.opened = opened
     transport = FakeTransport([ChatEvent(kind=k, text=t) for k, t in events])
@@ -226,13 +297,356 @@ def test_a_direct_conversation_writes_nothing_into_the_run_directory(tmp_path):
     from sleipnir.runlog import ResultLog
 
     (tmp_path / "results.jsonl").write_text("", encoding="utf-8")
-    state = console.ConsoleState(run_dir=tmp_path)
+    state = console.ConsoleState(run_dir=tmp_path, fast_model=None)
     session = state.session_for("claude")
     session._transport = FakeTransport([__import__("sleipnir").chat.ChatEvent(kind="final", text="hi")])  # noqa: SLF001
     asyncio.run(console._handle(state, "hello"))
 
     assert ResultLog(tmp_path / "results.jsonl").read() == []
     assert not (tmp_path / "artifacts").exists()
+
+
+def test_console_model_alias_is_passed_to_the_cli():
+    argv = chat.claude_argv("s", resume=False, model="operator-fast")
+    assert argv[argv.index("--model") + 1] == "operator-fast"
+
+
+def test_capability_check_can_be_physically_denied_all_tools():
+    argv = chat.claude_argv("s", resume=False, model="fast", tools=())
+    assert argv[argv.index("--tools") + 1] == ""
+    assert "--strict-mcp-config" in argv
+    assert argv[argv.index("--mcp-config") + 1] == '{"mcpServers":{}}'
+
+
+def test_nonempty_claude_tools_preserve_operator_mcp_configuration():
+    argv = chat.claude_argv("s", resume=False, tools=("Read",))
+    assert argv[argv.index("--tools") + 1] == "Read"
+    assert "--strict-mcp-config" not in argv
+    assert "--mcp-config" not in argv
+
+
+def test_classifier_can_replace_the_default_agent_prompt():
+    argv = chat.claude_argv(
+        "s",
+        resume=False,
+        system_prompt="classify only",
+    )
+    assert argv[argv.index("--system-prompt") + 1] == "classify only"
+
+
+def test_chat_turn_uses_guarded_process_runner_and_stdin():
+    calls: list = []
+    processes: list = []
+    payload = b'{"result":"hello","session_id":"s","num_turns":1}'
+    runner = ProcessRunner(
+        spawn=fake_spawner(stdout=payload, calls=calls, processes=processes)
+    )
+    reply = asyncio.run(
+        chat.ask_claude("private prompt", "s", resume=False, runner=runner)
+    )
+    assert reply.text == "hello"
+    assert processes[0].stdin.text == "private prompt"
+    assert calls[0]["kwargs"]["start_new_session"] is True
+
+
+def test_chat_timeout_terminates_the_process_group():
+    processes: list = []
+    runner = ProcessRunner(
+        spawn=fake_spawner(never_exits=True, processes=processes)
+    )
+    with pytest.raises(chat.ChatError, match="did not reply"):
+        asyncio.run(
+            chat.ask_claude(
+                "prompt", "s", resume=False, timeout_s=0.01, runner=runner
+            )
+        )
+    assert processes[0].killed
+
+
+def test_chat_rejects_an_unbounded_response_without_loading_it(monkeypatch):
+    payload = b'{"result":"ok"}'
+    runner = ProcessRunner(spawn=fake_spawner(stdout=payload))
+    monkeypatch.setattr(chat, "MAX_CHAT_RESPONSE_BYTES", len(payload) - 1)
+    with pytest.raises(chat.ChatError, match="response exceeded"):
+        asyncio.run(chat.ask_claude("prompt", "s", resume=False, runner=runner))
+
+
+def test_only_an_exact_one_turn_capability_verdict_opens_the_fast_lane():
+    assert chat.fast_lane_capable(
+        chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1)
+    )
+    assert not chat.fast_lane_capable(
+        chat.Reply(text=f"Sure. {chat.CAPABLE}", speaker="claude", turns=1)
+    )
+    assert not chat.fast_lane_capable(
+        chat.Reply(text=chat.CAPABLE, speaker="claude", turns=2)
+    )
+    assert not chat.fast_lane_capable(
+        chat.Reply(text=chat.CAPABLE, speaker="claude", turns=None)
+    )
+
+
+def test_capable_request_is_checked_without_tools_then_run_on_fast_model(monkeypatch):
+    calls = []
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((prompt, session_id, kwargs))
+        return chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(
+        models={"claude": "strong", "codex": None}, fast_model="fast"
+    )
+    session = state.session_for("claude")
+    transport = FakeTransport([chat.ChatEvent(kind="final", text="done")])
+    transport.model = "strong"
+    session._transport = transport  # noqa: SLF001 - test seam
+    asyncio.run(console._handle(state, "take a screenshot"))
+
+    assert [kwargs["model"] for _, _, kwargs in calls] == ["fast"]
+    assert calls[0][2]["tools"] == ()
+    assert calls[0][2]["system_prompt"] == chat.FAST_LANE_ASSESSMENT
+    assert calls[0][1] != state.session_id
+    assert calls[0][2]["resume"] is False
+    assert transport.models == ["fast"]
+    assert "take a screenshot" in transport.prompts[0]
+    assert transport.model == "strong"
+    assert state.messages[-1].text == "done"
+    assert any("Fast lane approved" in message.text for message in state.messages)
+    assert session.opened is True
+
+
+@pytest.mark.parametrize("verdict", [f"{chat.DECLINE_PREFIX} too risky", "maybe"])
+def test_decline_or_malformed_check_routes_to_strong_model(monkeypatch, verdict):
+    calls = []
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((prompt, session_id, kwargs))
+        return chat.Reply(text=verdict, speaker="claude", turns=1)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(
+        models={"claude": "strong", "codex": None}, fast_model="fast"
+    )
+    session = state.session_for("claude")
+    transport = FakeTransport([chat.ChatEvent(kind="final", text="handled safely")])
+    transport.model = "strong"
+    session._transport = transport  # noqa: SLF001 - test seam
+    asyncio.run(console._handle(state, "do the thing"))
+
+    assert [call[2]["model"] for call in calls] == ["fast"]
+    assert calls[0][2]["tools"] == ()
+    assert calls[0][1] != state.session_id
+    assert transport.models == ["strong"]
+    assert "do the thing" in transport.prompts[0]
+    assert state.messages[-1].text == "handled safely"
+    assert any("routing the untouched request" in message.text for message in state.messages)
+
+
+def test_failed_fast_action_is_not_replayed_on_strong_model(monkeypatch):
+    calls = []
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append(kwargs["model"])
+        return chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(
+        models={"claude": "strong", "codex": None}, fast_model="fast"
+    )
+    session = state.session_for("claude")
+    transport = FakeTransport(
+        [], error=chat.ChatError("fast action failed after it may have changed the host")
+    )
+    transport.model = "strong"
+    session._transport = transport  # noqa: SLF001 - test seam
+    asyncio.run(console._handle(state, "type hello"))
+
+    assert calls == ["fast"]
+    assert transport.models == ["fast"]
+    assert transport.model == "strong"
+    assert state.messages[-1].role == "error"
+    assert "fast action failed" in state.messages[-1].text
+
+
+def test_failed_tool_free_assessment_falls_closed_to_strong_model(monkeypatch):
+    calls = []
+    original_session = "assessment-session"
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((prompt, session_id, kwargs))
+        if len(calls) == 1:
+            raise chat.ChatError("Haiku assessment unavailable")
+        return chat.Reply(text="handled by Sonnet", speaker="claude", turns=1)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(
+        session_id=original_session,
+        models={"claude": "sonnet", "codex": None},
+        fast_model="haiku",
+    )
+    session = state.session_for("claude")
+    transport = FakeTransport([chat.ChatEvent(kind="final", text="handled by Sonnet")])
+    transport.model = "sonnet"
+    session._transport = transport  # noqa: SLF001 - test seam
+    asyncio.run(console._handle(state, "explain this screenshot"))
+
+    assert [call[2]["model"] for call in calls] == ["haiku"]
+    assert calls[0][2]["tools"] == ()
+    assert calls[0][1] != original_session
+    assert transport.models == ["sonnet"]
+    assert "explain this screenshot" in transport.prompts[0]
+    assert state.messages[-1].text == "handled by Sonnet"
+    assert session.opened is True
+
+
+def test_failed_assessment_reserves_session_before_strong_action(monkeypatch):
+    calls = []
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((session_id, kwargs))
+        raise chat.ChatError("assessment unavailable")
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(
+        session_id="durable",
+        models={"claude": "sonnet", "codex": None},
+        fast_model="haiku",
+    )
+    session = state.session_for("claude")
+    transport = FakeTransport(
+        [], error=chat.ChatError("Sonnet failed after it may have changed the host")
+    )
+    transport.model = "sonnet"
+    session._transport = transport  # noqa: SLF001 - test seam
+    asyncio.run(console._handle(state, "perform an action"))
+
+    assert calls[0][0] != state.session_id
+    assert transport.models == ["sonnet"]
+    assert session.opened is False
+    assert state.messages[-1].role == "error"
+    assert "may have changed the host" in state.messages[-1].text
+
+
+def test_each_gate_is_ephemeral_while_action_chat_resumes(monkeypatch):
+    calls = []
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((prompt, session_id, kwargs))
+        return chat.Reply(text=chat.CAPABLE, speaker="claude", turns=1)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(
+        session_id="durable",
+        models={"claude": "strong", "codex": None},
+        fast_model="fast",
+    )
+    session = state.session_for("claude")
+    transport = FakeTransport([chat.ChatEvent(kind="final", text="ok")])
+    transport.model = "strong"
+    session._transport = transport  # noqa: SLF001 - test seam
+    asyncio.run(console._handle(state, "first request"))
+    asyncio.run(console._handle(state, "second request"))
+
+    assert calls[0][1] != calls[1][1]
+    assert all(call[1] != state.session_id for call in calls)
+    assert [call[2]["resume"] for call in calls] == [False, False]
+    assert "first request" in transport.prompts[0]
+    assert transport.prompts[1] == "second request"
+    assert transport.models == ["fast", "fast"]
+
+
+def test_project_command_has_an_explicit_boundary():
+    assert console.project_goal("/project build a widget") == "build a widget"
+    assert console.project_goal("/project") == ""
+    assert console.project_goal("/projector build a widget") is None
+    assert console.project_goal("tell me about /project") is None
+
+
+def test_project_command_bypasses_chat_and_starts_the_workflow(monkeypatch):
+    goals = []
+
+    async def fake_project(state, goal):
+        goals.append(goal)
+
+    async def forbidden_chat(*args, **kwargs):
+        raise AssertionError("/project must not enter ordinary chat")
+
+    monkeypatch.setattr(console, "_run_project", fake_project)
+    monkeypatch.setattr(chat, "ask_claude", forbidden_chat)
+    state = console.ConsoleState()
+    asyncio.run(console._handle(state, "/project build a widget"))
+    assert goals == ["build a widget"]
+
+
+def test_project_workflow_runs_the_real_plan_then_orchestrate_stages(monkeypatch, tmp_path):
+    stages = []
+
+    async def fake_stage(state, *command):
+        stages.append(command)
+        return "ok"
+
+    monkeypatch.setattr(console, "_run_project_stage", fake_stage)
+    state = console.ConsoleState(project_base=tmp_path)
+    asyncio.run(console._run_project(state, "build a widget"))
+
+    assert stages == [("plan", "build a widget"), ("orchestrate",)]
+    assert state.messages[-1].text.startswith("Project workflow finished.")
+    assert state.run_dir is not None
+    assert state.run_dir.parent == tmp_path / "runs"
+    assert "build-a-widget" in state.run_dir.name
+
+
+def test_each_bare_console_project_gets_a_fresh_sibling_workspace(monkeypatch, tmp_path):
+    async def fake_stage(state, *command):
+        return "ok"
+
+    monkeypatch.setattr(console, "_run_project_stage", fake_stage)
+    state = console.ConsoleState(project_base=tmp_path)
+    asyncio.run(console._run_project(state, "first project"))
+    first = state.run_dir
+    asyncio.run(console._run_project(state, "second project"))
+    second = state.run_dir
+    assert first is not None and second is not None and first != second
+    assert first.parent == second.parent == tmp_path / "runs"
+
+
+def test_explicit_console_run_root_is_used_exactly(tmp_path):
+    run_root = tmp_path / "not-created-yet"
+    state = console.ConsoleState(
+        run_dir=run_root,
+        project_base=tmp_path.parent,
+        run_root_explicit=True,
+    )
+    assert console._allocate_project_run(state, "do not nest me") == run_root
+    assert run_root.is_dir()
+
+
+def test_project_child_inherits_console_workspace_and_config(tmp_path):
+    config = tmp_path / "sleipnir.toml"
+    state = console.ConsoleState(
+        run_dir=tmp_path,
+        config_path=config,
+        cache_read_weight=0.5,
+    )
+    argv = console._project_argv(state, "orchestrate")
+
+    assert argv[-1] == "orchestrate"
+    assert argv[argv.index("--run-root") + 1] == str(tmp_path)
+    assert argv[argv.index("--config") + 1] == str(config)
+    assert argv[argv.index("--cache-read-weight") + 1] == "0.5"
+
+
+def test_project_stage_uses_guarded_process_runner(tmp_path):
+    calls: list = []
+    runner = ProcessRunner(spawn=fake_spawner(stdout=b"stage complete\n", calls=calls))
+    state = console.ConsoleState(run_dir=tmp_path)
+    output = asyncio.run(
+        console._run_project_stage(state, "orchestrate", runner=runner)
+    )
+    assert output == "stage complete"
+    assert calls[0]["kwargs"]["start_new_session"] is True
+    assert calls[0]["kwargs"]["cwd"] == str(tmp_path)
 
 
 def test_queue_instruction_is_parsed_from_a_duty_officer_reply():

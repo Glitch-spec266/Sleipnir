@@ -94,6 +94,8 @@ class SleipnirConfig:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], *, source: str = "<dict>") -> SleipnirConfig:
+        if not isinstance(raw, dict):
+            raise ConfigError(f"{source}: configuration root must be a table")
         _only_keys(
             raw,
             {
@@ -114,17 +116,18 @@ class SleipnirConfig:
                 f"{source}: no [tiers.*] policy for: {', '.join(sorted(missing))}"
             )
 
-        try:
-            concurrency = int(raw.get("concurrency", 3))
-            catalog_ttl_s = float(raw.get("catalog_ttl_s", 6 * 60 * 60))
-            reserve_fraction = float(raw.get("reserve_fraction", 0.10))
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ConfigError(f"{source}: concurrency, catalogue TTL and reserve must be numeric") from exc
-        if concurrency < 1:
-            raise ConfigError(f"{source}: concurrency must be at least 1")
-        if not math.isfinite(catalog_ttl_s) or catalog_ttl_s <= 0:
+        concurrency = _opt_int(raw.get("concurrency", 3))
+        catalog_ttl_s = _opt_float(raw.get("catalog_ttl_s", 6 * 60 * 60))
+        reserve_fraction = _opt_float(raw.get("reserve_fraction", 0.10))
+        if concurrency is None or concurrency < 1:
+            raise ConfigError(f"{source}: concurrency must be an integer of at least 1")
+        if catalog_ttl_s is None or not math.isfinite(catalog_ttl_s) or catalog_ttl_s <= 0:
             raise ConfigError(f"{source}: catalog_ttl_s must be finite and greater than zero")
-        if not math.isfinite(reserve_fraction) or not 0 <= reserve_fraction < 1:
+        if (
+            reserve_fraction is None
+            or not math.isfinite(reserve_fraction)
+            or not 0 <= reserve_fraction < 1
+        ):
             raise ConfigError(f"{source}: reserve_fraction must be between 0 (inclusive) and 1")
         window_limit = _opt_int(raw.get("window_tokens_limit"))
         metered_budget = _opt_float(raw.get("metered_budget_usd"))
@@ -139,15 +142,20 @@ class SleipnirConfig:
         ):
             raise ConfigError(f"{source}: metered_budget_usd must be finite and non-negative")
 
+        catalog_url = raw.get("catalog_url")
+        if catalog_url is not None and (not isinstance(catalog_url, str) or not catalog_url):
+            raise ConfigError(f"{source}: catalog_url must be a non-empty string")
+        cache_path = raw.get("catalog_cache_path")
+        if cache_path is not None and (not isinstance(cache_path, str) or not cache_path):
+            raise ConfigError(f"{source}: catalog_cache_path must be a non-empty string")
+
         return cls(
             backends=backends,
             tiers=tiers,
             concurrency=concurrency,
             catalog_ttl_s=catalog_ttl_s,
-            catalog_url=raw.get("catalog_url"),
-            catalog_cache_path=(
-                Path(raw["catalog_cache_path"]) if raw.get("catalog_cache_path") else None
-            ),
+            catalog_url=catalog_url,
+            catalog_cache_path=Path(cache_path) if cache_path else None,
             reserve_fraction=reserve_fraction,
             window_tokens_limit=window_limit,
             metered_budget_usd=metered_budget,
@@ -195,12 +203,11 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
                 f"{source}: backend {name!r} has unknown billing {entry.get('billing')!r}"
             ) from exc
 
-        try:
-            overhead = int(entry.get("dispatch_overhead_tokens", 0))
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ConfigError(f"{source}: backend {name!r} dispatch overhead must be numeric") from exc
-        if overhead < 0:
-            raise ConfigError(f"{source}: backend {name!r} dispatch overhead cannot be negative")
+        overhead = _opt_int(entry.get("dispatch_overhead_tokens", 0))
+        if overhead is None or overhead < 0:
+            raise ConfigError(
+                f"{source}: backend {name!r} dispatch overhead must be a non-negative whole number"
+            )
         if any(existing.adapter is adapter for existing in backends.values()):
             raise ConfigError(f"{source}: adapter {adapter.value!r} may only have one backend")
         cli_args = _pattern_list(entry.get("cli_args"), f"{source}: backend {name!r}", "cli_args")
@@ -222,10 +229,10 @@ def _parse_models(raw: Any, backend: str, source: str) -> tuple[ModelOption, ...
         raise ConfigError(f"{source}: backend {backend!r} must name at least one model")
     options: list[ModelOption] = []
     for item in raw:
-        if isinstance(item, str):
+        if isinstance(item, str) and item:
             model_id = item
             options.append(ModelOption(id=model_id))
-        elif isinstance(item, dict) and isinstance(item.get("id"), str):
+        elif isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]:
             _only_keys(item, {"id", "context", "price_per_mtok"}, f"{source}: backend {backend!r} model")
             model_id = item["id"]
             context = _opt_int(item.get("context"))
@@ -299,7 +306,7 @@ def _parse_tiers(
         min_context = _opt_int(entry.get("min_context", 0))
         if min_context is None:
             raise ConfigError(
-                f"{source}: [tiers.{key}] min_context must be a finite number"
+                f"{source}: [tiers.{key}] min_context must be a whole number"
             )
         output_ratio = _opt_float(entry.get("output_ratio", 0.25))
         if output_ratio is None:
@@ -307,9 +314,9 @@ def _parse_tiers(
                 f"{source}: [tiers.{key}] output_ratio must be a finite number"
             )
         max_price = _opt_float(entry.get("max_price_per_mtok"))
-        if min_context < 0:
-            raise ConfigError(f"{source}: [tiers.{key}] min_context cannot be negative")
-        if not math.isfinite(output_ratio) or not 0 <= output_ratio <= 1:
+        if min_context is None or min_context < 0:
+            raise ConfigError(f"{source}: [tiers.{key}] min_context must be a non-negative integer")
+        if output_ratio is None or not math.isfinite(output_ratio) or not 0 <= output_ratio <= 1:
             raise ConfigError(f"{source}: [tiers.{key}] output_ratio must be between 0 and 1")
         if entry.get("max_price_per_mtok") is not None and (
             max_price is None or not math.isfinite(max_price) or max_price < 0
@@ -334,7 +341,7 @@ def _opt_int(value: Any) -> int | None:
         return None
     # TOML 1.0 spells `nan` and `inf`; int() answers those with ValueError and
     # OverflowError, neither of which the callers translate into a ConfigError.
-    if isinstance(value, float) and not math.isfinite(value):
+    if isinstance(value, float) and not (math.isfinite(value) and value.is_integer()):
         return None
     return int(value)
 
