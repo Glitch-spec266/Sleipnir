@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sleipnir import __version__
 from sleipnir.adapters import (
     AnthropicAdapter,
     ClaudeAdapter,
@@ -1325,6 +1326,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Budget-aware agentic harness and orchestrator.",
     )
     parser.add_argument("--config", help="path to sleipnir.toml (default: discover in cwd)")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--run-root", default=".", help="run directory (default: .)")
     parser.add_argument(
         "--cache-read-weight",

@@ -95,6 +95,40 @@ growth.
 
 Python 3.12+. Runtime dependencies: `pydantic` and `httpx`. No agent frameworks.
 
+## Install
+
+Sleipnir is a Python command-line tool, not an npm package. The `sleipnir`
+name on npm is already used by an unrelated project. Once a release has been
+published to PyPI, install it globally with either command below:
+
+```sh
+uv tool install sleipnir
+# or, if you use pipx
+pipx install sleipnir
+```
+
+Then open the console or inspect the available commands:
+
+```sh
+sleipnir
+sleipnir --help
+sleipnir --version
+```
+
+To install the current GitHub version before a PyPI release, use:
+
+```sh
+uv tool install git+https://github.com/Glitch-spec266/Sleipnir.git
+```
+
+Python 3.12 or later is required. The host/browser integration is deliberately
+optional; add it only on a machine that needs it:
+
+```sh
+pipx install 'sleipnir[host]'
+sleipnir setup
+```
+
 ```sh
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python "pydantic>=2.7" "httpx>=0.27" "pytest>=8"
