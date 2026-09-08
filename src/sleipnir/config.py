@@ -7,15 +7,26 @@ names and no prices; it ships the policy language you express them in.
 
 from __future__ import annotations
 
+import json
 import math
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from sleipnir.schema import Adapter, BillingMode, Tier
 
 DEFAULT_CONFIG_NAMES = ("sleipnir.toml", ".sleipnir.toml")
+
+
+def _toml_scalar(value: str | int | float) -> str:
+    return json.dumps(value, ensure_ascii=True) if isinstance(value, str) else repr(value)
+
+
+def _toml_strings(values: tuple[str, ...]) -> str:
+    return "[" + ", ".join(_toml_scalar(value) for value in values) + "]"
 
 
 class ConfigError(ValueError):
@@ -49,6 +60,10 @@ class Backend:
     #: Adapter-specific, operator-supplied flags. Currently used by Claude
     #: Code for settings such as ``--effort medium``.
     cli_args: tuple[str, ...] = ()
+    #: HTTP endpoint and the *name* of an environment variable containing its
+    #: credential. Raw credentials are deliberately not part of the schema.
+    base_url: str | None = None
+    api_key_env: str | None = None
 
 @dataclass(slots=True, frozen=True)
 class TierPolicy:
@@ -81,6 +96,66 @@ class SleipnirConfig:
         if tier not in self.tiers:
             raise ConfigError(f"no policy configured for tier {tier.value!r}")
         return self.tiers[tier]
+
+    def to_toml(self) -> str:
+        """Render a normalized, secret-free config for a console child run."""
+        lines = [
+            f"concurrency = {self.concurrency}",
+            f"catalog_ttl_s = {self.catalog_ttl_s!r}",
+            f"reserve_fraction = {self.reserve_fraction!r}",
+        ]
+        for key, value in (
+            ("catalog_url", self.catalog_url),
+            ("catalog_cache_path", str(self.catalog_cache_path) if self.catalog_cache_path else None),
+            ("window_tokens_limit", self.window_tokens_limit),
+            ("metered_budget_usd", self.metered_budget_usd),
+        ):
+            if value is not None:
+                lines.append(f"{key} = {_toml_scalar(value)}")
+
+        for backend in self.backends.values():
+            lines.extend([
+                "",
+                "[[backends]]",
+                f"name = {_toml_scalar(backend.name)}",
+                f"adapter = {_toml_scalar(backend.adapter.value)}",
+                f"billing = {_toml_scalar(backend.billing.value)}",
+                f"dispatch_overhead_tokens = {backend.dispatch_overhead_tokens}",
+            ])
+            if backend.base_url is not None:
+                lines.append(f"base_url = {_toml_scalar(backend.base_url)}")
+            if backend.api_key_env is not None:
+                lines.append(f"api_key_env = {_toml_scalar(backend.api_key_env)}")
+            if backend.cli_args:
+                lines.append(f"cli_args = {_toml_strings(backend.cli_args)}")
+            models = []
+            for model in backend.models:
+                fields = [f"id = {_toml_scalar(model.id)}"]
+                if model.context is not None:
+                    fields.append(f"context = {model.context}")
+                if model.price_per_mtok is not None:
+                    fields.append(f"price_per_mtok = {model.price_per_mtok!r}")
+                models.append("{ " + ", ".join(fields) + " }")
+            lines.append("models = [" + ", ".join(models) + "]")
+
+        for tier, policy in self.tiers.items():
+            lines.extend([
+                "",
+                f"[tiers.{tier.value}]",
+                f"prefer = {_toml_strings(policy.prefer)}",
+                f"min_context = {policy.min_context}",
+                f"output_ratio = {policy.output_ratio!r}",
+            ])
+            if policy.max_price_per_mtok is not None:
+                lines.append(f"max_price_per_mtok = {policy.max_price_per_mtok!r}")
+            for key, values in (
+                ("require_parameters", policy.require_parameters),
+                ("allow", policy.allow),
+                ("deny", policy.deny),
+            ):
+                if values:
+                    lines.append(f"{key} = {_toml_strings(values)}")
+        return "\n".join(lines) + "\n"
 
     @classmethod
     def load(cls, path: Path) -> SleipnirConfig:
@@ -180,7 +255,10 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
             raise ConfigError(f"{source}: each [[backends]] entry must be a table")
         _only_keys(
             entry,
-            {"name", "adapter", "billing", "models", "dispatch_overhead_tokens", "cli_args"},
+            {
+                "name", "adapter", "billing", "models",
+                "dispatch_overhead_tokens", "cli_args", "base_url", "api_key_env",
+            },
             f"{source}: backend",
         )
         name = entry.get("name")
@@ -208,11 +286,40 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
             raise ConfigError(
                 f"{source}: backend {name!r} dispatch overhead must be a non-negative whole number"
             )
-        if any(existing.adapter is adapter for existing in backends.values()):
-            raise ConfigError(f"{source}: adapter {adapter.value!r} may only have one backend")
         cli_args = _pattern_list(entry.get("cli_args"), f"{source}: backend {name!r}", "cli_args")
         if cli_args and adapter is not Adapter.CLAUDE:
             raise ConfigError(f"{source}: backend {name!r} cli_args are currently supported only for claude")
+        base_url = entry.get("base_url")
+        api_key_env = entry.get("api_key_env")
+        if base_url is not None and (not isinstance(base_url, str) or not base_url.strip()):
+            raise ConfigError(f"{source}: backend {name!r} base_url must be a non-empty string")
+        if isinstance(base_url, str):
+            parsed_url = urlsplit(base_url)
+            if (
+                parsed_url.scheme not in ("http", "https")
+                or not parsed_url.netloc
+                or parsed_url.username is not None
+                or parsed_url.password is not None
+            ):
+                raise ConfigError(
+                    f"{source}: backend {name!r} base_url must be an HTTP(S) URL "
+                    "without embedded credentials"
+                )
+        if api_key_env is not None and (
+            not isinstance(api_key_env, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_env) is None
+        ):
+            raise ConfigError(
+                f"{source}: backend {name!r} api_key_env must be an environment variable name"
+            )
+        if adapter in (Adapter.OPENAI, Adapter.ANTHROPIC) and base_url is None:
+            raise ConfigError(f"{source}: backend {name!r} requires base_url")
+        if adapter in (Adapter.CLAUDE, Adapter.CODEX) and (
+            base_url is not None or api_key_env is not None
+        ):
+            raise ConfigError(
+                f"{source}: backend {name!r} cannot set HTTP endpoint fields for {adapter.value}"
+            )
         backends[name] = Backend(
             name=name,
             adapter=adapter,
@@ -220,6 +327,8 @@ def _parse_backends(raw: Any, source: str) -> dict[str, Backend]:
             models=_parse_models(entry.get("models"), name, source),
             dispatch_overhead_tokens=overhead,
             cli_args=cli_args,
+            base_url=base_url.rstrip("/") if base_url else None,
+            api_key_env=api_key_env,
         )
     return backends
 

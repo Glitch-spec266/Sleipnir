@@ -171,7 +171,13 @@ def _fold_task(
         case AttemptStatus.CANCELLED:
             state.status = TaskStatus.CANCELLED
         case AttemptStatus.PARTIAL | AttemptStatus.FAILED:
-            retries_left = state.attempts < task.retry.max_attempts
+            attempt_limit = task.retry.max_attempts
+            if (
+                latest.failure_kind is FailureKind.PROVIDER_ERROR
+                and task.retry.provider_max_attempts is not None
+            ):
+                attempt_limit = max(attempt_limit, task.retry.provider_max_attempts)
+            retries_left = state.attempts < attempt_limit
             retryable = latest.failure_kind in task.retry.retry_on
             if retries_left and retryable:
                 state.status = TaskStatus.READY

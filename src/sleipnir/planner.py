@@ -18,8 +18,9 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from sleipnir.adapters.base import BaseAdapter, DispatchRequest
+from sleipnir.adapters.base import BaseAdapter, DispatchRequest, adapter_for
 from sleipnir.artifacts import AttemptWorkspace, contained_regular_file
+from sleipnir.config import SleipnirConfig
 from sleipnir.schema import (
     Adapter,
     ExpectedOutput,
@@ -40,6 +41,23 @@ _FENCED_JSON = re.compile(r"```(?:json)?\s*\n(?P<body>.*?)```", re.DOTALL)
 
 class PlanningError(RuntimeError):
     """The planner did not return a usable DAG."""
+
+
+def ensure_provider_failover(plan: Plan, config: SleipnirConfig) -> Plan:
+    """Give generated tasks enough attempts to rotate past a provider outage."""
+    tasks = []
+    for task in plan.tasks:
+        provider_count = len(dict.fromkeys(config.policy(task.tier).prefer))
+        allowance = min(6, provider_count + 1)
+        retry = task.retry.model_copy(update={
+            "provider_max_attempts": max(
+                task.retry.provider_max_attempts or 0,
+                task.retry.max_attempts,
+                allowance,
+            )
+        })
+        tasks.append(task.model_copy(update={"retry": retry}))
+    return plan.model_copy(update={"tasks": tasks})
 
 
 def planning_instructions(goal: str) -> str:
@@ -186,7 +204,7 @@ def assemble_plan(payload: dict, *, goal: str, plan_id: str) -> Plan:
 async def generate_plan(
     goal: str,
     *,
-    adapters: Mapping[Adapter, BaseAdapter],
+    adapters: Mapping[object, BaseAdapter],
     routing: RoutingDecision,
     run_root: Path,
     plan_id: str = "plan",
@@ -197,9 +215,11 @@ async def generate_plan(
     """Dispatch the planning task and return the validated Plan."""
     fitted_goal = _fit_goal(goal)
     task = build_planner_task(fitted_goal)
-    adapter = adapters.get(routing.adapter)
+    adapter = adapter_for(adapters, routing)
     if adapter is None:
-        raise PlanningError(f"no adapter registered for {routing.adapter.value!r}")
+        raise PlanningError(
+            f"no adapter registered for {routing.backend or routing.adapter.value!r}"
+        )
 
     workspace = AttemptWorkspace(run_root, task.id, attempt)
     workspace.prepare_fresh()
@@ -240,6 +260,7 @@ __all__ = [
     "assemble_plan",
     "build_planner_task",
     "extract_plan_json",
+    "ensure_provider_failover",
     "generate_plan",
     "planning_instructions",
 ]

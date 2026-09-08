@@ -796,3 +796,69 @@ could settle:
   simulated "no network" by deleting the cache without blocking the fetch, so on
   any networked machine the live fetch succeeded and the refusal never fired.
   One of the project's stated safety guarantees was passing by accident.
+
+# Backend identity is not a wire protocol
+
+Phase 17 originally keyed adapter instances by `Adapter`. That works for one
+Claude CLI, one Codex CLI and one OpenRouter endpoint, but silently collapses
+two OpenAI-compatible providers into the same object. A route needs both facts:
+
+- `adapter` says how bytes travel (`claude`, `codex`, OpenAI-compatible chat
+  completions, or Anthropic Messages);
+- `backend` says which configured account/endpoint was chosen.
+
+`RoutingDecision.backend` now carries the latter into the append-only record,
+and runtime adapter maps are keyed by backend name. The field is optional only
+so older result logs remain readable; legacy decisions resolve by adapter when
+there is exactly one match. This also makes provider-specific credentials and
+URLs impossible to cross-wire during retry rotation.
+
+HTTP configuration stores `api_key_env`, never a key. The console rejects a
+raw-looking value because slash input is ordinary terminal history and message
+state. `/provider add` builds a private session config, and project subprocesses
+receive that path. OpenRouter's non-standard usage request is emitted only by
+its adapter; generic compatible endpoints do not receive provider-specific
+fields. Direct Anthropic calls translate Messages content, stop reasons and
+cache usage into the same bounded `DispatchOutcome` shape.
+
+An operator-supplied `price_per_mtok` is accepted for a metered model absent
+from the OpenRouter catalogue. It becomes a frozen config-sourced price
+snapshot; using the same blended rate for input and output is intentionally
+conservative and auditable. With neither live nor operator pricing, dispatch is
+still refused.
+
+# Provider outages get a cause-specific retry ceiling
+
+Raising ordinary `max_attempts` above the backend count made acceptance failures
+repeat unnecessarily and bypassed the phase gate. The plan now records a
+separate `provider_max_attempts`. Generated plans set it to one more than the
+number of preferred backends (capped by the schema at six), while timeouts,
+truncation and acceptance failures retain the planner's normal limit. The extra
+provider-only attempt revisits the first route after every configured provider
+has had one chance. Retry policy remains finite without converting unrelated
+failures into blind repeats.
+
+# Linux-native iOS: xtool boundary and App Store boundary
+
+The phrase “Xcode capabilities” is scoped to the outcome the operator chose:
+develop, sign and deploy an iOS app from Linux or Windows without renting or
+owning a Mac. Sleipnir delegates compilation and device services to xtool. Its
+stable surface is `ios doctor|setup|auth|sdk|new|build|ipa|run|devices|install|launch`;
+arguments are passed as an argv vector, never a shell string. Build, IPA and run
+refuse a directory without both `Package.swift` and `xtool.yml`.
+
+This is deliberately not advertised as arbitrary Xcode compatibility. xtool's
+documented unit is a SwiftPM iOS app. `.xcodeproj`, `.xcworkspace`, CocoaPods and
+mobile stacks whose iOS build depends on Xcode are outside this bridge. Native
+app code is Swift-first; C-family library targets may be usable through SwiftPM,
+but the wrapper makes no broader language guarantee. `ios doctor` reports
+missing tools and project files without installing anything.
+
+App Store delivery is split at a clean boundary. xtool can produce the signed
+IPA. Apple's current Build Upload API can upload binaries from any platform via
+create/reserve, chunk PUT and commit operations, so a Linux-native route is now
+technically real rather than a Transporter-on-macOS fiction. Credential setup
+is intentionally deferred: the operator said an Apple account exists but not
+to wire it yet. Sleipnir therefore has no App Store private-key reader, JWT
+signer or submit command, and does not pretend IPA creation equals App Review
+submission.

@@ -33,18 +33,21 @@ from __future__ import annotations
 import asyncio
 import codecs
 import contextlib
+import math
 import os
 import re
+import shlex
 import shutil
 import sys
-import termios
 import tempfile
+import termios
 import tty
 import uuid
 from collections import abc, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from sleipnir import chat, theme
 from sleipnir.process import ProcessRunner
@@ -69,6 +72,10 @@ These are real shell commands available to you via Bash:
   {exe} browser text [selector]        read the current page
   {exe} browser click <selector>
   {exe} browser fill <selector> <text>
+  {exe} ios doctor [--project <path>] inspect Linux-native iOS prerequisites
+  {exe} ios build --project <path>      build a SwiftPM iOS app with xtool
+  {exe} ios ipa --project <path>        produce a signed IPA with xtool
+  {exe} ios run --project <path>        build, install and launch on a device
   {exe} secret prompt "<label>"        ask the operator; inject into focused app
   {exe} secret prompt "<label>" --browser-selector "<css>"
                                          fill a browser field without relying on focus
@@ -123,6 +130,10 @@ class ConsoleState:
     #: An operator-supplied --run-root is exact and must not be silently nested.
     run_root_explicit: bool = False
     config_path: Path | None = None
+    #: Parsed worker routing config. Mutations are written to a private,
+    #: session-scoped normalized TOML consumed by project child processes.
+    routing_config: object | None = None
+    runtime_config_dir: Path | None = None
     cache_read_weight: float = 1.0
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     frame: int = 0
@@ -214,6 +225,8 @@ class ConsoleState:
             transport = getattr(session, "_transport", None)
             if transport is not None:
                 await transport.close()
+        if self.runtime_config_dir is not None:
+            shutil.rmtree(self.runtime_config_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +307,234 @@ def _cmd_ask(state: "ConsoleState", argument: str) -> None:
     )
 
 
+def _persist_routing_config(state: "ConsoleState") -> None:
+    config = state.routing_config
+    if config is None:
+        raise ValueError("no worker config is loaded")
+    if state.runtime_config_dir is None:
+        state.runtime_config_dir = Path(tempfile.mkdtemp(prefix="sleipnir-console-"))
+        state.runtime_config_dir.chmod(0o700)
+    target = state.runtime_config_dir / "sleipnir.toml"
+    temporary = state.runtime_config_dir / f".{target.name}.{uuid.uuid4().hex}.tmp"
+    with temporary.open("x", encoding="utf-8") as handle:
+        handle.write(config.to_toml())
+        handle.flush()
+        os.fsync(handle.fileno())
+    temporary.chmod(0o600)
+    os.replace(temporary, target)
+    state.config_path = target
+
+
+def _cmd_config(state: "ConsoleState", argument: str) -> None:
+    from sleipnir.config import ConfigError, SleipnirConfig
+
+    if not argument:
+        if state.routing_config is None:
+            state.add("sleipnir", "No worker config loaded. Usage: /config <path>.")
+            return
+        backends = ", ".join(state.routing_config.backends)
+        state.add("sleipnir", f"Config: {state.config_path or 'in memory'}; backends: {backends}.")
+        return
+    try:
+        paths = shlex.split(argument)
+    except ValueError as exc:
+        state.add("sleipnir", f"Config command refused: {exc}.")
+        return
+    if len(paths) != 1:
+        state.add("sleipnir", "Usage: /config <path>.")
+        return
+    path = Path(paths[0]).expanduser().resolve()
+    try:
+        state.routing_config = SleipnirConfig.load(path)
+    except ConfigError as exc:
+        state.add("sleipnir", f"Config refused: {_clip(str(exc))}")
+        return
+    state.config_path = path
+    state.add("sleipnir", f"Worker config loaded from {path}.")
+
+
+def _cmd_router(state: "ConsoleState", argument: str) -> None:
+    from sleipnir.schema import Tier
+
+    config = state.routing_config
+    if config is None:
+        state.add("sleipnir", "No worker config loaded. Use /config <path> first.")
+        return
+    try:
+        parts = shlex.split(argument)
+    except ValueError as exc:
+        state.add("sleipnir", f"Router command refused: {exc}.")
+        return
+    if not parts:
+        rows = [f"{tier.value}: {', '.join(config.policy(tier).prefer)}" for tier in Tier]
+        state.add("sleipnir", "Worker routes — " + "; ".join(rows))
+        return
+    try:
+        tier = Tier(parts[0])
+    except ValueError:
+        state.add("sleipnir", f"Unknown tier {_clip(parts[0])!r}. Try: {', '.join(t.value for t in Tier)}.")
+        return
+    if len(parts) == 1:
+        policy = config.policy(tier)
+        state.add("sleipnir", f"{tier.value}: {', '.join(policy.prefer)}.")
+        return
+    if len(parts) not in (2, 3):
+        state.add("sleipnir", "Usage: /router <tier> [backend] [model].")
+        return
+    model_id = parts[-1]
+    if len(parts) == 3:
+        named = config.backends.get(parts[1])
+        matches = [named] if named is not None and any(
+            model.id == model_id for model in named.models
+        ) else []
+    else:
+        matches = [
+            backend for backend in config.backends.values()
+            if any(model.id == model_id for model in backend.models)
+        ]
+    if len(matches) != 1:
+        reason = "not configured" if not matches else "configured by more than one backend"
+        state.add("sleipnir", f"Model {_clip(model_id)!r} is {reason}.")
+        return
+    backend = matches[0]
+    selected = next(model for model in backend.models if model.id == model_id)
+    config.backends[backend.name] = replace(
+        backend, models=(selected, *(model for model in backend.models if model.id != model_id))
+    )
+    policy = config.policy(tier)
+    config.tiers[tier] = replace(
+        policy, prefer=(backend.name, *(name for name in policy.prefer if name != backend.name))
+    )
+    _persist_routing_config(state)
+    state.add(
+        "sleipnir",
+        f"{tier.value} will try {model_id} via {backend.name} first; tier constraints still apply.",
+    )
+
+
+def _cmd_provider(state: "ConsoleState", argument: str) -> None:
+    from sleipnir.config import Backend, ModelOption
+    from sleipnir.schema import Adapter, BillingMode
+
+    config = state.routing_config
+    if config is None:
+        state.add("sleipnir", "No worker config loaded. Use /config <path> first.")
+        return
+    try:
+        parts = shlex.split(argument)
+    except ValueError as exc:
+        state.add("sleipnir", f"Provider command refused: {exc}.")
+        return
+    if parts == ["list"] or not parts:
+        rows = []
+        for backend in config.backends.values():
+            secret = backend.api_key_env or "CLI auth"
+            rows.append(f"{backend.name} ({backend.adapter.value}, {secret})")
+        state.add("sleipnir", "Providers: " + ", ".join(rows))
+        return
+    if len(parts) not in (4, 6, 7, 8) or parts[0] != "add":
+        state.add(
+            "sleipnir",
+            "Usage: /provider add <name> <adapter> <model> "
+            "[base-url key-env [context [price-per-Mtok]]].",
+        )
+        return
+    _, name, adapter_text, model_id, *http_fields = parts
+    if name in config.backends:
+        state.add("sleipnir", f"Provider {name!r} already exists.")
+        return
+    try:
+        adapter = Adapter(adapter_text)
+    except ValueError:
+        state.add("sleipnir", f"Unknown adapter {adapter_text!r}.")
+        return
+    is_http = adapter in (Adapter.OPENROUTER, Adapter.OPENAI, Adapter.ANTHROPIC)
+    if is_http and len(http_fields) < 2:
+        state.add("sleipnir", "HTTP providers require a base URL and API-key environment variable name.")
+        return
+    if not is_http and http_fields:
+        state.add("sleipnir", "CLI providers do not accept HTTP endpoint fields.")
+        return
+    base_url = http_fields[0] if is_http else None
+    key_env = http_fields[1] if is_http else None
+    if base_url is not None:
+        parsed_url = urlsplit(base_url)
+        if (
+            parsed_url.scheme not in ("http", "https")
+            or not parsed_url.netloc
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+        ):
+            state.add(
+                "sleipnir",
+                "The base URL must be HTTP(S) and cannot contain embedded credentials.",
+            )
+            return
+    if key_env is not None and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key_env) is None:
+        state.add("sleipnir", "Pass an environment variable name, never a raw API key.")
+        return
+    try:
+        context = int(http_fields[2]) if len(http_fields) >= 3 else None
+        price = float(http_fields[3]) if len(http_fields) >= 4 else None
+        if context is not None and context < 1:
+            raise ValueError
+        if price is not None and (not math.isfinite(price) or price < 0):
+            raise ValueError
+    except ValueError:
+        state.add("sleipnir", "Context must be positive and price finite and non-negative.")
+        return
+    config.backends[name] = Backend(
+        name=name,
+        adapter=adapter,
+        billing=BillingMode.METERED if is_http else BillingMode.SUBSCRIPTION,
+        models=(ModelOption(id=model_id, context=context, price_per_mtok=price),),
+        base_url=base_url,
+        api_key_env=key_env,
+    )
+    _persist_routing_config(state)
+    state.add(
+        "sleipnir",
+        f"Added session provider {name}; credential comes only from {key_env or 'official CLI auth'}. "
+        f"Use /router <tier> {name} {model_id} to route work to it.",
+    )
+
+
+def _cmd_run_root(state: "ConsoleState", argument: str) -> None:
+    from sleipnir.runlog import run_is_active
+
+    if not argument:
+        state.add("sleipnir", f"Run root: {state.run_dir or state.project_base or Path.cwd()}.")
+        return
+    if state.run_dir is not None and run_is_active(state.run_dir):
+        state.add("sleipnir", "Run root cannot change while an executor is active.")
+        return
+    try:
+        paths = shlex.split(argument)
+    except ValueError as exc:
+        state.add("sleipnir", f"Run-root command refused: {exc}.")
+        return
+    if len(paths) != 1:
+        state.add("sleipnir", "Usage: /run-root <path>.")
+        return
+    root = Path(paths[0]).expanduser().resolve()
+    state.project_base = root
+    state.run_dir = root
+    state.run_root_explicit = True
+    state.add("sleipnir", f"Run root set to {root}.")
+
+
+def _cmd_cache_read_weight(state: "ConsoleState", argument: str) -> None:
+    try:
+        value = float(argument)
+    except ValueError:
+        value = float("nan")
+    if not math.isfinite(value) or value < 0:
+        state.add("sleipnir", "Usage: /cache-read-weight <finite non-negative number>.")
+        return
+    state.cache_read_weight = value
+    state.add("sleipnir", f"Cache-read weight set to {value:g}.")
+
+
 def _cmd_help(state: "ConsoleState", argument: str) -> None:
     width = max(len(command.usage) for command in COMMANDS)
     body = "\n".join(f"{command.usage:<{width}}  {command.summary}" for command in COMMANDS)
@@ -305,6 +546,17 @@ COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/effort", "/effort <level|default>", "reasoning effort (claude)", _cmd_effort),
     SlashCommand("/use", "/use claude|codex", "switch provider", _cmd_use),
     SlashCommand("/ask", "/ask on|off", "confirm each tool use", _cmd_ask),
+    SlashCommand(
+        "/router", "/router <tier> [backend] [model]",
+        "worker route for this session", _cmd_router,
+    ),
+    SlashCommand("/provider", "/provider add|list ...", "session worker API providers", _cmd_provider),
+    SlashCommand("/config", "/config [path]", "show or load worker config", _cmd_config),
+    SlashCommand("/run-root", "/run-root [path]", "show or set project run root", _cmd_run_root),
+    SlashCommand(
+        "/cache-read-weight", "/cache-read-weight <number>",
+        "budget weight for cached input", _cmd_cache_read_weight,
+    ),
     SlashCommand("/help", "/help", "list these commands", _cmd_help),
 )
 

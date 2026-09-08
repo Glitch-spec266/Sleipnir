@@ -72,6 +72,7 @@ class _ResponseTooLarge(Exception):
 
 class OpenRouterAdapter(BaseAdapter):
     name = Adapter.OPENROUTER
+    endpoint_path = "chat/completions"
 
     def __init__(
         self,
@@ -83,6 +84,9 @@ class OpenRouterAdapter(BaseAdapter):
         title: str = "Sleipnir",
         stream: bool = True,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        api_key_env: str = API_KEY_ENV,
+        openrouter_usage: bool = True,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._api_key = api_key
@@ -90,13 +94,16 @@ class OpenRouterAdapter(BaseAdapter):
         self.referer = referer
         self.title = title
         self.stream = stream
+        self.api_key_env = api_key_env
+        self.openrouter_usage = openrouter_usage
+        self.extra_headers = dict(extra_headers or {})
         if max_response_bytes < 1:
             raise ValueError("max_response_bytes must be positive")
         self.max_response_bytes = max_response_bytes
 
     @property
     def api_key(self) -> str | None:
-        return self._api_key or os.environ.get(API_KEY_ENV)
+        return self._api_key or os.environ.get(self.api_key_env)
 
     # -- prompt -------------------------------------------------------------
 
@@ -132,7 +139,7 @@ class OpenRouterAdapter(BaseAdapter):
                 status=AttemptStatus.FAILED,
                 failure_kind=FailureKind.ADAPTER_ERROR,
                 billing_mode=BillingMode.METERED,
-                stderr_tail=f"{API_KEY_ENV} is not set",
+                stderr_tail=f"{self.api_key_env} is not set",
             )
 
         try:
@@ -170,30 +177,32 @@ class OpenRouterAdapter(BaseAdapter):
         return httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=None))
 
     def _headers(self) -> dict[str, str]:
-        return {
+        headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "HTTP-Referer": self.referer,
-            "X-Title": self.title,
             "Content-Type": "application/json",
         }
+        if self.openrouter_usage:
+            headers.update({"HTTP-Referer": self.referer, "X-Title": self.title})
+        headers.update(self.extra_headers)
+        return headers
 
     def body(self, request: DispatchRequest, prompt: str) -> dict[str, Any]:
         body: dict[str, Any] = {
             "model": request.model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": self.stream,
-            # Ask for accounting both ways: OpenRouter's own `usage.include`
-            # returns a real cost, and the OpenAI-compatible `stream_options`
-            # is what makes usage appear in the final streamed chunk.
-            "usage": {"include": True},
         }
+        # OpenRouter's usage extension returns authoritative cost. Generic
+        # compatible APIs may reject this provider-specific request member.
+        if self.openrouter_usage:
+            body["usage"] = {"include": True}
         if self.stream:
             body["stream_options"] = {"include_usage": True}
         return body
 
     async def _call(self, request: DispatchRequest, prompt: str) -> DispatchOutcome:
         workspace = request.workspace
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/{self.endpoint_path}"
         body = self.body(request, prompt)
 
         content = ""
@@ -409,20 +418,30 @@ class OpenRouterAdapter(BaseAdapter):
         prompt = request.prompt + self.prompt_suffix(request)
         notes = ["metered: spends dollars, not subscription window"]
         if not self.api_key:
-            notes.append(f"{API_KEY_ENV} is NOT set — this dispatch would fail")
+            notes.append(f"{self.api_key_env} is NOT set — this dispatch would fail")
         return DispatchPreview(
             task_id=request.task.id,
             attempt=request.attempt,
             adapter=self.name,
             tier_final=request.tier_final,
             model=request.model,
-            target=f"POST {self.base_url}/chat/completions",
+            target=f"POST {self.base_url}/{self.endpoint_path}",
             prompt_bytes=len(prompt.encode()),
             estimated_input_tokens=estimate_tokens(prompt),
             timeout_s=request.timeout_s,
             workspace=request.workspace.rel_dir,
             notes=notes,
         )
+
+
+class OpenAICompatibleAdapter(OpenRouterAdapter):
+    """A configurable OpenAI-compatible chat-completions endpoint."""
+
+    name = Adapter.OPENAI
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("openrouter_usage", False)
+        super().__init__(**kwargs)
 
 
 def materialize_file_blocks(content: str, target_dir: Path) -> list[str]:
@@ -449,5 +468,5 @@ def materialize_file_blocks(content: str, target_dir: Path) -> list[str]:
 
 __all__ = [
     "API_KEY_ENV", "DEFAULT_BASE_URL", "DEFAULT_MAX_RESPONSE_BYTES",
-    "OpenRouterAdapter", "materialize_file_blocks",
+    "OpenAICompatibleAdapter", "OpenRouterAdapter", "materialize_file_blocks",
 ]

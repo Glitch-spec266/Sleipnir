@@ -117,7 +117,7 @@ class ScriptedAdapter(BaseAdapter):
             if failing:
                 return DispatchOutcome(
                     status=AttemptStatus.FAILED,
-                    failure_kind=FailureKind.PROVIDER_ERROR,
+                    failure_kind=self.failure_kind or FailureKind.PROVIDER_ERROR,
                     billing_mode=self.billing_mode,
                     reported_cost_usd=self.cost,
                 )

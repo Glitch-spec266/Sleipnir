@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from pathlib import Path
 
 import pytest
 from fakes import fake_spawner
@@ -16,6 +17,7 @@ from fakes import fake_spawner
 from sleipnir import chat, console
 from sleipnir.capabilities import clipboard
 from sleipnir.process import ProcessRunner
+from sleipnir.schema import Tier
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -921,3 +923,96 @@ def test_launch_effort_is_validated_against_the_documented_levels():
     args = argparse.Namespace(provider="claude", model="sonnet", effort="turbo", no_splash=True)
     with pytest.raises(CliError):
         asyncio.run(cmd_console(args))
+
+
+# ---------------------------------------------------------------------------
+# Phase B: live project routing controls
+# ---------------------------------------------------------------------------
+
+
+def _routing_state(tmp_path):
+    from sleipnir.config import SleipnirConfig
+
+    cfg = SleipnirConfig.load(Path(__file__).resolve().parents[1] / "sleipnir.example.toml")
+    return console.ConsoleState(project_base=tmp_path, routing_config=cfg)
+
+
+def test_router_command_selects_a_configured_model_for_the_session(tmp_path):
+    from sleipnir.config import SleipnirConfig
+
+    state = _routing_state(tmp_path)
+    backend = next(iter(state.routing_config.backends.values()))
+    model = backend.models[-1].id
+
+    console.apply_slash(state, f"/router code {model}")
+
+    assert state.routing_config.policy(Tier.CODE).prefer[0] == backend.name
+    assert state.routing_config.backends[backend.name].models[0].id == model
+    assert state.config_path is not None
+    assert SleipnirConfig.load(state.config_path).policy(Tier.CODE).prefer[0] == backend.name
+
+
+def test_provider_add_uses_only_an_environment_variable_reference(tmp_path):
+    state = _routing_state(tmp_path)
+
+    console.apply_slash(
+        state,
+        "/provider add nim openai vendor/model https://nim.example/v1 NIM_API_KEY 128000 1.25",
+    )
+
+    backend = state.routing_config.backends["nim"]
+    assert backend.api_key_env == "NIM_API_KEY"
+    assert backend.base_url == "https://nim.example/v1"
+    assert "NIM_API_KEY" in state.messages[-1].text
+    assert "API key" not in state.config_path.read_text(encoding="utf-8")
+
+
+def test_router_can_qualify_a_model_shared_by_two_backends(tmp_path):
+    state = _routing_state(tmp_path)
+    existing = next(iter(state.routing_config.backends.values())).models[0].id
+    console.apply_slash(
+        state,
+        f"/provider add mirror openai {existing} https://mirror.example/v1 MIRROR_KEY 128000 1.0",
+    )
+
+    console.apply_slash(state, f"/router code mirror {existing}")
+
+    assert state.routing_config.policy(Tier.CODE).prefer[0] == "mirror"
+
+
+def test_provider_command_refuses_a_raw_secret_flag(tmp_path):
+    state = _routing_state(tmp_path)
+    console.apply_slash(
+        state,
+        "/provider add nim openai vendor/model https://nim.example/v1 sk-secret-value",
+    )
+    assert "nim" not in state.routing_config.backends
+    assert "environment variable" in state.messages[-1].text
+
+
+def test_provider_command_refuses_url_embedded_credentials(tmp_path):
+    state = _routing_state(tmp_path)
+    console.apply_slash(
+        state,
+        "/provider add nim openai vendor/model https://secret@nim.example/v1 NIM_KEY",
+    )
+    assert "nim" not in state.routing_config.backends
+    assert "base URL" in state.messages[-1].text
+
+
+def test_run_root_cannot_change_while_executor_owns_current_root(tmp_path, monkeypatch):
+    state = console.ConsoleState(run_dir=tmp_path)
+    monkeypatch.setattr("sleipnir.runlog.run_is_active", lambda path: True)
+
+    console.apply_slash(state, f"/run-root {tmp_path / 'elsewhere'}")
+
+    assert state.run_dir == tmp_path
+    assert "active" in state.messages[-1].text
+
+
+def test_cache_read_weight_accepts_zero_and_rejects_non_finite():
+    state = console.ConsoleState(cache_read_weight=1.0)
+    console.apply_slash(state, "/cache-read-weight 0")
+    assert state.cache_read_weight == 0
+    console.apply_slash(state, "/cache-read-weight nan")
+    assert state.cache_read_weight == 0

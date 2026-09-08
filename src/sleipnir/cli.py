@@ -34,7 +34,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sleipnir.adapters import ClaudeAdapter, CodexAdapter, OpenRouterAdapter
+from sleipnir.adapters import (
+    AnthropicAdapter,
+    ClaudeAdapter,
+    CodexAdapter,
+    OpenAICompatibleAdapter,
+    OpenRouterAdapter,
+)
 from sleipnir.adapters.base import BaseAdapter, DispatchOutcome
 from sleipnir.artifacts import (
     AttemptWorkspace,
@@ -121,21 +127,32 @@ def nonnegative_float(value: str) -> float:
 # ---------------------------------------------------------------------------
 
 
-def build_adapters(config: SleipnirConfig) -> dict[Adapter, BaseAdapter]:
-    """One adapter instance per backend kind, carrying its billing mode."""
-    adapters: dict[Adapter, BaseAdapter] = {}
+def build_adapters(config: SleipnirConfig) -> dict[str, BaseAdapter]:
+    """One adapter instance per named backend, including shared protocols."""
+    adapters: dict[str, BaseAdapter] = {}
     for backend in config.backends.values():
-        if backend.adapter in adapters:
-            continue
         match backend.adapter:
             case Adapter.CLAUDE:
-                adapters[Adapter.CLAUDE] = ClaudeAdapter(
+                adapters[backend.name] = ClaudeAdapter(
                     billing_mode=backend.billing, extra_args=list(backend.cli_args)
                 )
             case Adapter.CODEX:
-                adapters[Adapter.CODEX] = CodexAdapter(billing_mode=backend.billing)
+                adapters[backend.name] = CodexAdapter(billing_mode=backend.billing)
             case Adapter.OPENROUTER:
-                adapters[Adapter.OPENROUTER] = OpenRouterAdapter()
+                adapters[backend.name] = OpenRouterAdapter(
+                    base_url=backend.base_url or "https://openrouter.ai/api/v1",
+                    api_key_env=backend.api_key_env or "OPENROUTER_API_KEY",
+                )
+            case Adapter.OPENAI:
+                adapters[backend.name] = OpenAICompatibleAdapter(
+                    base_url=backend.base_url or "",
+                    api_key_env=backend.api_key_env or "OPENAI_API_KEY",
+                )
+            case Adapter.ANTHROPIC:
+                adapters[backend.name] = AnthropicAdapter(
+                    base_url=backend.base_url or "",
+                    api_key_env=backend.api_key_env or "ANTHROPIC_API_KEY",
+                )
     return adapters
 
 
@@ -192,7 +209,12 @@ def revision_staleness(run_root: Path) -> dict[str, int]:
 
 
 async def cmd_plan(args: argparse.Namespace) -> int:
-    from sleipnir.planner import PlanningError, build_planner_task, generate_plan
+    from sleipnir.planner import (
+        PlanningError,
+        build_planner_task,
+        ensure_provider_failover,
+        generate_plan,
+    )
 
     config = load_config(args)
     catalog = await load_catalog(config, required=True)
@@ -230,6 +252,7 @@ async def cmd_plan(args: argparse.Namespace) -> int:
                     run_root=run_root,
                     attempt=planner_attempt,
                 )
+                plan = ensure_provider_failover(plan, config)
             except PlanningError as exc:
                 raise CliError(str(exc)) from exc
 
@@ -915,6 +938,11 @@ async def cmd_console(args: argparse.Namespace) -> int:
         if config_arg
         else discovered.resolve() if discovered is not None else None
     )
+    if state.config_path is not None:
+        try:
+            state.routing_config = SleipnirConfig.load(state.config_path)
+        except ConfigError as exc:
+            raise CliError(str(exc)) from exc
     state.cache_read_weight = getattr(args, "cache_read_weight", 1.0)
     if getattr(args, "ask_first", False):
         state.permission_mode = "acceptEdits"
@@ -1076,6 +1104,35 @@ async def cmd_computer(args: argparse.Namespace) -> int:
     except (computer.CapabilityError, IndexError, ValueError) as error:
         raise CliError(str(error) or f"bad arguments for `computer {action}`") from error
     return 0
+
+
+async def cmd_ios(args: argparse.Namespace) -> int:
+    """Expose xtool's SwiftPM iOS workflow without claiming Xcode parity."""
+    from sleipnir.capabilities import ios
+
+    root = Path(args.project).expanduser().resolve()
+    if args.action == "doctor":
+        report = ios.probe(root)
+        rows = [
+            ("platform", report.system),
+            ("xtool", report.xtool or "NOT FOUND"),
+            ("swift", report.swift or "NOT FOUND"),
+            ("Package.swift", "yes" if report.package_manifest else "NO"),
+            ("xtool.yml", "yes" if report.xtool_config else "NO"),
+            ("SwiftPM iOS ready", "yes" if report.ready else "NO"),
+        ]
+        for label, value in rows:
+            print(f"  {label:<20} {value}")
+        for note in report.notes:
+            print(f"  ! {note}")
+        print("  scope                SwiftPM iOS apps; not arbitrary .xcodeproj/.xcworkspace builds")
+        return 0
+    try:
+        return await asyncio.to_thread(
+            ios.run, args.action, root=root, extra=tuple(args.args)
+        )
+    except ios.IOSCapabilityError as exc:
+        raise CliError(str(exc)) from exc
 
 
 async def cmd_browser(args: argparse.Namespace) -> int:
@@ -1340,6 +1397,24 @@ def build_parser() -> argparse.ArgumentParser:
     browser_parser.add_argument("args", nargs="*")
     browser_parser.add_argument("--headless", action="store_true")
     browser_parser.set_defaults(func=cmd_browser)
+
+    ios_parser = subparsers.add_parser(
+        "ios", help="build and deploy SwiftPM iOS apps without a Mac via xtool"
+    )
+    ios_parser.add_argument(
+        "action",
+        choices=[
+            "doctor", "setup", "auth", "sdk", "new", "build", "ipa",
+            "run", "devices", "install", "launch",
+        ],
+    )
+    ios_parser.add_argument(
+        "--project", default=".", help="xtool/SwiftPM project directory (default: cwd)"
+    )
+    ios_parser.add_argument(
+        "args", nargs="*", help="additional arguments passed directly to xtool"
+    )
+    ios_parser.set_defaults(func=cmd_ios)
 
     secret_parser = subparsers.add_parser(
         "secret", help="ask the operator for a credential and inject it without storing it"

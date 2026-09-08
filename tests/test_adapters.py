@@ -545,6 +545,77 @@ def test_openrouter_body_requests_usage_accounting(tmp_path: Path):
     assert body["stream_options"] == {"include_usage": True}
 
 
+def test_openai_compatible_adapter_uses_configured_secret_name(tmp_path: Path, monkeypatch):
+    from sleipnir.adapters import OpenAICompatibleAdapter
+    from sleipnir.schema import Adapter
+
+    monkeypatch.setenv("NIM_TEST_KEY", "secret")
+    seen = {}
+
+    def handler(request):
+        seen["authorization"] = request.headers["Authorization"]
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "model": "vendor/model",
+            "choices": [{"message": {
+                "content": "```file:out.py\nx = 1\n```"
+            }, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+        })
+
+    adapter = OpenAICompatibleAdapter(
+        base_url="https://provider.example/v1",
+        api_key_env="NIM_TEST_KEY",
+        stream=False,
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    outcome = run(adapter.dispatch(request_for(tmp_path)))
+
+    assert outcome.status is AttemptStatus.SUCCEEDED
+    assert seen["authorization"] == "Bearer secret"
+    assert "usage" not in seen["body"]
+    assert adapter.name is Adapter.OPENAI
+
+
+def test_anthropic_adapter_translates_messages_response(tmp_path: Path, monkeypatch):
+    from sleipnir.adapters import AnthropicAdapter
+
+    monkeypatch.setenv("ANTHROPIC_TEST_KEY", "secret")
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["key"] = request.headers["x-api-key"]
+        seen["version"] = request.headers["anthropic-version"]
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "id": "msg_1",
+            "model": "configured-model",
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "```file:out.py\nx = 1\n```"}],
+            "usage": {"input_tokens": 5, "output_tokens": 7},
+        })
+
+    adapter = AnthropicAdapter(
+        base_url="https://api.example/v1",
+        api_key_env="ANTHROPIC_TEST_KEY",
+        max_output_tokens=1234,
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    outcome = run(adapter.dispatch(request_for(tmp_path)))
+
+    assert outcome.status is AttemptStatus.SUCCEEDED
+    assert outcome.usage.input_tokens == 5
+    assert outcome.usage.output_tokens == 7
+    assert seen["path"] == "/v1/messages"
+    assert seen["key"] == "secret"
+    assert seen["version"] == "2023-06-01"
+    assert seen["body"]["model"] == "vendor/model-x"
+    assert seen["body"]["max_tokens"] == 1234
+    assert seen["body"]["stream"] is False
+    assert seen["body"]["messages"][0]["role"] == "user"
+
+
 def test_openrouter_prompt_suffix_lists_every_required_output(tmp_path: Path):
     request = request_for(tmp_path)
     suffix = OpenRouterAdapter.prompt_suffix(request)

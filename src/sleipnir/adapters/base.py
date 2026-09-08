@@ -27,10 +27,29 @@ from sleipnir.schema import (
     AttemptStatus,
     BillingMode,
     FailureKind,
+    RoutingDecision,
     Task,
     Tier,
     TokenUsage,
 )
+
+
+def adapter_for(
+    adapters: Mapping[object, "BaseAdapter"], routing: RoutingDecision
+) -> "BaseAdapter" | None:
+    """Resolve new backend-keyed maps while retaining old logs and test seams."""
+    if routing.backend is not None:
+        selected = adapters.get(routing.backend)
+        if selected is not None and selected.name is routing.adapter:
+            return selected
+    selected = adapters.get(routing.adapter)
+    if selected is not None:
+        return selected
+    matches = [
+        candidate for candidate in adapters.values()
+        if candidate.name is routing.adapter
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 class AdapterError(RuntimeError):
@@ -165,6 +184,7 @@ class BaseAdapter(ABC):
 
 
 __all__ = [
+    "adapter_for",
     "AdapterError",
     "BaseAdapter",
     "DispatchOutcome",

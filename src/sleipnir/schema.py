@@ -118,6 +118,8 @@ class Adapter(StrEnum):
     CLAUDE = "claude"  # Claude Agent SDK / `claude -p` headless
     CODEX = "codex"  # `codex exec`
     OPENROUTER = "openrouter"  # plain HTTP, metered
+    OPENAI = "openai"  # OpenAI-compatible chat-completions HTTP
+    ANTHROPIC = "anthropic"  # Anthropic Messages HTTP
 
 
 class TaskStatus(StrEnum):
@@ -431,6 +433,12 @@ class RetryPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_attempts: int = Field(default=2, ge=1, le=6)
+    provider_max_attempts: int | None = Field(
+        default=None,
+        ge=1,
+        le=6,
+        description="Optional higher ceiling used only for provider failures.",
+    )
     retry_on: list[FailureKind] = Field(
         default_factory=lambda: [
             FailureKind.TIMEOUT,
@@ -989,6 +997,9 @@ class RoutingDecision(BaseModel):
     tier_final: Tier
     model: str
     adapter: Adapter
+    # Backend identity is distinct from wire protocol. Optional so result logs
+    # written before multi-provider routing remain readable.
+    backend: str | None = Field(default=None, min_length=1, max_length=100)
     downshifted: bool = False
     escalated: bool = False
     downshift_reason: str | None = Field(default=None, max_length=400)

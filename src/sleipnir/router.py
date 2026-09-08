@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sleipnir.config import Backend, SleipnirConfig, TierPolicy
+from sleipnir.config import Backend, ModelOption, SleipnirConfig, TierPolicy
 from sleipnir.pricing import CatalogSnapshot, ModelInfo
 from sleipnir.schema import (
     CHARS_PER_TOKEN,
@@ -148,21 +148,23 @@ class TierRouter:
         # across viable backends on retries.  This lets a separate Claude
         # subscription take over when Codex reports a quota/provider failure
         # instead of repeating the same exhausted provider.
-        accepted_across_backends: list[tuple[Backend, str, ModelInfo | None]] = []
+        accepted_across_backends: list[
+            tuple[Backend, str, ModelInfo | None, ModelOption]
+        ] = []
         for backend_name in policy.prefer:
             backend = self.config.backends[backend_name]
             accepted, evaluated = self._evaluate(backend, policy, needed)
             explanation.candidates.extend(evaluated)
             accepted_across_backends.extend(
-                (backend, model_id, info) for model_id, info in accepted
+                (backend, model_id, info, option) for model_id, info, option in accepted
             )
 
         if accepted_across_backends:
-            backend, winner, info = accepted_across_backends[
+            backend, winner, info, option = accepted_across_backends[
                 (max(attempt, 1) - 1) % len(accepted_across_backends)
             ]
             explanation.decision = self._decide(
-                task, tier, backend, winner, info, policy, downshift_reason, attempt
+                task, tier, backend, winner, info, option, policy, downshift_reason, attempt
             )
             return explanation
 
@@ -172,7 +174,7 @@ class TierRouter:
 
     def _evaluate(
         self, backend: Backend, policy: TierPolicy, needed: int
-    ) -> tuple[list[tuple[str, ModelInfo | None]], list[CandidateEval]]:
+    ) -> tuple[list[tuple[str, ModelInfo | None, ModelOption]], list[CandidateEval]]:
         """Return (accepted, all-evaluated). Accepted is already ranked."""
         evaluated: list[CandidateEval] = []
         accepted: list[tuple[str, ModelInfo | None, float]] = []
@@ -202,7 +204,10 @@ class TierRouter:
 
         # Explicit model lists keep config order — the operator knows their plan
         # better than a price table does.
-        return [(model_id, info) for model_id, info, _ in accepted], evaluated
+        by_id = {option.id: option for option in backend.models}
+        return [
+            (model_id, info, by_id[model_id]) for model_id, info, _ in accepted
+        ], evaluated
 
     @staticmethod
     def _context_of(info: ModelInfo | None, option) -> int | None:
@@ -234,7 +239,11 @@ class TierRouter:
             return "does not match any allow pattern"
         if context is not None and context < needed:
             return f"context {context:,} < {needed:,} required"
-        if backend.billing.value == "metered" and info is None:
+        if (
+            backend.billing.value == "metered"
+            and info is None
+            and option.price_per_mtok is None
+        ):
             return "missing live catalogue price for metered backend"
         if policy.max_price_per_mtok is not None:
             if price is None:
@@ -263,6 +272,7 @@ class TierRouter:
         backend: Backend,
         model_id: str,
         info: ModelInfo | None,
+        option: ModelOption,
         policy: TierPolicy,
         downshift_reason: str | None,
         attempt: int,
@@ -273,7 +283,7 @@ class TierRouter:
         if downshifted and not downshift_reason:
             downshift_reason = f"tier lowered from {task.tier.value} to {tier.value}"
 
-        price = self._price_of(info, None, policy)
+        price = self._price_of(info, option, policy)
         bits = [f"backend {backend.name!r} ({backend.billing.value})"]
         if price is not None:
             bits.append(f"${price:.2f}/Mtok blended")
@@ -287,6 +297,7 @@ class TierRouter:
             tier_final=tier,
             model=model_id,
             adapter=backend.adapter,
+            backend=backend.name,
             downshifted=downshifted,
             escalated=escalated,
             downshift_reason=downshift_reason if downshifted else None,
@@ -309,6 +320,15 @@ class TierRouter:
                     context_window=info.context_length,
                 )
                 if info is not None
+                else PriceSnapshot(
+                    source="config:price_per_mtok",
+                    fetched_at=self.catalog.fetched_at,
+                    model=model_id,
+                    input_per_mtok=option.price_per_mtok,
+                    output_per_mtok=option.price_per_mtok,
+                    context_window=option.context,
+                )
+                if option.price_per_mtok is not None
                 else None
             ),
         )

@@ -26,6 +26,7 @@ from sleipnir.adapters.base import (
     DispatchOutcome,
     DispatchPreview,
     DispatchRequest,
+    adapter_for,
 )
 from sleipnir.artifacts import (
     INPUT_MANIFEST_FILENAME,
@@ -215,7 +216,7 @@ class Executor:
         self,
         plan: Plan,
         *,
-        adapters: Mapping[Adapter, BaseAdapter],
+        adapters: Mapping[object, BaseAdapter],
         router: Router,
         log: ResultLog,
         config: ExecutorConfig,
@@ -310,9 +311,10 @@ class Executor:
         return previews
 
     def _adapter_for(self, routing: RoutingDecision) -> BaseAdapter:
-        adapter = self.adapters.get(routing.adapter)
+        adapter = adapter_for(self.adapters, routing)
         if adapter is None:
-            raise KeyError(f"no adapter registered for {routing.adapter.value!r}")
+            identity = routing.backend or routing.adapter.value
+            raise KeyError(f"no adapter registered for {identity!r}")
         return adapter
 
     def _request(

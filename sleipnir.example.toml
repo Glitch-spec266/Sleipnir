@@ -14,6 +14,12 @@ reserve_fraction = 0.10        # keep 10% of the window unspent
 # metered_budget_usd = 25.0
 
 # --- backends --------------------------------------------------------------
+# Additional API endpoints may use `adapter = "openai"` for an
+# OpenAI-compatible chat-completions service (including hosted NIM), or
+# `adapter = "anthropic"` for the Messages API. Set `base_url` and
+# `api_key_env = "NAME_OF_ENV_VAR"`; never put the key itself in this file.
+# A metered model absent from the live OpenRouter catalogue also needs local
+# `context` and `price_per_mtok` metadata or routing safely refuses it.
 
 [[backends]]
 name = "claude-sub"

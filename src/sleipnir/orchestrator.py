@@ -15,7 +15,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from sleipnir.adapters.base import BaseAdapter, DispatchOutcome, DispatchRequest
+from sleipnir.adapters.base import BaseAdapter, DispatchOutcome, DispatchRequest, adapter_for
 from sleipnir.artifacts import AttemptWorkspace, contained_regular_file
 from sleipnir.schema import (
     Adapter,
@@ -156,7 +156,7 @@ async def run_control_cycle(
     manifest: Manifest,
     *,
     plan: Plan | None = None,
-    adapters: Mapping[Adapter, BaseAdapter],
+    adapters: Mapping[object, BaseAdapter],
     routing: RoutingDecision,
     run_root: Path,
     attempt: int,
@@ -164,9 +164,11 @@ async def run_control_cycle(
     run_id: str,
 ) -> tuple[ControlDecision, DispatchOutcome, Path]:
     task = build_control_task(manifest, plan)
-    adapter = adapters.get(routing.adapter)
+    adapter = adapter_for(adapters, routing)
     if adapter is None:
-        raise ControlError(f"no adapter registered for {routing.adapter.value!r}")
+        raise ControlError(
+            f"no adapter registered for {routing.backend or routing.adapter.value!r}"
+        )
     workspace = AttemptWorkspace(run_root, task.id, attempt)
     workspace.prepare_fresh()
     prompt = control_instructions(manifest, plan)

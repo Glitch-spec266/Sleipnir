@@ -352,6 +352,46 @@ def test_partial_becomes_ready_again_while_retries_remain():
     assert fold_results(plan, records)[task.id].status is TaskStatus.READY
 
 
+def test_provider_failure_uses_its_larger_cause_specific_attempt_ceiling():
+    original = make_task("a")
+    task = original.model_copy(update={
+        "retry": original.retry.model_copy(update={"provider_max_attempts": 3})
+    })
+    plan = _plan([task])
+    records = [
+        finished(
+            task.id,
+            attempt=i,
+            spec_hash=task.spec_hash(),
+            status=AttemptStatus.FAILED,
+            failure_kind=FailureKind.PROVIDER_ERROR,
+        )
+        for i in (1, 2)
+    ]
+
+    assert fold_results(plan, records)[task.id].status is TaskStatus.READY
+
+
+def test_provider_attempt_ceiling_does_not_repeat_acceptance_failures():
+    original = make_task("a")
+    task = original.model_copy(update={
+        "retry": original.retry.model_copy(update={"provider_max_attempts": 3})
+    })
+    plan = _plan([task])
+    records = [
+        finished(
+            task.id,
+            attempt=i,
+            spec_hash=task.spec_hash(),
+            status=AttemptStatus.FAILED,
+            failure_kind=FailureKind.ACCEPTANCE_FAILED,
+        )
+        for i in (1, 2)
+    ]
+
+    assert fold_results(plan, records)[task.id].status is TaskStatus.FAILED
+
+
 def test_retry_policy_rejects_non_retryable_kinds():
     with pytest.raises(ValidationError, match="non-retryable"):
         RetryPolicy(retry_on=[FailureKind.BUDGET_DENIED])
@@ -375,6 +415,19 @@ def test_downshift_must_be_explained():
             tier_requested=Tier.REASON, tier_final=Tier.CODE, model="m",
             adapter=Adapter.CLAUDE, downshifted=True,
         )
+
+
+def test_routing_decision_backend_identity_is_optional_for_old_logs():
+    old = RoutingDecision(
+        tier_requested=Tier.CODE,
+        tier_final=Tier.CODE,
+        model="configured-model",
+        adapter=Adapter.OPENROUTER,
+    )
+    new = old.model_copy(update={"backend": "nvidia"})
+
+    assert old.backend is None
+    assert new.backend == "nvidia"
 
 
 # ---------------------------------------------------------------------------

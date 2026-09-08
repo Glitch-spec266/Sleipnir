@@ -15,7 +15,7 @@ import json
 import pytest
 
 from sleipnir import cli
-from sleipnir.capabilities import audit, browser, clipboard, computer, secrets
+from sleipnir.capabilities import audit, browser, clipboard, computer, ios, secrets
 
 
 @pytest.fixture
@@ -124,6 +124,52 @@ def test_probe_reports_notes_instead_of_raising(monkeypatch):
     result = computer.probe()
     assert result.ready is False
     assert any("ydotool" in note for note in result.notes)
+
+
+# --- Linux-native iOS development ---------------------------------------
+
+
+def test_ios_probe_requires_xtool_swiftpm_manifest_and_project_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(ios.shutil, "which", lambda name: f"/usr/bin/{name}")
+    (tmp_path / "Package.swift").write_text("// swift-tools-version: 6.0\n")
+    result = ios.probe(tmp_path)
+    assert result.ready is False
+    assert "xtool.yml" in result.notes[0]
+
+    (tmp_path / "xtool.yml").write_text("version: 1\n")
+    assert ios.probe(tmp_path).ready is True
+
+
+def test_ios_argv_uses_xtool_dev_for_build_and_ipa():
+    assert ios.argv("build", executable="/opt/xtool") == ["/opt/xtool", "dev", "build"]
+    assert ios.argv("ipa", executable="/opt/xtool") == [
+        "/opt/xtool", "dev", "build", "--ipa",
+    ]
+
+
+def test_ios_runner_never_uses_a_shell_and_keeps_project_cwd(
+    audit_log, tmp_path, monkeypatch
+):
+    (tmp_path / "Package.swift").write_text("// swift-tools-version: 6.0\n")
+    (tmp_path / "xtool.yml").write_text("version: 1\n")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(ios.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert ios.run("build", root=tmp_path, run=fake_run) == 0
+    assert calls == [
+        (["/usr/bin/xtool", "dev", "build"], {"cwd": str(tmp_path), "check": False})
+    ]
+    assert "ios.xtool" in audit_log.read_text(encoding="utf-8")
+
+
+def test_ios_cli_parser_exposes_no_mac_workflow():
+    parsed = cli.build_parser().parse_args(["ios", "ipa", "--project", "/work/app"])
+    assert parsed.action == "ipa"
+    assert parsed.project == "/work/app"
 
 
 # --- clipboard -----------------------------------------------------------

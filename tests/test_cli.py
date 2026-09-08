@@ -12,6 +12,7 @@ from test_executor import ScriptedAdapter
 from test_router import CONFIG_TOML
 
 from sleipnir import cli
+from sleipnir.config import SleipnirConfig
 from sleipnir.adapters.base import DispatchOutcome, DispatchRequest
 from sleipnir.planner import PlanningError, assemble_plan, extract_plan_json
 from sleipnir.pricing import ModelCatalog
@@ -20,6 +21,7 @@ from sleipnir.schema import (
     AttemptFinished,
     AttemptStatus,
     BillingMode,
+    FailureKind,
     RetryPolicy,
     Task,
     TokenUsage,
@@ -51,6 +53,42 @@ GOOD_TASKS = {
         },
     ]
 }
+
+
+def test_build_adapters_keeps_multiple_compatible_backends_distinct():
+    import tomllib
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"].extend([
+        {
+            "name": "api-a", "adapter": "openai", "billing": "metered",
+            "base_url": "https://a.example/v1", "api_key_env": "A_KEY",
+            "models": ["a/model"],
+        },
+        {
+            "name": "api-b", "adapter": "openai", "billing": "metered",
+            "base_url": "https://b.example/v1", "api_key_env": "B_KEY",
+            "models": ["b/model"],
+        },
+    ])
+    adapters = cli.build_adapters(SleipnirConfig.from_dict(raw, source="<test>"))
+
+    assert adapters["api-a"] is not adapters["api-b"]
+    assert adapters["api-a"].base_url == "https://a.example/v1"
+    assert adapters["api-b"].api_key_env == "B_KEY"
+
+
+def test_generated_plan_gets_one_more_attempt_than_configured_providers():
+    import tomllib
+    from sleipnir.planner import ensure_provider_failover
+
+    config = SleipnirConfig.from_dict(tomllib.loads(CONFIG_TOML), source="<test>")
+    plan = assemble_plan(GOOD_TASKS, goal="build it", plan_id="p")
+
+    hardened = ensure_provider_failover(plan, config)
+
+    assert {task.retry.max_attempts for task in hardened.tasks} == {2}
+    assert {task.retry.provider_max_attempts for task in hardened.tasks} == {3}
 
 
 class PlanningAdapter(ScriptedAdapter):
@@ -306,7 +344,9 @@ def test_orchestrate_applies_brain_revision_and_resumes_failed_work(
         name = Adapter.CLAUDE
 
         def __init__(self):
-            super().__init__(fail_first=2)
+            super().__init__(
+                fail_first=2, failure_kind=FailureKind.ACCEPTANCE_FAILED
+            )
             self.control_calls = 0
 
         async def dispatch(self, request):
@@ -383,7 +423,9 @@ def test_phase_gate_escalates_a_failed_module_without_waking_the_brain(
         name = Adapter.CLAUDE
 
         def __init__(self):
-            super().__init__(fail_first=2)
+            super().__init__(
+                fail_first=2, failure_kind=FailureKind.ACCEPTANCE_FAILED
+            )
             self.control_calls = 0
 
         async def dispatch(self, request):

@@ -14,7 +14,7 @@ never re-enters the orchestrator's context.** The plan lives on disk. The
 orchestrator is re-invoked fresh each cycle with only a compact, size-bounded
 manifest.
 
-## Status: Phases 1–14 complete; Phase 15 in progress
+## Status: Phases 1–18 implemented
 
 | Phase | Scope | State |
 |---|---|---|
@@ -27,6 +27,15 @@ manifest.
 | 7 | dependency-free live TUI + sparse-control console | complete |
 | 8 | interactive console + audited host/browser/credential control | complete |
 | 9 | phase gate + automatic escalation before scarce-brain wakeup | complete |
+| 10 | multi-provider streaming console | complete |
+| 11 | live gate and multi-provider verification | complete |
+| 12 | server-tool and authoritative-cost accounting | complete |
+| 13 | routing and budget adversarial hardening | complete |
+| 14 | live capabilities and first complete run | complete |
+| 15 | staged dependency delivery + live sparse-control route | complete |
+| 16 | provider-outage failover allowance | complete |
+| 17 | live console routing and provider controls | complete |
+| 18 | Linux-native SwiftPM iOS capability through xtool | implemented; live build pending toolchain |
 
 Read [`DESIGN.md`](DESIGN.md) for the tradeoffs, the manifest size math, and the
 open decisions.
@@ -39,8 +48,8 @@ src/sleipnir/schema.py       pydantic models for plan.json, results.jsonl,
 src/sleipnir/projection.py   pure fold of results over plan -> task status,
                              and the bounded manifest projection
 src/sleipnir/executor.py     readiness, concurrency cap, cancellation, dry run
-src/sleipnir/adapters/       claude (`claude -p`), codex (`codex exec`),
-                             openrouter (plain HTTP)
+src/sleipnir/adapters/       claude/codex CLIs plus OpenRouter-compatible,
+                             generic OpenAI-compatible, and Anthropic HTTP
 src/sleipnir/process.py      async subprocess: streaming, timeout, tree kill
 src/sleipnir/context.py      InputContract -> the exact subagent prompt
 src/sleipnir/artifacts.py    attempt workspaces and output collection
@@ -57,15 +66,17 @@ src/sleipnir/gate.py         constant-size phase verdict + finite escalation
 src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
 src/sleipnir/console.py      guarded chat + `/project` multi-model front door
 src/sleipnir/chat.py         Claude session transport + tool-free fast-lane gate
-src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate
-tests/                       503 tests, including the executable form of the
+src/sleipnir/capabilities/ios.py  xtool/SwiftPM iOS bridge for Linux and Windows
+src/sleipnir/cli.py          plan / run / status / explain / tui / orchestrate / ios
+tests/                       528 tests, including the executable form of the
                              manifest size bound
 ```
 
-Provider auth is never reimplemented. The `claude` and `codex` adapters shell
-out to the official CLIs and inherit whatever credentials those hold;
-`openrouter` reads a bearer key from `OPENROUTER_API_KEY`. No adapter performs
-an OAuth flow.
+Provider auth is never persisted by Sleipnir. The `claude` and `codex` adapters
+inherit official-CLI credentials. HTTP backends keep only an environment
+variable name in configuration; OpenRouter-compatible, generic
+OpenAI-compatible, and direct Anthropic endpoints read the value at dispatch.
+Raw API keys are not valid TOML fields or slash-command arguments.
 
 ## The property everything else rests on
 
@@ -135,6 +146,41 @@ value therefore cannot steal the target field.
 
 The splash uses a letter-free eight-legged horse emblem; the frame title carries
 the product name, so the mark itself is a logo rather than another nameplate.
+
+The local command registry also exposes `/router`, `/provider`, `/config`,
+`/run-root`, and `/cache-read-weight`. Provider additions are session-scoped and
+written to a private temporary config used by project child processes. For
+example, an OpenAI-compatible service is registered as:
+
+```text
+/provider add <name> openai <model> <base-url> <API_KEY_ENV> [context] [price-per-Mtok]
+/router code <name> <model>
+```
+
+The secret itself must already be in that environment variable. Multiple
+backends using the same HTTP protocol remain separate routing and accounting
+identities.
+
+## iOS without a Mac
+
+`sleipnir ios` wraps xtool's cross-platform SwiftPM workflow without invoking a
+shell:
+
+```sh
+sleipnir ios doctor --project ./MyApp
+sleipnir ios setup
+sleipnir ios auth login
+sleipnir ios build --project ./MyApp
+sleipnir ios ipa --project ./MyApp
+sleipnir ios run --project ./MyApp -- --usb
+```
+
+The build/run actions require `Package.swift` and `xtool.yml`. This is not a
+general `.xcodeproj` or `.xcworkspace` runner: native SwiftPM iOS apps are the
+supported project shape, while Xcode-only build systems and other mobile
+language ecosystems need their own bridge. App Store Connect's Build Upload API
+makes a no-Mac upload path possible, but Apple credential wiring and submission
+remain intentionally unconfigured.
 
 ## Sparse brain control
 

@@ -272,6 +272,7 @@ def test_downshift_is_recorded_with_its_reason():
     assert decision.downshifted is True
     assert decision.downshift_reason == "window headroom exhausted"
     assert decision.escalated is False
+    assert decision.backend == "meter"
 
 
 def test_escalation_is_not_mistaken_for_a_downshift():
@@ -407,6 +408,85 @@ def test_shipped_example_config_is_valid():
     path = Path(__file__).resolve().parents[1] / "sleipnir.example.toml"
     cfg = SleipnirConfig.load(path)
     assert set(cfg.tiers) == set(Tier)
+
+
+def test_multiple_http_backends_keep_distinct_endpoint_and_secret_refs():
+    import tomllib
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"].extend([
+        {
+            "name": "second-meter",
+            "adapter": "openai",
+            "billing": "metered",
+            "base_url": "https://provider.example/v1",
+            "api_key_env": "SECOND_PROVIDER_KEY",
+            "models": ["vendor/model"],
+        },
+        {
+            "name": "third-meter",
+            "adapter": "openai",
+            "billing": "metered",
+            "base_url": "https://other.example/v1",
+            "api_key_env": "THIRD_PROVIDER_KEY",
+            "models": ["other/model"],
+        },
+    ])
+
+    cfg = SleipnirConfig.from_dict(raw, source="<test>")
+
+    assert cfg.backends["second-meter"].base_url == "https://provider.example/v1"
+    assert cfg.backends["second-meter"].api_key_env == "SECOND_PROVIDER_KEY"
+    assert cfg.backends["third-meter"].api_key_env == "THIRD_PROVIDER_KEY"
+
+
+def test_operator_price_allows_a_metered_model_missing_from_openrouter_catalog():
+    import tomllib
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"][1]["models"] = [{
+        "id": "private/model", "context": 128_000, "price_per_mtok": 1.25,
+    }]
+    cfg = SleipnirConfig.from_dict(raw, source="<test>")
+    decision = TierRouter(cfg, catalog()).resolve(
+        make_task("t", tier=Tier.EXTRACT), attempt=1, tier=Tier.EXTRACT
+    )
+
+    assert decision.model == "private/model"
+
+
+def test_raw_api_keys_are_not_valid_backend_configuration():
+    import tomllib
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"][1]["api_key"] = "must-not-land-on-disk"
+    with pytest.raises(ConfigError, match="unknown configuration key"):
+        SleipnirConfig.from_dict(raw, source="<test>")
+
+
+@pytest.mark.parametrize("base_url", ["provider.example/v1", "ftp://provider.example/v1", "https://key@provider.example/v1"])
+def test_http_backend_url_must_be_http_without_embedded_credentials(base_url):
+    import tomllib
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"][1]["base_url"] = base_url
+    with pytest.raises(ConfigError, match="base_url"):
+        SleipnirConfig.from_dict(raw, source="<test>")
+
+
+def test_config_toml_round_trip_preserves_http_backend_fields(tmp_path):
+    import tomllib
+
+    raw = tomllib.loads(CONFIG_TOML)
+    raw["backends"][1]["base_url"] = "https://openrouter.example/v1"
+    raw["backends"][1]["api_key_env"] = "ROUTER_KEY"
+    original = SleipnirConfig.from_dict(raw, source="<test>")
+    path = tmp_path / "generated.toml"
+    path.write_text(original.to_toml(), encoding="utf-8")
+
+    loaded = SleipnirConfig.load(path)
+
+    assert loaded == original
 
 
 def test_successive_attempts_rotate_through_accepted_candidates():
