@@ -901,7 +901,7 @@ async def cmd_apply_revision(args: argparse.Namespace) -> int:
 
 async def cmd_console(args: argparse.Namespace) -> int:
     from sleipnir.chat import PROVIDERS
-    from sleipnir.console import ConsoleState, run_console
+    from sleipnir.console import EFFORT_LEVELS, ConsoleState, run_console
 
     state = ConsoleState()
     run_dir = Path(getattr(args, "run_root", ".")).resolve()
@@ -913,6 +913,10 @@ async def cmd_console(args: argparse.Namespace) -> int:
         raise CliError(f"unknown provider {provider!r}; choose one of {', '.join(PROVIDERS)}")
     state.provider = provider
     state.model = getattr(args, "model", "sonnet") or None
+    effort = getattr(args, "effort", None)
+    if effort and effort not in EFFORT_LEVELS:
+        raise CliError(f"unknown effort {effort!r}; choose one of {', '.join(EFFORT_LEVELS)}")
+    state.effort = effort
     return await run_console(state, splash=not getattr(args, "no_splash", False))
 
 
@@ -1225,6 +1229,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     console_parser.add_argument(
         "--no-splash", action="store_true", help="skip the boot animation"
+    )
+    console_parser.add_argument(
+        "--effort",
+        default=None,
+        help="reasoning effort for claude (low, medium, high, xhigh, max); "
+             "/effort changes it later",
     )
     console_parser.add_argument(
         "--ask-first",

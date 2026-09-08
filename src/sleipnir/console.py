@@ -27,12 +27,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-import re
 import shutil
 import sys
 import termios
 import tty
-from collections import deque
+from collections import abc, deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -127,6 +126,11 @@ class ConsoleState:
     #: Set while a credential is being typed: the buffer is not echoed and is
     #: never added to the transcript.
     secret_request: object | None = None
+    #: Reasoning effort for the claude backend; None leaves it to the provider.
+    effort: str | None = None
+    #: Highlighted row of the / menu. The menu itself is derived from the input
+    #: buffer, so this is the only piece of it worth keeping.
+    menu_index: int = 0
 
     def add(self, role: str, text: str) -> Message:
         message = Message(role=role, text=text)
@@ -143,6 +147,22 @@ class ConsoleState:
     def model(self, value: str | None) -> None:
         self.models[self.provider] = value
 
+    def push_routing(self) -> None:
+        """Send the current model and effort to any transport already built.
+
+        Transports are cached per provider and outlive a ``/model`` or
+        ``/effort``, so without this the footer would report a routing choice
+        the next spawn never receives — a setting that reads as applied and is
+        not is worse than one that was refused.
+        """
+        for provider, session in self.sessions.items():
+            transport = getattr(session, "_transport", None)
+            if transport is None:
+                continue
+            transport.model = self.models.get(provider)
+            if hasattr(transport, "effort"):
+                transport.effort = self.effort
+
     def session_for(self, provider: str) -> chat.ChatSession:
         if provider not in self.sessions:
             self.sessions[provider] = chat.ChatSession(provider=provider)
@@ -155,6 +175,7 @@ class ConsoleState:
                 session,
                 permission_mode=self.permission_mode,
                 model=self.models.get(provider),
+                effort=self.effort,
                 add_dirs=(self.run_dir,) if self.run_dir else (),
             )
         return session._transport  # type: ignore[no-any-return]
@@ -170,37 +191,123 @@ class ConsoleState:
 # Local commands — intercepted before anything is dispatched to a provider
 # ---------------------------------------------------------------------------
 
-_SLASH_USE = re.compile(r"^/use\s+(claude|codex)\s*$")
-_SLASH_MODEL = re.compile(r"^/model\s+(\S+)\s*$")
+#: Effort levels the Claude CLI documents. Operator data in the same sense as a
+#: model alias: this list mirrors ``claude --help``, and an unlisted value is
+#: refused rather than passed through — a silently ignored effort flag reads to
+#: the operator as applied, which is the expensive kind of wrong.
+EFFORT_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+
+#: The permission mode ``/ask on`` selects. Anything other than
+#: ``bypassPermissions`` makes the provider confirm each tool use.
+ASK_FIRST_MODE = "acceptEdits"
 
 
-def apply_slash(state: ConsoleState, line: str) -> bool:
+@dataclass(frozen=True)
+class SlashCommand:
+    """One local command. ``/help`` and the menu both render from these.
+
+    Registry-driven on purpose: a command that existed only in ``apply_slash``
+    would be invisible to the menu, and one documented only in ``/help`` would
+    drift out of date the first time its arguments changed.
+    """
+
+    name: str
+    usage: str
+    summary: str
+    handler: abc.Callable[["ConsoleState", str], None]
+
+
+def _cmd_use(state: "ConsoleState", argument: str) -> None:
+    if argument not in chat.PROVIDERS:
+        state.add("sleipnir", f"Unknown provider {_clip(argument)!r}. Try: {', '.join(chat.PROVIDERS)}.")
+        return
+    if argument != state.provider:
+        state.provider = argument
+        state.add("sleipnir", f"Now talking to {argument}. Conversations stay separate.")
+    else:
+        state.add("sleipnir", f"Already talking to {argument}.")
+
+
+def _cmd_model(state: "ConsoleState", argument: str) -> None:
+    if not argument:
+        state.add("sleipnir", f"Usage: /model <alias|default>. Now: {state.model or 'account default'}.")
+        return
+    state.model = None if argument in ("default", "@default") else argument
+    state.push_routing()
+    state.add("sleipnir", f"{state.provider} will use {state.model or 'account default'}.")
+
+
+def _cmd_effort(state: "ConsoleState", argument: str) -> None:
+    if argument in ("default", "@default", "off"):
+        state.effort = None
+        state.push_routing()
+        state.add("sleipnir", "Effort left to the provider.")
+        return
+    if argument not in EFFORT_LEVELS:
+        state.add(
+            "sleipnir",
+            f"Unknown effort {_clip(argument)!r}. Choose from: {', '.join(EFFORT_LEVELS)}.",
+        )
+        return
+    state.effort = argument
+    state.push_routing()
+    state.add("sleipnir", f"Effort set to {argument}. Applies to claude; codex ignores it.")
+
+
+def _cmd_ask(state: "ConsoleState", argument: str) -> None:
+    if argument not in ("on", "off"):
+        state.add("sleipnir", "Usage: /ask on|off.")
+        return
+    state.permission_mode = ASK_FIRST_MODE if argument == "on" else "bypassPermissions"
+    state.add(
+        "sleipnir",
+        "Confirming each tool use." if argument == "on" else "Full host control restored.",
+    )
+
+
+def _cmd_help(state: "ConsoleState", argument: str) -> None:
+    width = max(len(command.usage) for command in COMMANDS)
+    body = "\n".join(f"{command.usage:<{width}}  {command.summary}" for command in COMMANDS)
+    state.add("sleipnir", body + "\nEverything else goes to the provider.")
+
+
+COMMANDS: tuple[SlashCommand, ...] = (
+    SlashCommand("/model", "/model <alias|default>", "model for this provider", _cmd_model),
+    SlashCommand("/effort", "/effort <level|default>", "reasoning effort (claude)", _cmd_effort),
+    SlashCommand("/use", "/use claude|codex", "switch provider", _cmd_use),
+    SlashCommand("/ask", "/ask on|off", "confirm each tool use", _cmd_ask),
+    SlashCommand("/help", "/help", "list these commands", _cmd_help),
+)
+
+
+def menu_rows(state: "ConsoleState") -> tuple[SlashCommand, ...]:
+    """Commands matching what has been typed so far — derived, never stored.
+
+    Open only while the operator is still naming a command: a space means they
+    have moved on to arguments and the menu would be in the way.
+    """
+    buffer = state.input_buffer
+    if not buffer.startswith("/") or " " in buffer:
+        return ()
+    return tuple(command for command in COMMANDS if command.name.startswith(buffer))
+
+
+def menu_selection(state: "ConsoleState") -> SlashCommand | None:
+    rows = menu_rows(state)
+    if not rows:
+        return None
+    return rows[state.menu_index % len(rows)]
+
+
+def apply_slash(state: "ConsoleState", line: str) -> bool:
     """Handle a local command. True means consumed — send nothing anywhere."""
     if not line.startswith("/"):
         return False
-    use = _SLASH_USE.match(line)
-    if use:
-        target = use.group(1)
-        if target != state.provider:
-            state.provider = target
-            state.add("sleipnir", f"Now talking to {target}. Conversations stay separate.")
-        else:
-            state.add("sleipnir", f"Already talking to {target}.")
-        return True
-    picked = _SLASH_MODEL.match(line)
-    if picked:
-        alias = picked.group(1)
-        state.model = None if alias in ("default", "@default") else alias
-        shown = state.model or "account default"
-        state.add("sleipnir", f"{state.provider} will use {shown}.")
-        return True
-    if re.match(r"^/help\s*$", line):
-        state.add(
-            "sleipnir",
-            "/use claude|codex — switch provider · /model <alias|default> — "
-            "pick this provider's model · everything else goes to the provider.",
-        )
-        return True
+    name, _, argument = line.strip().partition(" ")
+    for command in COMMANDS:
+        if command.name == name:
+            command.handler(state, argument.strip())
+            return True
     state.add("sleipnir", "Unknown command. Try /help.")
     return True
 
@@ -292,6 +399,18 @@ def render(state: ConsoleState, *, width: int, height: int, colour: bool = True)
     else:
         suffix = f" (+{len(state.pending_submissions)} queued)" if state.pending_submissions else ""
         prompt_line = f"› {_clip(state.input_buffer)}{caret}{suffix}"
+    # The menu sits above the prompt so the row being chosen is next to the
+    # text that filters it. Usage and summary are static registry strings, but
+    # they go through _clip like every other value that reaches the screen.
+    rows = menu_rows(state)
+    if rows:
+        chosen = menu_selection(state)
+        usage_width = max(len(row.usage) for row in rows)
+        for row in rows:
+            marker = "❯" if row is chosen else " "
+            entry = f" {marker} {_clip(row.usage):<{usage_width}}  {_clip(row.summary)}"
+            level = theme.BRIGHT if row is chosen else theme.DIM + 1
+            lines.append(theme.paint(entry[:inner], level, colour=colour))
     lines.append(theme.paint(prompt_line[-inner:], theme.BRIGHT, colour=colour))
 
     where = "brain awake" if state.brain_awake else "brain asleep · routed"
@@ -368,6 +487,10 @@ async def play_splash(*, colour: bool = True, skip_requested=None) -> None:
 BACKSPACE = ("\x7f", "\x08")
 INTERRUPT = "\x03"
 ENTER = ("\r", "\n")
+#: Menu navigation. Tab and ctrl-n/ctrl-p are single bytes; arrow keys arrive
+#: as multi-byte escape sequences, which the reader would have to buffer.
+MENU_NEXT = ("\t", "\x0e")
+MENU_PREVIOUS = "\x10"
 
 
 def apply_key(state: ConsoleState, char: str) -> str | None:
@@ -376,9 +499,25 @@ def apply_key(state: ConsoleState, char: str) -> str | None:
     Split out as a pure function so the whole editing surface is testable
     without a terminal — the loop below then has nothing in it but I/O.
     """
+    rows = menu_rows(state)
+    if rows and char in MENU_NEXT:
+        state.menu_index = (state.menu_index + 1) % len(rows)
+        return None
+    if rows and char == MENU_PREVIOUS:
+        state.menu_index = (state.menu_index - 1) % len(rows)
+        return None
     if char in ENTER:
+        # With the menu open, Enter completes the highlighted command rather
+        # than submitting a half-typed one. An exact name is already complete,
+        # so it submits — otherwise /help could never be sent.
+        chosen = menu_selection(state)
+        if chosen is not None and chosen.name != state.input_buffer:
+            state.input_buffer = f"{chosen.name} "
+            state.menu_index = 0
+            return None
         line = state.input_buffer.strip()
         state.input_buffer = ""
+        state.menu_index = 0
         return line or None
     if char in BACKSPACE:
         state.input_buffer = state.input_buffer[:-1]
@@ -388,6 +527,9 @@ def apply_key(state: ConsoleState, char: str) -> str | None:
         return None
     if char.isprintable():
         state.input_buffer += char
+        # The filtered list changed under the highlight; keeping the old index
+        # would select whatever happened to land in that row.
+        state.menu_index = 0
     return None
 
 

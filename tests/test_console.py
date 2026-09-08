@@ -354,3 +354,156 @@ def test_router_model_refuses_rather_than_guessing():
 
     with pytest.raises(chat.ChatError, match="no model configured"):
         chat.router_model(EmptyConfig())
+
+
+# ---------------------------------------------------------------------------
+# Phase A: the slash command registry, the / menu, /effort and /ask
+# ---------------------------------------------------------------------------
+
+
+def test_every_registered_command_documents_itself():
+    """/help and the menu both render from the registry, so a command with no
+    summary would render a blank row rather than fail loudly."""
+    assert console.COMMANDS
+    for command in console.COMMANDS:
+        assert command.name.startswith("/")
+        assert command.summary.strip()
+        assert command.usage.strip()
+
+
+def test_help_lists_every_registered_command():
+    state = console.ConsoleState()
+    assert console.apply_slash(state, "/help") is True
+    printed = state.messages[-1].text
+    for command in console.COMMANDS:
+        assert command.name in printed
+
+
+def test_menu_opens_on_a_bare_slash_and_lists_everything():
+    state = console.ConsoleState(input_buffer="/")
+    assert console.menu_rows(state) == console.COMMANDS
+
+
+def test_menu_filters_by_prefix_as_you_type():
+    state = console.ConsoleState(input_buffer="/mod")
+    rows = console.menu_rows(state)
+    assert [row.name for row in rows] == ["/model"]
+
+
+def test_menu_closes_once_the_command_is_complete():
+    """A space means the operator is typing arguments, not choosing."""
+    state = console.ConsoleState(input_buffer="/model ")
+    assert console.menu_rows(state) == ()
+
+
+def test_menu_is_closed_for_ordinary_text():
+    state = console.ConsoleState(input_buffer="build the thing")
+    assert console.menu_rows(state) == ()
+
+
+def test_tab_cycles_the_menu_selection_and_wraps():
+    state = console.ConsoleState(input_buffer="/")
+    console.apply_key(state, "\t")
+    assert state.menu_index == 1
+    for _ in range(len(console.COMMANDS)):
+        console.apply_key(state, "\t")
+    assert state.menu_index == 1
+
+
+def test_enter_completes_the_highlighted_command_instead_of_submitting():
+    state = console.ConsoleState(input_buffer="/mod")
+    assert console.apply_key(state, "\r") is None
+    assert state.input_buffer == "/model "
+
+
+def test_enter_submits_when_the_command_is_already_exact():
+    state = console.ConsoleState(input_buffer="/help")
+    assert console.apply_key(state, "\r") == "/help"
+
+
+def test_typing_resets_the_menu_selection():
+    state = console.ConsoleState(input_buffer="/")
+    console.apply_key(state, "\t")
+    console.apply_key(state, "m")
+    assert state.menu_index == 0
+
+
+def test_effort_accepts_a_documented_level():
+    state = console.ConsoleState()
+    assert console.apply_slash(state, "/effort high") is True
+    assert state.effort == "high"
+
+
+def test_effort_refuses_an_undocumented_level():
+    """An ignored effort flag is worse than a refusal: it reads as applied."""
+    state = console.ConsoleState()
+    state.effort = "low"
+    console.apply_slash(state, "/effort turbo")
+    assert state.effort == "low"
+    assert "turbo" in state.messages[-1].text
+
+
+def test_ask_toggles_the_permission_mode_both_ways():
+    state = console.ConsoleState()
+    console.apply_slash(state, "/ask on")
+    assert state.permission_mode != "bypassPermissions"
+    console.apply_slash(state, "/ask off")
+    assert state.permission_mode == "bypassPermissions"
+
+
+def test_claude_argv_carries_the_effort_level():
+    argv = chat.claude_stream_argv("s1", resume=False, model="sonnet", effort="max")
+    assert "--effort" in argv
+    assert argv[argv.index("--effort") + 1] == "max"
+
+
+def test_claude_argv_omits_effort_when_unset():
+    argv = chat.claude_stream_argv("s1", resume=False, model="sonnet")
+    assert "--effort" not in argv
+
+
+def test_model_change_reaches_an_already_built_transport():
+    """The transport is cached per provider, so a later /model has to be
+    pushed onto it — otherwise the footer reports a model the spawn never uses."""
+    state = console.ConsoleState()
+    transport = state.transport_for("claude")
+    console.apply_slash(state, "/model opus")
+    assert transport.model == "opus"
+
+
+def test_effort_change_reaches_an_already_built_transport():
+    state = console.ConsoleState()
+    transport = state.transport_for("claude")
+    console.apply_slash(state, "/effort xhigh")
+    assert transport.effort == "xhigh"
+
+
+def test_the_menu_is_drawn_while_a_command_is_being_typed():
+    state = console.ConsoleState(input_buffer="/mod")
+    drawn = console.render(state, width=80, height=24, colour=False)
+    assert "/model <alias|default>" in drawn
+    assert "/use" not in drawn.split("›")[0].split("/model")[-1]
+
+
+def test_the_menu_marks_the_highlighted_row():
+    state = console.ConsoleState(input_buffer="/")
+    first = console.render(state, width=80, height=24, colour=False)
+    console.apply_key(state, "\t")
+    second = console.render(state, width=80, height=24, colour=False)
+    assert first != second
+
+
+def test_no_menu_is_drawn_for_ordinary_text():
+    state = console.ConsoleState(input_buffer="build the thing")
+    assert "/model" not in console.render(state, width=80, height=24, colour=False)
+
+
+def test_launch_effort_is_validated_against_the_documented_levels():
+    """Refused at launch for the same reason /effort refuses it: an unknown
+    level would reach the CLI and be rejected there, mid-spawn."""
+    import asyncio, argparse
+    from sleipnir.cli import CliError, cmd_console
+
+    args = argparse.Namespace(provider="claude", model="sonnet", effort="turbo", no_splash=True)
+    with pytest.raises(CliError):
+        asyncio.run(cmd_console(args))

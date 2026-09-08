@@ -147,6 +147,7 @@ def claude_stream_argv(
     executable: str = "claude",
     permission_mode: str = "acceptEdits",
     model: str | None = None,
+    effort: str | None = None,
     add_dirs: tuple[Path, ...] = (),
 ) -> list[str]:
     """Build the headless multi-turn invocation.
@@ -166,6 +167,8 @@ def claude_stream_argv(
     argv += ["--permission-mode", permission_mode]
     if model:
         argv += ["--model", model]
+    if effort:
+        argv += ["--effort", effort]
     for directory in add_dirs:
         argv += ["--add-dir", str(directory)]
     return argv
@@ -189,6 +192,7 @@ class ClaudeTransport:
         *,
         permission_mode: str = "acceptEdits",
         model: str | None = None,
+        effort: str | None = None,
         add_dirs: tuple[Path, ...] = (),
         executable: str = "claude",
         spawn: Spawner | None = None,
@@ -197,6 +201,7 @@ class ClaudeTransport:
         self.session = session
         self.permission_mode = permission_mode
         self.model = model
+        self.effort = effort
         self.add_dirs = add_dirs
         self.executable = executable
         self.timeout_s = timeout_s
@@ -215,6 +220,7 @@ class ClaudeTransport:
             executable=self.executable,
             permission_mode=self.permission_mode,
             model=self.model,
+            effort=self.effort,
             add_dirs=self.add_dirs,
         )
         self._proc = await self._spawn(
@@ -527,6 +533,7 @@ def transport_for(
     *,
     permission_mode: str,
     model: str | None,
+    effort: str | None = None,
     add_dirs: tuple[Path, ...] = (),
     spawn: Spawner | None = None,
 ) -> ClaudeTransport | CodexTransport:
@@ -536,6 +543,7 @@ def transport_for(
                 session,
                 permission_mode=permission_mode,
                 model=model,
+                effort=effort,
                 add_dirs=add_dirs,
                 spawn=spawn,
             )
