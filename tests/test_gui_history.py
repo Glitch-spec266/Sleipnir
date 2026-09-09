@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sleipnir.gui_history import EncryptedHistory
+import json
+
+from sleipnir.gui_history import EncryptedHistory, main
 
 
 def test_history_is_encrypted_at_rest_and_round_trips(tmp_path):
@@ -24,3 +26,16 @@ def test_history_tolerates_one_torn_trailing_record(tmp_path):
         handle.write(b"torn")
 
     assert history.read() == [{"role": "operator", "text": "keep this"}]
+
+
+def test_history_cli_returns_decrypted_entries_only_to_native_stdout(tmp_path, capsys):
+    path = tmp_path / "history.enc.jsonl"
+    key = tmp_path / "history.key"
+    EncryptedHistory(path, key).append({"role": "operator", "text": "resume safely"})
+
+    assert main(["--history", str(path), "--history-key", str(key)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "status": "complete",
+        "entries": [{"role": "operator", "text": "resume safely"}],
+    }

@@ -35,5 +35,8 @@ describe("demo bridge", () => {
       role: "sleipnir",
       route: "ambient · approved",
     });
+
+    await bridge.clearHistory();
+    expect((await bridge.loadDashboard()).messages).toEqual([]);
   });
 });

@@ -128,6 +128,7 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
       snapshot={snapshot}
       onSave={(settings) => runAndRefresh(() => bridge.setAppSettings(settings))}
       onSelectProject={(path) => runAndRefresh(() => bridge.selectRunRoot(path))}
+      onClearHistory={() => runAndRefresh(() => bridge.clearHistory())}
     />;
     if (activeView === "voice") {
       return <VoiceView

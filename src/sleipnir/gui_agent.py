@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +73,14 @@ async def handle_instruction(
         }
     selected = route or "ambient"
     if history:
-        history.append({"role": "operator", "text": clean, "route": selected})
+        history.append(
+            {
+                "role": "operator",
+                "text": clean,
+                "route": selected,
+                "at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            }
+        )
 
     if selected == "ambient":
         activated = _activated_provider(environment, variable_names)
@@ -110,7 +118,14 @@ async def handle_instruction(
     else:
         raise ValueError(f"unknown instruction route {selected!r}")
     if history:
-        history.append({"role": "sleipnir", "text": result["text"], "route": result["route"]})
+        history.append(
+            {
+                "role": "sleipnir",
+                "text": result["text"],
+                "route": result["route"],
+                "at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            }
+        )
     return result
 
 

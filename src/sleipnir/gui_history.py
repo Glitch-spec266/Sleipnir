@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import stat
@@ -90,4 +91,25 @@ class EncryptedHistory:
         return entries[-max(0, limit) :]
 
 
-__all__ = ["EncryptedHistory", "HistoryError", "MAX_ENTRY_BYTES"]
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="sleipnir-desktop-history")
+    parser.add_argument("--history", type=Path, required=True)
+    parser.add_argument("--history-key", type=Path, required=True)
+    parser.add_argument("--limit", type=int, default=1_000)
+    args = parser.parse_args(argv)
+    try:
+        entries = EncryptedHistory(args.history, args.history_key).read(
+            limit=max(0, min(args.limit, 1_000))
+        )
+    except HistoryError as error:
+        print(json.dumps({"status": "error", "text": str(error)}))
+        return 2
+    print(json.dumps({"status": "complete", "entries": entries}, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
+
+
+__all__ = ["EncryptedHistory", "HistoryError", "MAX_ENTRY_BYTES", "main"]

@@ -92,5 +92,8 @@ export function createDemoBridge(): SleipnirBridge {
     async speak() {
       return null;
     },
+    async clearHistory() {
+      snapshot.messages = [];
+    },
   };
 }

@@ -21,5 +21,6 @@ export function createTauriBridge(): SleipnirBridge {
       invoke<string>("transcribe_audio", { audio, mimeType }),
     handoffInstruction: (text: string) => invoke<void>("handoff_instruction", { text }),
     speak: (text: string) => invoke<SpeechAudio | null>("speak_text", { text }),
+    clearHistory: () => invoke<void>("clear_history"),
   };
 }

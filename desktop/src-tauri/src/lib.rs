@@ -106,11 +106,24 @@ impl Default for VoiceSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 #[serde(rename_all = "camelCase")]
 struct Preferences {
     run_root: PathBuf,
     voice: VoiceSettings,
     settings: AppSettings,
+    sessions: HashMap<String, String>,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            run_root: initial_run_root(),
+            voice: VoiceSettings::default(),
+            settings: AppSettings::default(),
+            sessions: HashMap::new(),
+        }
+    }
 }
 
 struct DesktopState {
@@ -119,8 +132,8 @@ struct DesktopState {
     push_to_talk: Mutex<bool>,
     preferences_path: PathBuf,
     messages: Mutex<Vec<Value>>,
-    sessions: Mutex<HashMap<String, String>>,
     project_starting: Mutex<bool>,
+    history_loaded: Mutex<bool>,
 }
 
 fn initial_run_root() -> PathBuf {
@@ -134,11 +147,28 @@ fn load_preferences(path: &Path) -> Preferences {
     fs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_else(|| Preferences {
-            run_root: initial_run_root(),
-            voice: VoiceSettings::default(),
-            settings: AppSettings::default(),
-        })
+        .unwrap_or_default()
+}
+
+/// The containment check, not `is_symlink()`.
+///
+/// On POSIX this *is* `is_symlink()`, so substituting it never narrows the
+/// guard.  On Windows a junction reports `is_symlink()` false and would be
+/// walked straight through.  Mirrors `sleipnir.platform.is_reparse_point`.
+#[cfg(windows)]
+fn is_reparse_point(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 fn persist_preferences(path: &Path, preferences: &Preferences) -> Result<(), String> {
@@ -169,6 +199,7 @@ fn core_command(
             "transcribe" => "sleipnir.voice.transcription",
             "speak" => "sleipnir.voice.synthesis",
             "project" => "sleipnir.gui_project",
+            "history" => "sleipnir.gui_history",
             _ => "sleipnir.cli",
         };
         command = command.args(["-m", module]);
@@ -266,6 +297,52 @@ async fn core_snapshot(app: &AppHandle, run_root: &Path) -> Result<Value, String
         .map_err(|error| format!("decode local dashboard: {error}"))
 }
 
+async fn encrypted_history(app: &AppHandle, preferences_path: &Path) -> Result<Vec<Value>, String> {
+    let config_dir = preferences_path
+        .parent()
+        .ok_or("invalid desktop config directory")?;
+    let output = run_core(
+        app,
+        "history",
+        vec![
+            "--history".into(),
+            config_dir.join("history.enc.jsonl").into_os_string(),
+            "--history-key".into(),
+            config_dir.join("history.key").into_os_string(),
+        ],
+    )
+    .await?;
+    let result: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode encrypted history: {error}"))?;
+    if !output.success || result["status"] == "error" {
+        return Err(result["text"]
+            .as_str()
+            .unwrap_or("encrypted history could not be opened")
+            .to_owned());
+    }
+    let entries = result["entries"]
+        .as_array()
+        .ok_or("encrypted history returned no entries")?;
+    Ok(entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let role = entry["role"].as_str()?;
+            let text = entry["text"].as_str()?;
+            if !matches!(role, "operator" | "sleipnir" | "tool") {
+                return None;
+            }
+            Some(json!({
+                "id": format!("history-{}", index + 1),
+                "at": entry["at"].as_str().unwrap_or("earlier"),
+                "role": role,
+                "text": text,
+                "route": entry["route"].as_str().unwrap_or("conversation"),
+            }))
+        })
+        .collect())
+}
+
 #[tauri::command]
 async fn load_dashboard(app: AppHandle, state: State<'_, DesktopState>) -> Result<Value, String> {
     let preferences = state
@@ -294,6 +371,23 @@ async fn load_dashboard(app: AppHandle, state: State<'_, DesktopState>) -> Resul
         "gemini": activated(&preferences.settings.provider_env.gemini),
         "nvidia": activated(&preferences.settings.provider_env.nvidia),
     });
+    let should_load_history = {
+        let mut loaded = state
+            .history_loaded
+            .lock()
+            .map_err(|_| "history state lock poisoned")?;
+        let should_load = !*loaded;
+        *loaded = true;
+        should_load
+    };
+    if should_load_history {
+        match encrypted_history(&app, &state.preferences_path).await {
+            Ok(entries) => {
+                *state.messages.lock().map_err(|_| "message lock poisoned")? = entries;
+            }
+            Err(error) => append_message(&app, "sleipnir", error, "history-error"),
+        }
+    }
     snapshot["messages"] = Value::Array(
         state
             .messages
@@ -483,6 +577,31 @@ fn handoff_instruction(app: AppHandle, text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn clear_history(state: State<'_, DesktopState>) -> Result<(), String> {
+    let config_dir = state
+        .preferences_path
+        .parent()
+        .ok_or("invalid desktop config directory")?;
+    let history = config_dir.join("history.enc.jsonl");
+    if is_reparse_point(&history) {
+        return Err("refusing to clear a linked history file".into());
+    }
+    if history.exists() {
+        fs::remove_file(&history).map_err(|error| format!("clear encrypted history: {error}"))?;
+    }
+    state
+        .messages
+        .lock()
+        .map_err(|_| "message lock poisoned")?
+        .clear();
+    *state
+        .history_loaded
+        .lock()
+        .map_err(|_| "history state lock poisoned")? = true;
+    Ok(())
+}
+
+#[tauri::command]
 fn set_app_settings(settings: AppSettings, state: State<'_, DesktopState>) -> Result<(), String> {
     if !matches!(
         settings.color_scheme.as_str(),
@@ -574,13 +693,7 @@ async fn send_message(
             preferences.voice.response_model.clone().into(),
         ]);
     }
-    if let Some(session_id) = state
-        .sessions
-        .lock()
-        .map_err(|_| "session lock poisoned")?
-        .get(&selected)
-        .cloned()
-    {
+    if let Some(session_id) = preferences.sessions.get(&selected).cloned() {
         arguments.extend(["--session-id".into(), session_id.into()]);
     }
     let output = run_core_with_stdin(&app, "agent", arguments, text.as_bytes()).await?;
@@ -593,11 +706,14 @@ async fn send_message(
             .to_owned());
     }
     if let Some(session_id) = result["sessionId"].as_str() {
-        state
-            .sessions
+        let mut persisted = state
+            .preferences
             .lock()
-            .map_err(|_| "session lock poisoned")?
+            .map_err(|_| "settings lock poisoned")?;
+        persisted
+            .sessions
             .insert(selected.clone(), session_id.into());
+        persist_preferences(&state.preferences_path, &persisted)?;
     }
     let mut messages = state.messages.lock().map_err(|_| "message lock poisoned")?;
     let next = messages.len() + 1;
@@ -870,8 +986,8 @@ pub fn run() {
                 push_to_talk: Mutex::new(false),
                 preferences_path,
                 messages: Mutex::new(Vec::new()),
-                sessions: Mutex::new(HashMap::new()),
                 project_starting: Mutex::new(false),
+                history_loaded: Mutex::new(false),
             });
             let _ = app.global_shortcut().register(shortcut.as_str());
             let _ = if start_at_login {
@@ -931,6 +1047,7 @@ pub fn run() {
             transcribe_audio,
             handoff_instruction,
             speak_text,
+            clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Sleipnir desktop");
@@ -946,5 +1063,45 @@ mod tests {
         assert!(encoded.contains("localWake"));
         assert!(!encoded.to_lowercase().contains("api_key"));
         assert!(!encoded.to_lowercase().contains("token"));
+    }
+
+    #[test]
+    fn provider_sessions_survive_a_preferences_round_trip() {
+        let mut preferences = Preferences::default();
+        preferences
+            .sessions
+            .insert("claude".into(), "session-abc".into());
+
+        let encoded = serde_json::to_string(&preferences).unwrap();
+        let decoded: Preferences = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded.sessions.get("claude").map(String::as_str), Some("session-abc"));
+    }
+
+    #[test]
+    fn preferences_written_before_sessions_existed_still_load() {
+        // The field is `#[serde(default)]`; an older file must not fail to parse
+        // and strand the operator's run root and provider settings.
+        let legacy = r#"{"runRoot":"/tmp/legacy"}"#;
+        let decoded: Preferences = serde_json::from_str(legacy).unwrap();
+
+        assert_eq!(decoded.run_root, PathBuf::from("/tmp/legacy"));
+        assert!(decoded.sessions.is_empty());
+    }
+
+    #[test]
+    fn a_session_id_is_not_a_prompt_and_history_content_stays_out() {
+        let mut preferences = Preferences::default();
+        preferences
+            .sessions
+            .insert("codex".into(), "session-xyz".into());
+
+        let encoded = serde_json::to_string(&preferences).unwrap().to_lowercase();
+
+        // Session ids are handles; conversation text must never ride along.
+        assert!(encoded.contains("session-xyz"));
+        assert!(!encoded.contains("history"));
+        assert!(!encoded.contains("message"));
+        assert!(!encoded.contains("transcript"));
     }
 }

@@ -1,4 +1,4 @@
-import { BarChart3, Blocks, FolderGit2, History, KeyRound, ListChecks, MonitorCog, Save, ShieldCheck } from "lucide-react";
+import { BarChart3, Blocks, FolderGit2, History, KeyRound, ListChecks, MonitorCog, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { AppSettings, DashboardSnapshot } from "../domain/types";
@@ -15,9 +15,10 @@ interface SettingsViewProps {
   snapshot: DashboardSnapshot;
   onSave(settings: AppSettings): Promise<void>;
   onSelectProject(path: string): Promise<void>;
+  onClearHistory(): Promise<void>;
 }
 
-export function SettingsView({ snapshot, onSave, onSelectProject }: SettingsViewProps) {
+export function SettingsView({ snapshot, onSave, onSelectProject, onClearHistory }: SettingsViewProps) {
   const [draft, setDraft] = useState(snapshot.settings);
   const [projectPath, setProjectPath] = useState(snapshot.run?.workspace ?? "");
   const [message, setMessage] = useState<string | null>(null);
@@ -40,6 +41,16 @@ export function SettingsView({ snapshot, onSave, onSelectProject }: SettingsView
       setMessage("Project connected.");
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Could not open project");
+    }
+  };
+
+  const clearHistory = async () => {
+    if (!window.confirm("Clear encrypted conversation history on this device? This cannot be undone.")) return;
+    try {
+      await onClearHistory();
+      setMessage("Encrypted conversation history cleared.");
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not clear history");
     }
   };
 
@@ -88,6 +99,10 @@ export function SettingsView({ snapshot, onSave, onSelectProject }: SettingsView
           <section className="surface settings-card telemetry-card compact-settings">
             <BarChart3 size={18} /><span className="section-label">Product improvement</span><p>Reliability, coarse feature use, and anonymized acceptance outcomes only—never prompts, code, paths, recordings, or secrets.</p>
             <label className="telemetry-toggle"><span><strong>Share improvement data</strong><small>On by default; inspect or disable anytime.</small></span><input aria-label="Share improvement data" type="checkbox" checked={draft.telemetryEnabled} onChange={(event) => setDraft((current) => ({ ...current, telemetryEnabled: event.target.checked }))} /></label>
+          </section>
+          <section className="surface settings-card compact-settings history-settings">
+            <div><History size={17} /><span><strong>Encrypted history</strong><small>Conversation content stays on this device.</small></span></div>
+            <button className="button button--quiet" type="button" onClick={clearHistory}><Trash2 size={13} /> Clear history</button>
           </section>
           <button className="primary-action settings-save" type="button" onClick={save}><Save size={14} /> Save desktop settings</button>
           {message && <p className="form-message" role="status">{message}</p>}

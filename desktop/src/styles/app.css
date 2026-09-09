@@ -708,6 +708,14 @@ input:focus-visible {
 .provider-status small { grid-column: 2; color: var(--text-faint); font: inherit; text-transform: none; }
 .provider-status > span[data-active="true"] i { background: var(--signal); box-shadow: 0 0 0 4px color-mix(in oklch, var(--signal) 10%, transparent); }
 .provider-status > span[data-active="true"] small { color: var(--signal); }
+.history-settings { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.history-settings > div { display: flex; align-items: center; gap: 10px; }
+.history-settings > div > svg { flex: none; color: var(--text-faint); }
+.history-settings strong,
+.history-settings small { display: block; }
+.history-settings strong { font-size: 10px; }
+.history-settings small { margin-top: 4px; color: var(--text-faint); font-size: 9px; }
+.history-settings button { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .save-action { margin-top: 15px; color: var(--text); font-size: 10px; }
 .form-message { margin: 10px 0 0; color: var(--signal); font-size: 9px; }
 

@@ -14,6 +14,7 @@ export interface SleipnirBridge {
   transcribeAudio(audio: number[], mimeType: string): Promise<string>;
   handoffInstruction(text: string): Promise<void>;
   speak(text: string): Promise<SpeechAudio | null>;
+  clearHistory(): Promise<void>;
 }
 
 export function isTauriRuntime(): boolean {
