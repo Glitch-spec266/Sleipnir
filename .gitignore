@@ -2,9 +2,13 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+node_modules/
+*.tsbuildinfo
 *.egg-info/
 dist/
 build/
+/desktop/vite.config.js
+/desktop/vite.config.d.ts
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

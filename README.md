@@ -38,9 +38,21 @@ manifest.
 | 18 | Linux-native SwiftPM iOS capability through xtool | complete; live arm64 build verified |
 | 19 | capability audit of every old and new ability | complete |
 | 20 | protected askpass agent, encrypted party, iOS gate, Windows audit | complete on Linux; hardware gates recorded |
+| 21 | production desktop GUI over the existing run-owning core | planned; visual exploration in progress |
+| 22 | same-model intelligence amplification and Cowork demolition gate | required after GUI; benchmark specification written |
 
 Read [`DESIGN.md`](DESIGN.md) for the tradeoffs, the manifest size math, and the
 open decisions.
+
+The post-GUI product objective is not feature parity with a single-agent
+desktop assistant. Sleipnir must use skills, evidence, diverse candidates,
+verification, repair, synthesis, and empirical routing to make the same
+underlying model decisively outperform Claude Cowork across quality, accepted
+cost, credits, speed, efficiency, adaptability, background non-interference,
+and output quality. This is a measured release gate rather than a current
+performance claim. See the
+[`Post-GUI Intelligence Program`](docs/INTELLIGENCE_ROADMAP.md) for the
+comparison controls, initial targets, restrictions, and required architecture.
 
 ## What exists
 

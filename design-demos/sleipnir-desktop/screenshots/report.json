@@ -1,0 +1,67 @@
+{
+  "viewport": "1440x900",
+  "directions": [
+    {
+      "direction": "01-relay",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    },
+    {
+      "direction": "02-atelier",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    },
+    {
+      "direction": "03-vector",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    },
+    {
+      "direction": "04-orbit",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    },
+    {
+      "direction": "05-current",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    },
+    {
+      "direction": "06-index",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    },
+    {
+      "direction": "07-mission",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    },
+    {
+      "direction": "08-glasshouse",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    },
+    {
+      "direction": "09-chronicle",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    },
+    {
+      "direction": "10-helm",
+      "pagesChecked": 6,
+      "selectedTask": "t020 · Sign on physical device",
+      "errors": []
+    }
+  ],
+  "errors": [],
+  "galleryCards": 10
+}
