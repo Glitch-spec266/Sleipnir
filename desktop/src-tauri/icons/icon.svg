@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Sleipnir">
+  <rect width="512" height="512" rx="116" fill="#06110c"/>
+  <g fill="none" stroke="#42e982" stroke-width="28" stroke-linecap="square">
+    <path d="M256 164V72M321 191l65-65M348 256h92M321 321l65 65M256 348v92M191 321l-65 65M164 256H72M191 191l-65-65"/>
+  </g>
+  <circle cx="256" cy="256" r="76" fill="#06110c" stroke="#edfff4" stroke-width="28"/>
+</svg>

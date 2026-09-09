@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { SleipnirBridge } from ".";
-import type { DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
+import type { AppSettings, DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
 
 export function createTauriBridge(): SleipnirBridge {
   return {
@@ -13,5 +13,7 @@ export function createTauriBridge(): SleipnirBridge {
     setVoiceSettings: (settings: VoiceSettings) =>
       invoke<void>("set_voice_settings", { settings }),
     setListening: (enabled: boolean) => invoke<void>("set_listening", { enabled }),
+    setAppSettings: (settings: AppSettings) => invoke<void>("set_app_settings", { settings }),
+    selectRunRoot: (path: string) => invoke<void>("select_run_root", { path }),
   };
 }

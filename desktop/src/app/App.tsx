@@ -9,7 +9,7 @@ import { Brand } from "../components/Brand";
 import { AdvancedRail } from "../components/AdvancedRail";
 import { OrbitDock, type ViewId } from "../components/OrbitDock";
 import { StatusCluster } from "../components/StatusCluster";
-import type { ReviewDecision } from "../domain/types";
+import type { ColorScheme, ReviewDecision } from "../domain/types";
 import "../styles/app.css";
 import { CommandView } from "../views/CommandView";
 import { ChronicleView } from "../views/ChronicleView";
@@ -21,8 +21,6 @@ import { SettingsView } from "../views/SettingsView";
 import { TrustView } from "../views/TrustView";
 import { VoiceView } from "../views/VoiceView";
 import { useSleipnir } from "./useSleipnir";
-
-export type ColorScheme = "orbit" | "index" | "glasshouse";
 
 const runtimeBridge = isTauriRuntime() ? createTauriBridge() : createDemoBridge();
 
@@ -37,6 +35,10 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
       setActiveView("home");
     }
   }, [activeView, advanced]);
+
+  useEffect(() => {
+    if (snapshot) setScheme(snapshot.settings.colorScheme);
+  }, [snapshot]);
 
   const main = useMemo(() => {
     if (error) {
@@ -55,7 +57,11 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
     if (activeView === "chronicle") return <ChronicleView snapshot={snapshot} />;
     if (activeView === "routing") return <RoutingView snapshot={snapshot} />;
     if (activeView === "trust") return <TrustView snapshot={snapshot} />;
-    if (activeView === "settings") return <SettingsView />;
+    if (activeView === "settings") return <SettingsView
+      snapshot={snapshot}
+      onSave={(settings) => runAndRefresh(() => bridge.setAppSettings(settings))}
+      onSelectProject={(path) => runAndRefresh(() => bridge.selectRunRoot(path))}
+    />;
     if (activeView === "voice") {
       return <VoiceView
         snapshot={snapshot}
@@ -89,19 +95,23 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
         </div>
       </header>
 
-      <main className={`workspace ${advanced ? "workspace--advanced" : ""}`}>
-        {advanced && snapshot && <AdvancedRail snapshot={snapshot} />}
+      <main className={`workspace ${advanced ? "workspace--advanced" : ""} ${advanced && snapshot && !snapshot.settings.advancedModules.mission && !snapshot.settings.advancedModules.helm ? "workspace--no-rail" : ""}`}>
+        {advanced && snapshot && (snapshot.settings.advancedModules.mission || snapshot.settings.advancedModules.helm) && <AdvancedRail snapshot={snapshot} />}
         <div className="workspace__stage">{main}</div>
       </main>
 
       <footer className="app-footer">
         <div className="dock-cluster">
-          <OrbitDock active={activeView} advanced={advanced} onNavigate={setActiveView} />
+          <OrbitDock active={activeView} advanced={advanced} modules={snapshot?.settings.advancedModules} onNavigate={setActiveView} />
           <select
             className="scheme-select"
             aria-label="Color scheme"
             value={scheme}
-            onChange={(event) => setScheme(event.target.value as ColorScheme)}
+            onChange={(event) => {
+              const next = event.target.value as ColorScheme;
+              setScheme(next);
+              if (snapshot) void runAndRefresh(() => bridge.setAppSettings({ ...snapshot.settings, colorScheme: next }));
+            }}
           >
             <option value="orbit">Orbit</option>
             <option value="index">Index</option>

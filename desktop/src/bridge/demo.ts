@@ -1,5 +1,5 @@
 import type { SleipnirBridge } from ".";
-import type { DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
+import type { AppSettings, DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
 import { createDemoSnapshot } from "../fixtures/run";
 
 export function createDemoBridge(): SleipnirBridge {
@@ -61,6 +61,13 @@ export function createDemoBridge(): SleipnirBridge {
         heard: "",
         privacyLabel: enabled ? "Wake phrase stays on this device" : "Microphone is off",
       };
+    },
+    async setAppSettings(settings: AppSettings) {
+      snapshot.settings = structuredClone(settings);
+    },
+    async selectRunRoot(path: string) {
+      if (!path.trim()) throw new Error("Project run directory is required");
+      if (snapshot.run) snapshot.run = { ...snapshot.run, workspace: path.trim() };
     },
   };
 }

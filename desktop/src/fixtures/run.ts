@@ -207,5 +207,23 @@ export function createDemoSnapshot(): DashboardSnapshot {
         interruptible: true,
       },
     },
+    settings: {
+      colorScheme: "orbit",
+      adaptiveScheme: true,
+      advancedModules: {
+        mission: true,
+        chronicle: true,
+        helm: true,
+        tools: true,
+        audit: true,
+      },
+      telemetryEnabled: true,
+      permissionMode: "ask",
+      providerEnv: {
+        openrouter: "OPENROUTER_API_KEY",
+        gemini: "GEMINI_API_KEY",
+        nvidia: "NVIDIA_API_KEY",
+      },
+    },
   };
 }

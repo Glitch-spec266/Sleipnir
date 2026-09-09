@@ -9,6 +9,7 @@ import {
   Settings,
   ShieldCheck,
 } from "lucide-react";
+import type { AppSettings } from "../domain/types";
 
 export type ViewId =
   | "home"
@@ -28,22 +29,24 @@ const simpleItems: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
   { id: "voice", label: "Voice", icon: AudioLines },
 ];
 
-const advancedItems: Array<{ id: ViewId; label: string; icon: typeof Home }> = [
-  { id: "console", label: "Console", icon: MessagesSquare },
-  { id: "chronicle", label: "Chronicle", icon: History },
-  { id: "routing", label: "Routing", icon: Route },
-  { id: "trust", label: "Trust", icon: ShieldCheck },
+const advancedItems: Array<{ id: ViewId; label: string; icon: typeof Home; module?: keyof AppSettings["advancedModules"] }> = [
+  { id: "console", label: "Console", icon: MessagesSquare, module: "tools" },
+  { id: "chronicle", label: "Chronicle", icon: History, module: "chronicle" },
+  { id: "routing", label: "Routing", icon: Route, module: "helm" },
+  { id: "trust", label: "Trust", icon: ShieldCheck, module: "audit" },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
 interface OrbitDockProps {
   active: ViewId;
   advanced: boolean;
+  modules?: AppSettings["advancedModules"];
   onNavigate: (view: ViewId) => void;
 }
 
-export function OrbitDock({ active, advanced, onNavigate }: OrbitDockProps) {
-  const items = advanced ? [...simpleItems, ...advancedItems] : simpleItems;
+export function OrbitDock({ active, advanced, modules, onNavigate }: OrbitDockProps) {
+  const visibleAdvanced = advancedItems.filter((item) => !item.module || modules?.[item.module] !== false);
+  const items = advanced ? [...simpleItems, ...visibleAdvanced] : simpleItems;
 
   return (
     <nav className="dock" aria-label="Workspace">

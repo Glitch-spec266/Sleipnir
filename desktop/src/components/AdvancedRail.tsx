@@ -9,7 +9,7 @@ export function AdvancedRail({ snapshot }: { snapshot: DashboardSnapshot }) {
 
   return (
     <aside className="advanced-rail" aria-label="Advanced run context">
-      <section>
+      {snapshot.settings.advancedModules.mission && <section>
         <div className="rail-section-head"><span><ListChecks size={14} />Mission queue</span><code>{activeTasks.length}</code></div>
         <div className="mission-list">
           {activeTasks.map((task) => (
@@ -20,13 +20,13 @@ export function AdvancedRail({ snapshot }: { snapshot: DashboardSnapshot }) {
             </div>
           ))}
         </div>
-      </section>
-      <section className="rail-signals">
+      </section>}
+      {snapshot.settings.advancedModules.helm && <section className="rail-signals">
         <div className="rail-section-head"><span><Activity size={14} />Helm signals</span><code>nominal</code></div>
         <div className="signal-row"><span><CircleDollarSign size={13} />Window</span><code>{window?.used ?? 0}{window?.unit}</code></div>
         <div className="signal-row"><span><ShieldCheck size={13} />Audit</span><code>armed</code></div>
         <div className="signal-row"><span>Route</span><code>{selectedRoute?.provider ?? "idle"}</code></div>
-      </section>
+      </section>}
     </aside>
   );
 }

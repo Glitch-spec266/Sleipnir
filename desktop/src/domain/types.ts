@@ -13,6 +13,7 @@ export type TaskState =
   | "cancelled";
 
 export type Tier = "mechanical" | "code" | "extract" | "longctx" | "reason" | "control";
+export type ColorScheme = "orbit" | "index" | "glasshouse";
 export type VoicePhase =
   | "off"
   | "armed"
@@ -152,6 +153,19 @@ export interface VoiceStatus {
   settings: VoiceSettings;
 }
 
+export interface AppSettings {
+  colorScheme: ColorScheme;
+  adaptiveScheme: boolean;
+  advancedModules: Record<"mission" | "chronicle" | "helm" | "tools" | "audit", boolean>;
+  telemetryEnabled: boolean;
+  permissionMode: "ask" | "always";
+  providerEnv: {
+    openrouter: string;
+    gemini: string;
+    nvidia: string;
+  };
+}
+
 export interface DashboardSnapshot {
   source: "demo" | "core";
   generatedAt: string;
@@ -166,6 +180,7 @@ export interface DashboardSnapshot {
   audit: AuditEvent[];
   messages: ConversationMessage[];
   voice: VoiceStatus;
+  settings: AppSettings;
 }
 
 export type ReviewDecision = "approve" | "request_changes" | "reject";

@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/sleipnir-core"],
     "category": "DeveloperTool",
     "shortDescription": "Desktop control surface for Sleipnir",
     "longDescription": "A local-first operator workbench for autonomous multi-model projects.",

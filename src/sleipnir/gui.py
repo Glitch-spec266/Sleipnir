@@ -288,6 +288,14 @@ def build_dashboard_snapshot(
                 "interruptible": True,
             },
         },
+        "settings": {
+            "colorScheme": "orbit",
+            "adaptiveScheme": True,
+            "advancedModules": {"mission": True, "chronicle": True, "helm": True, "tools": True, "audit": True},
+            "telemetryEnabled": True,
+            "permissionMode": "ask",
+            "providerEnv": {"openrouter": "OPENROUTER_API_KEY", "gemini": "GEMINI_API_KEY", "nvidia": "NVIDIA_API_KEY"},
+        },
     }
 
 

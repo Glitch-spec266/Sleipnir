@@ -9,6 +9,8 @@ import json
 import httpx
 from sleipnir.voice.config import VoiceConfig
 from sleipnir.voice.providers import GeminiSpeech, OpenRouterSpeech, system_tts_command
+from sleipnir.chat import ChatEvent
+from sleipnir.voice.relay import AmbientRelay, WorkRelay
 from sleipnir.voice.routing import RouteMode, choose_ambient_provider, route_utterance
 from sleipnir.voice.runtime import VoiceRuntime
 
@@ -86,3 +88,47 @@ def test_system_speech_commands_never_use_a_shell():
     windows = system_tts_command("windows", "Hello", preset="system-natural", executable="powershell")
     assert windows[0] == "powershell"
     assert "Hello" not in windows[-1]
+
+
+def test_ambient_relay_supports_gemini_openrouter_and_nvidia_without_key_payloads():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if "generativelanguage" in str(request.url):
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "Gemini reply"}]}}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "OpenAI-shaped reply"}}]})
+
+    relay = AmbientRelay(transport=httpx.MockTransport(handler))
+    gemini = asyncio.run(relay.respond("Status?", provider="gemini", api_key="g-secret"))
+    openrouter = asyncio.run(relay.respond("Status?", provider="openrouter", api_key="o-secret"))
+    nvidia = asyncio.run(relay.respond("Status?", provider="nvidia-nim", api_key="n-secret"))
+
+    assert [gemini.text, openrouter.text, nvidia.text] == ["Gemini reply", "OpenAI-shaped reply", "OpenAI-shaped reply"]
+    for request in requests:
+        assert not any(secret.encode() in request.content for secret in ("g-secret", "o-secret", "n-secret"))
+
+
+def test_work_relay_maps_operator_policy_and_reuses_provider_session(tmp_path):
+    built = []
+
+    class Transport:
+        async def turn(self, prompt):
+            yield ChatEvent(kind="final", text=f"completed: {prompt}")
+
+        async def close(self):
+            return None
+
+    def factory(session, **kwargs):
+        built.append((session, kwargs))
+        return Transport()
+
+    relay = WorkRelay(transport_factory=factory)
+    first = asyncio.run(relay.send("build it", provider="codex", workspace=tmp_path, permission_mode="ask"))
+    second = asyncio.run(relay.send("test it", provider="codex", workspace=tmp_path, permission_mode="ask"))
+
+    assert first.text == "completed: build it"
+    assert second.session_id == first.session_id
+    assert len(built) == 1
+    assert built[0][1]["permission_mode"] == "acceptEdits"
+    assert built[0][1]["add_dirs"] == (tmp_path.resolve(),)

@@ -476,7 +476,7 @@ input:focus-visible {
 .secret-note svg { flex: none; color: var(--signal); }
 .secret-note p { margin: 0; font-size: 10px; line-height: 1.5; }
 
-.settings-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr); gap: 14px; }
+.settings-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr); align-items: start; gap: 14px; }
 .settings-card { padding: 20px; }
 .settings-list { display: grid; margin-top: 13px; }
 .settings-list > label { display: grid; grid-template-columns: auto 1fr auto; gap: 11px; align-items: center; min-height: 62px; border-bottom: 1px solid var(--line); cursor: pointer; }
@@ -495,6 +495,27 @@ input:focus-visible {
 .telemetry-toggle small { display: block; }
 .telemetry-toggle strong { font-size: 11px; }
 .telemetry-toggle small { margin-top: 4px; color: var(--text-faint); font-size: 9px; }
+.settings-stack { display: grid; gap: 10px; align-content: start; }
+.compact-settings { padding: 16px; }
+.compact-settings .surface__head svg { color: var(--signal); }
+.field-label,
+.provider-env-grid label { display: grid; gap: 6px; margin-top: 13px; color: var(--text-soft); font-size: 9px; }
+.field-label input,
+.field-label select,
+.provider-env-grid input { width: 100%; min-height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-solid); color: var(--text); }
+.inline-toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
+.inline-toggle strong,
+.inline-toggle small { display: block; }
+.inline-toggle strong { font-size: 10px; }
+.inline-toggle small { margin-top: 3px; color: var(--text-faint); font-size: 8px; }
+.inline-toggle input { accent-color: var(--signal); }
+.provider-env-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 9px; }
+.provider-env-grid label:last-child { grid-column: 1 / -1; }
+.settings-note { margin: 10px 0 0; color: var(--text-faint); font-size: 8px; line-height: 1.45; }
+.compact-settings.telemetry-card > svg { margin: 0 0 10px; }
+.compact-settings.telemetry-card > p { margin: 9px 0 0; }
+.compact-settings .telemetry-toggle { margin-top: 12px; padding-top: 11px; }
+.settings-save { justify-self: start; }
 
 @media (max-width: 1040px) {
   .workspace--advanced { grid-template-columns: 1fr; }
@@ -668,6 +689,7 @@ input:focus-visible {
 .workspace.workspace--advanced {
   display: grid;
 }
+.workspace.workspace--advanced.workspace--no-rail { grid-template-columns: minmax(0, 1fr); }
 
 .view {
   width: min(100%, 1080px);

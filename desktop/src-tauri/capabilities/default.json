@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Core desktop window permissions",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "shell:allow-execute", "shell:allow-stdin-write", "shell:allow-kill"]
 }

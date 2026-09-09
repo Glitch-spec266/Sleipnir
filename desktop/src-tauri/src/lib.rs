@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri_plugin_shell::ShellExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +24,57 @@ struct VoiceSettings {
     voice_id: String,
     accent: String,
     interruptible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AdvancedModules {
+    mission: bool,
+    chronicle: bool,
+    helm: bool,
+    tools: bool,
+    audit: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProviderEnvironment {
+    openrouter: String,
+    gemini: String,
+    nvidia: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSettings {
+    color_scheme: String,
+    adaptive_scheme: bool,
+    advanced_modules: AdvancedModules,
+    telemetry_enabled: bool,
+    permission_mode: String,
+    provider_env: ProviderEnvironment,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            color_scheme: "orbit".into(),
+            adaptive_scheme: true,
+            advanced_modules: AdvancedModules {
+                mission: true,
+                chronicle: true,
+                helm: true,
+                tools: true,
+                audit: true,
+            },
+            telemetry_enabled: true,
+            permission_mode: "ask".into(),
+            provider_env: ProviderEnvironment {
+                openrouter: "OPENROUTER_API_KEY".into(),
+                gemini: "GEMINI_API_KEY".into(),
+                nvidia: "NVIDIA_API_KEY".into(),
+            },
+        }
+    }
 }
 
 impl Default for VoiceSettings {
@@ -48,6 +100,7 @@ impl Default for VoiceSettings {
 struct Preferences {
     run_root: PathBuf,
     voice: VoiceSettings,
+    settings: AppSettings,
 }
 
 struct DesktopState {
@@ -70,6 +123,7 @@ fn load_preferences(path: &Path) -> Preferences {
         .unwrap_or_else(|| Preferences {
             run_root: initial_run_root(),
             voice: VoiceSettings::default(),
+            settings: AppSettings::default(),
         })
 }
 
@@ -88,12 +142,46 @@ fn python_executable() -> String {
     env::var("SLEIPNIR_PYTHON").unwrap_or_else(|_| "python3".into())
 }
 
-fn core_snapshot(run_root: &Path) -> Result<Value, String> {
-    let output = Command::new(python_executable())
-        .args(["-m", "sleipnir.gui", "snapshot", "--run-root"])
-        .arg(run_root)
+async fn run_core(
+    app: &AppHandle,
+    gui_command: bool,
+    arguments: Vec<OsString>,
+) -> Result<tauri_plugin_shell::process::Output, String> {
+    let command = if cfg!(debug_assertions) || env::var_os("SLEIPNIR_PYTHON").is_some() {
+        let mut command = app.shell().command(python_executable());
+        if gui_command {
+            command = command.args(["-m", "sleipnir.gui"]);
+        } else {
+            command = command.args(["-m", "sleipnir.cli"]);
+        }
+        command.args(arguments)
+    } else {
+        let mut command = app
+            .shell()
+            .sidecar("sleipnir-core")
+            .map_err(|error| format!("resolve bundled Sleipnir core: {error}"))?;
+        if gui_command {
+            command = command.arg("gui");
+        }
+        command.args(arguments)
+    };
+    command
         .output()
-        .map_err(|error| format!("start local Sleipnir core: {error}"))?;
+        .await
+        .map_err(|error| format!("start local Sleipnir core: {error}"))
+}
+
+async fn core_snapshot(app: &AppHandle, run_root: &Path) -> Result<Value, String> {
+    let output = run_core(
+        app,
+        true,
+        vec![
+            "snapshot".into(),
+            "--run-root".into(),
+            run_root.as_os_str().to_owned(),
+        ],
+    )
+    .await?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
@@ -107,14 +195,14 @@ fn core_snapshot(run_root: &Path) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn load_dashboard(state: State<'_, DesktopState>) -> Result<Value, String> {
+async fn load_dashboard(app: AppHandle, state: State<'_, DesktopState>) -> Result<Value, String> {
     let preferences = state
         .preferences
         .lock()
         .map_err(|_| "settings lock poisoned")?
         .clone();
     let listening = *state.listening.lock().map_err(|_| "voice lock poisoned")?;
-    let mut snapshot = core_snapshot(&preferences.run_root)?;
+    let mut snapshot = core_snapshot(&app, &preferences.run_root).await?;
     snapshot["voice"] = json!({
         "phase": if listening { "armed" } else { "off" },
         "heard": "",
@@ -122,6 +210,8 @@ fn load_dashboard(state: State<'_, DesktopState>) -> Result<Value, String> {
         "privacyLabel": if listening { "Wake phrase stays on this device" } else { "Microphone is off" },
         "settings": preferences.voice,
     });
+    snapshot["settings"] = serde_json::to_value(preferences.settings)
+        .map_err(|error| format!("encode desktop settings: {error}"))?;
     Ok(snapshot)
 }
 
@@ -168,6 +258,45 @@ fn set_listening(enabled: bool, state: State<'_, DesktopState>) -> Result<(), St
 }
 
 #[tauri::command]
+fn set_app_settings(settings: AppSettings, state: State<'_, DesktopState>) -> Result<(), String> {
+    if !matches!(
+        settings.color_scheme.as_str(),
+        "orbit" | "index" | "glasshouse"
+    ) {
+        return Err("unknown color scheme".into());
+    }
+    if !matches!(settings.permission_mode.as_str(), "ask" | "always") {
+        return Err("unknown permission mode".into());
+    }
+    let variable_is_valid = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 100
+            && name.chars().all(|character| {
+                character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+            })
+    };
+    if ![
+        &settings.provider_env.openrouter,
+        &settings.provider_env.gemini,
+        &settings.provider_env.nvidia,
+    ]
+    .into_iter()
+    .all(|name| variable_is_valid(name))
+    {
+        return Err(
+            "provider key variable names must use uppercase letters, digits, and underscores"
+                .into(),
+        );
+    }
+    let mut preferences = state
+        .preferences
+        .lock()
+        .map_err(|_| "settings lock poisoned")?;
+    preferences.settings = settings;
+    persist_preferences(&state.preferences_path, &preferences)
+}
+
+#[tauri::command]
 fn send_message(text: String) -> Result<(), String> {
     if text.trim().is_empty() {
         return Ok(());
@@ -184,7 +313,8 @@ fn start_project(goal: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn review_item(
+async fn review_item(
+    app: AppHandle,
     item_id: String,
     decision: String,
     state: State<'_, DesktopState>,
@@ -207,13 +337,17 @@ fn review_item(
     }
     match decision.as_str() {
         "approve" => {
-            let output = Command::new("sleipnir")
-                .args(["--run-root"])
-                .arg(&root)
-                .arg("apply-revision")
-                .arg(&proposal)
-                .output()
-                .map_err(|error| format!("start revision review: {error}"))?;
+            let output = run_core(
+                &app,
+                false,
+                vec![
+                    "--run-root".into(),
+                    root.as_os_str().to_owned(),
+                    "apply-revision".into(),
+                    proposal.as_os_str().to_owned(),
+                ],
+            )
+            .await?;
             if output.status.success() {
                 Ok(())
             } else {
@@ -240,6 +374,7 @@ fn show_main(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let preferences_path = config_dir.join("preferences.json");
@@ -290,6 +425,7 @@ pub fn run() {
             review_item,
             set_voice_settings,
             set_listening,
+            set_app_settings,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Sleipnir desktop");

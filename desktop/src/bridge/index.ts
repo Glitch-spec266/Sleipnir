@@ -1,4 +1,4 @@
-import type { DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
+import type { AppSettings, DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
 
 export interface SleipnirBridge {
   loadDashboard(): Promise<DashboardSnapshot>;
@@ -7,6 +7,8 @@ export interface SleipnirBridge {
   review(itemId: string, decision: ReviewDecision): Promise<void>;
   setVoiceSettings(settings: VoiceSettings): Promise<void>;
   setListening(enabled: boolean): Promise<void>;
+  setAppSettings(settings: AppSettings): Promise<void>;
+  selectRunRoot(path: string): Promise<void>;
 }
 
 export function isTauriRuntime(): boolean {

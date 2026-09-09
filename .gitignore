@@ -12,6 +12,11 @@ build/
 /desktop/test-results/
 /desktop/playwright-report/
 /desktop/src-tauri/target/
+/desktop/src-tauri/icons/android/
+/desktop/src-tauri/icons/ios/
+/desktop/src-tauri/binaries/*
+!/desktop/src-tauri/binaries/.gitkeep
+/desktop/sidecar-build/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
