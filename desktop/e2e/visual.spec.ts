@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 test("voice workspace is operable in every color scheme", async ({ page }) => {
   const errors: string[] = [];
@@ -40,4 +41,15 @@ test("voice orb stays compact and opens the workbench", async ({ page }) => {
     width: document.documentElement.scrollWidth,
     height: document.documentElement.scrollHeight,
   }))).toEqual({ width: 208, height: 208 });
+});
+
+test("simple and advanced workspaces have no detectable accessibility violations", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByText("Local core connected")).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  await page.getByRole("button", { name: "Advanced mode" }).click();
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("heading", { name: "Advanced is yours to tune." })).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

@@ -296,6 +296,7 @@ def build_dashboard_snapshot(
             "permissionMode": "ask",
             "providerEnv": {"openrouter": "OPENROUTER_API_KEY", "gemini": "GEMINI_API_KEY", "nvidia": "NVIDIA_API_KEY"},
         },
+        "providers": {"openrouter": False, "gemini": False, "nvidia": False},
     }
 
 
@@ -303,7 +304,66 @@ def load_dashboard(run_root: Path, *, now: datetime | None = None) -> dict[str, 
     run_root = run_root.resolve()
     plan_path = run_root / "plan.json"
     if not plan_path.is_file():
-        raise FileNotFoundError(f"no Sleipnir plan at {plan_path}")
+        stamp = now or datetime.now(UTC)
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        return {
+            "source": "core",
+            "generatedAt": _iso(stamp),
+            "runtime": {
+                "connected": True,
+                "label": "Local core connected",
+                "version": _package_version(),
+                "platform": f"{host_platform.system()} · {host_platform.machine()}",
+            },
+            "run": None,
+            "tasks": [],
+            "routes": [],
+            "budgets": [],
+            "timeline": [],
+            "reviews": [],
+            "capabilities": _capabilities(),
+            "audit": [],
+            "messages": [],
+            "voice": {
+                "phase": "off",
+                "heard": "",
+                "level": 0,
+                "privacyLabel": "Microphone is off",
+                "settings": {
+                    "wakeName": "Sleipnir",
+                    "localWake": True,
+                    "startAtLogin": False,
+                    "pushToTalkShortcut": "CommandOrControl+Shift+Space",
+                    "transcription": "local",
+                    "responseModel": "auto",
+                    "escalation": "automatic",
+                    "voiceProvider": "system",
+                    "voiceId": "system-natural",
+                    "accent": "neutral",
+                    "interruptible": True,
+                },
+            },
+            "settings": {
+                "colorScheme": "orbit",
+                "adaptiveScheme": True,
+                "advancedModules": {
+                    "mission": True,
+                    "chronicle": True,
+                    "helm": True,
+                    "tools": True,
+                    "audit": True,
+                },
+                "telemetryEnabled": True,
+                "permissionMode": "ask",
+                "providerEnv": {
+                    "openrouter": "OPENROUTER_API_KEY",
+                    "gemini": "GEMINI_API_KEY",
+                    "nvidia": "NVIDIA_API_KEY",
+                },
+            },
+            "providers": {"openrouter": False, "gemini": False, "nvidia": False},
+        }
     plan = Plan.model_validate_json(plan_path.read_text(encoding="utf-8"))
     records = ResultLog(run_root / "results.jsonl").read()
     staled_at = read_staleness(run_root / "revisions.jsonl")

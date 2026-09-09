@@ -14,7 +14,7 @@ never re-enters the orchestrator's context.** The plan lives on disk. The
 orchestrator is re-invoked fresh each cycle with only a compact, size-bounded
 manifest.
 
-## Status: Phases 1–20 implemented
+## Status: Phases 1–20 implemented; desktop alpha active
 
 | Phase | Scope | State |
 |---|---|---|
@@ -38,7 +38,7 @@ manifest.
 | 18 | Linux-native SwiftPM iOS capability through xtool | complete; live arm64 build verified |
 | 19 | capability audit of every old and new ability | complete |
 | 20 | protected askpass agent, encrypted party, iOS gate, Windows audit | complete on Linux; hardware gates recorded |
-| 21 | production desktop GUI over the existing run-owning core | planned; visual exploration in progress |
+| 21 | production desktop GUI over the existing run-owning core | active on `gui`; native alpha packages on all three platforms |
 | 22 | same-model intelligence amplification and Cowork demolition gate | required after GUI; benchmark specification written |
 
 Read [`DESIGN.md`](DESIGN.md) for the tradeoffs, the manifest size math, and the
@@ -52,7 +52,8 @@ cost, credits, speed, efficiency, adaptability, background non-interference,
 and output quality. This is a measured release gate rather than a current
 performance claim. See the
 [`Post-GUI Intelligence Program`](docs/INTELLIGENCE_ROADMAP.md) for the
-comparison controls, initial targets, restrictions, and required architecture.
+comparison controls, initial targets, restrictions, and required architecture
+in [the tracked design](DESIGN.md#phase-22--intelligence-amplification-and-design-competency).
 
 ## What exists
 
@@ -93,7 +94,11 @@ src/sleipnir/capabilities/computer/
                              desktop control: ydotool on Linux, Quartz on
                              macOS, SendInput and GDI on Windows, audited
                              in one place
-tests/                       676 passing tests, including the executable form of the
+src/sleipnir/gui.py          artifact-safe desktop dashboard projection
+src/sleipnir/gui_agent.py    desktop ambient/Codex/Claude routing boundary
+src/sleipnir/voice/          wake, transcription, speech, and relay adapters
+desktop/                     React/Vite renderer and Tauri 2 native host
+tests/                       697 passing tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -120,6 +125,21 @@ growth.
 
 Python 3.12+. Runtime dependencies: `pydantic`, `httpx`, and `cryptography`.
 No agent frameworks.
+
+The desktop client lives in `desktop/`. Its renderer can be exercised without
+native prerequisites:
+
+```sh
+cd desktop
+npm ci
+npm test -- --run
+npm run test:e2e
+```
+
+`npm run tauri dev` additionally needs the platform Tauri prerequisites. On
+Linux that includes WebKitGTK 4.1. Release CI builds unsigned AppImage, DEB,
+RPM, MSI/NSIS, DMG and app-bundle artifacts; production signing and updater
+keys are intentionally not claimed until release credentials exist.
 
 ## Install
 

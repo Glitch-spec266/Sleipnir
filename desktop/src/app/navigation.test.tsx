@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createDemoBridge } from "../bridge/demo";
 import { App } from "./App";
@@ -45,5 +45,22 @@ describe("simple-mode navigation", () => {
         text: "Map this repository and continue the application",
       });
     });
+  });
+
+  it("creates the first project when the selected workspace has no plan", async () => {
+    const bridge = createDemoBridge();
+    const loadDashboard = bridge.loadDashboard;
+    const startProject = vi.fn(async () => {});
+    bridge.loadDashboard = async () => ({ ...(await loadDashboard()), run: null, tasks: [], routes: [] });
+    bridge.startProject = startProject;
+    render(<App bridge={bridge} />);
+    await screen.findByRole("heading", { name: "Good evening." });
+
+    fireEvent.change(screen.getByLabelText("New instruction"), {
+      target: { value: "Build a private project dashboard" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    await waitFor(() => expect(startProject).toHaveBeenCalledWith("Build a private project dashboard"));
   });
 });

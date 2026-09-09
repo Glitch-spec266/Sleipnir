@@ -20,6 +20,14 @@ export function useSleipnir(bridge: SleipnirBridge) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!snapshot?.run || !["planning", "running"].includes(snapshot.run.state)) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 2_500);
+    return () => window.clearInterval(timer);
+  }, [refresh, snapshot?.run]);
+
   const runAndRefresh = useCallback(
     async <T,>(operation: () => Promise<T>) => {
       const result = await operation();

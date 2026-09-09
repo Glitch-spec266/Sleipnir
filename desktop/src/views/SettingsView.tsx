@@ -74,6 +74,14 @@ export function SettingsView({ snapshot, onSave, onSelectProject }: SettingsView
               <label><span>Gemini key variable</span><input aria-label="Gemini key variable" value={draft.providerEnv.gemini} onChange={(event) => setDraft((current) => ({ ...current, providerEnv: { ...current.providerEnv, gemini: event.target.value } }))} /></label>
               <label><span>NVIDIA NIM key variable</span><input aria-label="NVIDIA NIM key variable" value={draft.providerEnv.nvidia} onChange={(event) => setDraft((current) => ({ ...current, providerEnv: { ...current.providerEnv, nvidia: event.target.value } }))} /></label>
             </div>
+            <div className="provider-status" aria-label="Provider activation status">
+              {(["openrouter", "gemini", "nvidia"] as const).map((provider) => (
+                <span key={provider} data-active={snapshot.providers[provider]}>
+                  <i />{provider === "nvidia" ? "NVIDIA NIM" : provider}
+                  <small>{snapshot.providers[provider] ? "active" : "not found"}</small>
+                </span>
+              ))}
+            </div>
             <p className="settings-note">Names only. Secret values stay in your environment or official provider CLI.</p>
           </section>
 

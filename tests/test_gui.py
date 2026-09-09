@@ -121,3 +121,12 @@ def test_load_dashboard_reads_plan_and_append_only_log(tmp_path):
     assert snapshot["tasks"][0]["state"] == "running"
     assert snapshot["routes"][0]["status"] == "selected"
     assert snapshot["timeline"][0]["kind"] == "dispatch_started"
+
+
+def test_load_dashboard_supports_a_workspace_before_its_first_plan(tmp_path):
+    snapshot = load_dashboard(tmp_path, now=NOW)
+
+    assert snapshot["source"] == "core"
+    assert snapshot["run"] is None
+    assert snapshot["tasks"] == []
+    assert snapshot["runtime"]["connected"] is True

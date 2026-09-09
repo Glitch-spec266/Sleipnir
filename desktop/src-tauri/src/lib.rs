@@ -120,6 +120,7 @@ struct DesktopState {
     preferences_path: PathBuf,
     messages: Mutex<Vec<Value>>,
     sessions: Mutex<HashMap<String, String>>,
+    project_starting: Mutex<bool>,
 }
 
 fn initial_run_root() -> PathBuf {
@@ -167,6 +168,7 @@ fn core_command(
             "agent" => "sleipnir.gui_agent",
             "transcribe" => "sleipnir.voice.transcription",
             "speak" => "sleipnir.voice.synthesis",
+            "project" => "sleipnir.gui_project",
             _ => "sleipnir.cli",
         };
         command = command.args(["-m", module]);
@@ -284,8 +286,14 @@ async fn load_dashboard(app: AppHandle, state: State<'_, DesktopState>) -> Resul
         "privacyLabel": if listening { "Wake phrase stays on this device" } else { "Microphone is off" },
         "settings": preferences.voice,
     });
-    snapshot["settings"] = serde_json::to_value(preferences.settings)
+    snapshot["settings"] = serde_json::to_value(&preferences.settings)
         .map_err(|error| format!("encode desktop settings: {error}"))?;
+    let activated = |name: &str| env::var_os(name).is_some_and(|value| !value.is_empty());
+    snapshot["providers"] = json!({
+        "openrouter": activated(&preferences.settings.provider_env.openrouter),
+        "gemini": activated(&preferences.settings.provider_env.gemini),
+        "nvidia": activated(&preferences.settings.provider_env.nvidia),
+    });
     snapshot["messages"] = Value::Array(
         state
             .messages
@@ -301,11 +309,8 @@ fn select_run_root(path: String, state: State<'_, DesktopState>) -> Result<(), S
     let candidate = PathBuf::from(path)
         .canonicalize()
         .map_err(|error| format!("open project: {error}"))?;
-    if !candidate.join("plan.json").is_file() {
-        return Err(format!(
-            "{} does not contain plan.json",
-            candidate.display()
-        ));
+    if !candidate.is_dir() {
+        return Err(format!("{} is not a directory", candidate.display()));
     }
     let mut preferences = state
         .preferences
@@ -601,12 +606,153 @@ async fn send_message(
     Ok(result)
 }
 
+fn append_message(app: &AppHandle, role: &str, text: String, route: &str) {
+    if let Some(state) = app.try_state::<DesktopState>() {
+        if let Ok(mut messages) = state.messages.lock() {
+            let next = messages.len() + 1;
+            messages.push(json!({
+                "id": format!("native-{next}"),
+                "at": "now",
+                "role": role,
+                "text": text,
+                "route": route,
+            }));
+        }
+    }
+}
+
 #[tauri::command]
-fn start_project(goal: String) -> Result<(), String> {
-    if goal.trim().is_empty() {
+fn start_project(
+    app: AppHandle,
+    goal: String,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    let clean = goal.trim().to_owned();
+    if clean.is_empty() {
         return Err("project goal cannot be empty".into());
     }
-    Err("Project creation is not connected to the native agent service yet.".into())
+    if clean.len() > 64 * 1024 {
+        return Err("project goal exceeds the 64 KiB safety limit".into());
+    }
+    let root = state
+        .preferences
+        .lock()
+        .map_err(|_| "settings lock poisoned")?
+        .run_root
+        .clone();
+    if root.join("plan.json").exists() {
+        return Err("this workspace already has a plan; choose another directory".into());
+    }
+    let mut starting = state
+        .project_starting
+        .lock()
+        .map_err(|_| "project lock poisoned")?;
+    if *starting {
+        return Err("a project is already being planned".into());
+    }
+    *starting = true;
+    drop(starting);
+    append_message(&app, "operator", clean.clone(), "project");
+    append_message(
+        &app,
+        "sleipnir",
+        "Planning the project in the background.".into(),
+        "planner",
+    );
+
+    let task_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let plan_output = run_core_with_stdin(
+            &task_app,
+            "project",
+            vec!["--workspace".into(), root.as_os_str().to_owned()],
+            clean.as_bytes(),
+        )
+        .await;
+        let planned = match plan_output {
+            Ok(output) => match serde_json::from_slice::<Value>(&output.stdout) {
+                Ok(result) if output.success && result["status"] != "error" => {
+                    append_message(
+                        &task_app,
+                        "sleipnir",
+                        result["text"]
+                            .as_str()
+                            .unwrap_or("Project plan created.")
+                            .to_owned(),
+                        "planner",
+                    );
+                    true
+                }
+                Ok(result) => {
+                    append_message(
+                        &task_app,
+                        "sleipnir",
+                        result["text"]
+                            .as_str()
+                            .unwrap_or("Project planning failed.")
+                            .to_owned(),
+                        "error",
+                    );
+                    false
+                }
+                Err(error) => {
+                    append_message(
+                        &task_app,
+                        "sleipnir",
+                        format!("Could not decode planner response: {error}"),
+                        "error",
+                    );
+                    false
+                }
+            },
+            Err(error) => {
+                append_message(&task_app, "sleipnir", error, "error");
+                false
+            }
+        };
+        let _ = task_app.emit_to("main", "dashboard-changed", ());
+        if planned {
+            append_message(
+                &task_app,
+                "sleipnir",
+                "Plan ready. Routed execution is running in the background.".into(),
+                "orchestrator",
+            );
+            let _ = task_app.emit_to("main", "dashboard-changed", ());
+            match run_core(
+                &task_app,
+                "cli",
+                vec![
+                    "--run-root".into(),
+                    root.as_os_str().to_owned(),
+                    "orchestrate".into(),
+                ],
+            )
+            .await
+            {
+                Ok(output) if output.success => append_message(
+                    &task_app,
+                    "sleipnir",
+                    "Project workflow finished. Review the verified output.".into(),
+                    "orchestrator",
+                ),
+                Ok(output) => append_message(
+                    &task_app,
+                    "sleipnir",
+                    String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                    "error",
+                ),
+                Err(error) => append_message(&task_app, "sleipnir", error, "error"),
+            }
+        }
+        if let Some(state) = task_app.try_state::<DesktopState>() {
+            if let Ok(mut starting) = state.project_starting.lock() {
+                *starting = false;
+            }
+        }
+        let _ = task_app.emit_to("main", "dashboard-changed", ());
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -725,6 +871,7 @@ pub fn run() {
                 preferences_path,
                 messages: Mutex::new(Vec::new()),
                 sessions: Mutex::new(HashMap::new()),
+                project_starting: Mutex::new(false),
             });
             let _ = app.global_shortcut().register(shortcut.as_str());
             let _ = if start_at_login {

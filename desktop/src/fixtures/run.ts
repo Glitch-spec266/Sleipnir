@@ -202,7 +202,7 @@ export function createDemoSnapshot(): DashboardSnapshot {
         responseModel: "auto",
         escalation: "automatic",
         voiceProvider: "system",
-        voiceId: "default",
+        voiceId: "system-natural",
         accent: "neutral",
         interruptible: true,
       },
@@ -225,5 +225,6 @@ export function createDemoSnapshot(): DashboardSnapshot {
         nvidia: "NVIDIA_API_KEY",
       },
     },
+    providers: { openrouter: true, gemini: true, nvidia: false },
   };
 }

@@ -702,6 +702,12 @@ input:focus-visible {
 .provider-activation strong { display: block; font-size: 10px; }
 .provider-activation p { margin: 5px 0 8px; color: var(--text-faint); font-size: 9px; line-height: 1.5; }
 .provider-activation code { color: var(--signal); font: 8px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+.provider-status { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 10px; }
+.provider-status > span { display: grid; grid-template-columns: auto 1fr; gap: 3px 6px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 9px; color: var(--text-soft); font: 8px/1 var(--font-mono); text-transform: uppercase; }
+.provider-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
+.provider-status small { grid-column: 2; color: var(--text-faint); font: inherit; text-transform: none; }
+.provider-status > span[data-active="true"] i { background: var(--signal); box-shadow: 0 0 0 4px color-mix(in oklch, var(--signal) 10%, transparent); }
+.provider-status > span[data-active="true"] small { color: var(--signal); }
 .save-action { margin-top: 15px; color: var(--text); font-size: 10px; }
 .form-message { margin: 10px 0 0; color: var(--signal); font-size: 9px; }
 

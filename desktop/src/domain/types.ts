@@ -181,6 +181,7 @@ export interface DashboardSnapshot {
   messages: ConversationMessage[];
   voice: VoiceStatus;
   settings: AppSettings;
+  providers: Record<"openrouter" | "gemini" | "nvidia", boolean>;
 }
 
 export type ReviewDecision = "approve" | "request_changes" | "reject";

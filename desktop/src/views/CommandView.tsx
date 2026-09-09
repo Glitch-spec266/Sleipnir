@@ -6,9 +6,10 @@ import type { DashboardSnapshot } from "../domain/types";
 interface CommandViewProps {
   snapshot: DashboardSnapshot;
   onSubmit: (text: string) => Promise<void>;
+  onStartProject: (goal: string) => Promise<void>;
 }
 
-export function CommandView({ snapshot, onSubmit }: CommandViewProps) {
+export function CommandView({ snapshot, onSubmit, onStartProject }: CommandViewProps) {
   const [prompt, setPrompt] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -17,7 +18,7 @@ export function CommandView({ snapshot, onSubmit }: CommandViewProps) {
     if (!prompt.trim() || submitting) return;
     setSubmitting(true);
     try {
-      await onSubmit(prompt);
+      await (snapshot.run ? onSubmit(prompt) : onStartProject(prompt));
       setPrompt("");
     } finally {
       setSubmitting(false);
@@ -52,7 +53,7 @@ export function CommandView({ snapshot, onSubmit }: CommandViewProps) {
             <span><AudioLines aria-hidden="true" size={14} />Hey, {snapshot.voice.settings.wakeName}</span>
           </div>
         </div>
-        <button className="command-card__go" type="submit" aria-label="Start task" disabled={submitting}>
+        <button className="command-card__go" type="submit" aria-label={snapshot.run ? "Start task" : "Create project"} disabled={submitting}>
           <ArrowUp aria-hidden="true" size={22} />
         </button>
       </form>

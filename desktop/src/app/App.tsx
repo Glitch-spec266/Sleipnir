@@ -31,7 +31,7 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
   const [scheme, setScheme] = useState<ColorScheme>("orbit");
   const [activeView, setActiveView] = useState<ViewId>("home");
   const [pendingRoute, setPendingRoute] = useState<{ text: string; recommended: "claude" | "codex"; reason: string } | null>(null);
-  const { snapshot, error, runAndRefresh } = useSleipnir(bridge);
+  const { snapshot, error, refresh, runAndRefresh } = useSleipnir(bridge);
 
   useEffect(() => {
     if (!advanced && !["home", "run", "review", "voice"].includes(activeView)) {
@@ -82,6 +82,20 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
     };
   }, [bridge, runAndRefresh]);
 
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen("dashboard-changed", () => void refresh()).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [refresh]);
+
   const sendInstruction = async (text: string, forced?: InstructionRoute) => {
     if (!forced) {
       const decision = classifyInstruction(text);
@@ -122,7 +136,11 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
         onSave={(settings) => runAndRefresh(() => bridge.setVoiceSettings(settings))}
       />;
     }
-    return <CommandView snapshot={snapshot} onSubmit={sendInstruction} />;
+    return <CommandView
+      snapshot={snapshot}
+      onSubmit={sendInstruction}
+      onStartProject={(goal) => runAndRefresh(() => bridge.startProject(goal))}
+    />;
   }, [activeView, bridge, error, runAndRefresh, snapshot]);
 
   return (

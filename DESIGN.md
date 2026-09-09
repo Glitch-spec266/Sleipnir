@@ -1035,3 +1035,106 @@ vocabulary, chord flags, consent gate and capture argv are all exercised in CI
 on every platform — but CI cannot grant Accessibility, which is a human ticking
 a box. Treat first-run behaviour on a real Mac as unverified until someone has
 done it.
+
+---
+
+## Phase 21 — desktop control surface
+
+The desktop application is another client of the run-owning core, not a second
+orchestrator. `plan.json`, append-only result/revision logs, artifact attempt
+directories, and their existing locks remain authoritative. The React renderer
+receives a deliberately lossy `DashboardSnapshot`; `sleipnir.gui` projects
+status, routes, budgets, reviews, and audit metadata but never opens an artifact
+body. A regression test walks that boundary with a sentinel artifact.
+
+Orbit is the sole information architecture. Index and Glasshouse replace color
+and material tokens only, so scheme selection cannot silently fork behavior.
+Simple mode exposes command, run, review, and voice. Advanced mode adds the
+Mission queue, Chronicle history, and Helm routing/budget/trust machinery; every
+advanced module can be hidden independently. An explicit scheme choice disables
+adaptive mode, while adaptive mode follows the host light/dark preference.
+
+### Native boundary
+
+| Layer | Responsibility | Explicitly forbidden |
+|---|---|---|
+| React renderer | operator intent, visual state, review and escalation choices | direct filesystem or process access |
+| Tauri host | preferences, tray/windows, global shortcut, autostart, bounded IPC | provider secrets in settings or prompt text in argv |
+| bundled Python core | run projection, routing, transcription/speech adapters, existing orchestration | a parallel GUI-only state machine |
+| run store | plan/log/artifact truth | renderer-owned status fields |
+
+Native commands invoke the bundled core sidecar directly from Rust. The webview
+has only `core:default`; it does not receive generic shell execution permission.
+Instructions and audio cross the process boundary on stdin, with 1 MiB and
+12 MiB caps respectively. Provider configuration persists environment-variable
+*names*, never values. Conversation records are encrypted locally with a
+device-local key and tolerate only a torn final append, matching the run-log
+recovery posture.
+
+The front door classifies only enough to decide whether operator confirmation
+is required. Conversational requests use an activated Gemini, OpenRouter, or
+NVIDIA NIM lane. Project-changing work stops at a visible lane chooser before
+Claude or Codex receives it; an operator can select either explicitly. The
+`always` posture is a persisted workspace policy and maps to the existing
+provider permission mode rather than bypassing Sleipnir's audited capability
+layer.
+
+### Ambient voice
+
+The Tauri host owns a tray process, close-to-tray behavior, start-at-login, a
+configurable global push-to-talk registration, and a non-focus-stealing 208 px
+orb window. Press/release events control activated microphone capture. Audio is
+discarded after transcription and never enters history or telemetry. Local mode
+uses an operator-installed `whisper-cli` model (plus `ffmpeg` only when WebM/Ogg
+conversion is necessary); Gemini mode sends the activated recording with the
+configured environment key. Ambient text stays on a cheap lane, then system,
+Gemini, or OpenRouter speech provides the reply. Raw Gemini PCM is wrapped as
+WAV before webview playback. Complex spoken work is handed to the main-window
+approval dialog rather than being auto-escalated.
+
+Continuous wake-word capture is intentionally not called complete yet. The
+local phrase state machine and customizable wake name exist, but shipping a
+background microphone loop before bundling and measuring a local wake engine
+would make the privacy and resource claims dishonest. Likewise, CI now compiles
+and packages the unsigned application on Linux, Windows, and macOS, but signing,
+updates, and real-hardware voice/desktop-control smoke tests remain release
+gates.
+
+### Visual and accessibility gates
+
+The renderer is checked at full desktop and native orb sizes with Playwright.
+Orbit, Index, and Glasshouse are exercised through one navigation structure;
+simple and advanced surfaces run through axe-core, visible focus is retained,
+the escalation boundary is a labelled modal with Escape handling, and the orb
+is verified to have no overflow. Screenshot inspection remains required because
+automated rules cannot judge hierarchy, density, or whether a surface feels
+generic.
+
+## Phase 22 — intelligence amplification and design competency
+
+Phase 22 is a measured program, not a claim that orchestration automatically
+makes a model smarter. Its release gate compares Sleipnir with Claude Cowork on
+the same publicly identifiable underlying model when possible, reporting
+unknown provider credits as unknown. Accepted cost, elapsed time, verified
+quality, adaptability, background interference, recovery, safety, and
+auditability are separate gates; a composite score cannot conceal a regression.
+
+The required architecture is:
+
+1. Build a hidden benchmark harness before tuning quality behavior.
+2. Introduce versioned executable skills with scoped tools, templates,
+   deterministic validators, and regression cases.
+3. Pass compact evidence-bearing outcome capsules between workers while keeping
+   artifact bodies and transcripts out of the sparse control context.
+4. Use uncertainty-triggered diverse candidates, critique, repair, and
+   artifact-scoped synthesis instead of paying best-of-N on every task.
+5. Implement blinded cross-provider judging only where deterministic checks
+   cannot decide, and feed observed acceptance/reliability back into routing.
+
+Design is one of those executable skill families, not a decorative system
+prompt. UI, presentation, document, and visual-communication skills must ingest
+references, set an art direction, work in the native medium, render and inspect
+their output, run accessibility checks, critique, repair, and record explicit
+human preference. Hidden cases measure hierarchy, visual specificity, content
+fit, responsiveness, accessibility, editing fidelity, and pairwise preference—not
+merely whether a file exists.
