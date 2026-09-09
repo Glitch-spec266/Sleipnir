@@ -9,6 +9,8 @@ dist/
 build/
 /desktop/vite.config.js
 /desktop/vite.config.d.ts
+/desktop/test-results/
+/desktop/playwright-report/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

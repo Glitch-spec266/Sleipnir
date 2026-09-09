@@ -1,4 +1,4 @@
-import { AudioLines, Settings2 } from "lucide-react";
+import { Settings2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { SleipnirBridge } from "../bridge";
@@ -19,6 +19,7 @@ import { ReviewView } from "../views/ReviewView";
 import { RoutingView } from "../views/RoutingView";
 import { SettingsView } from "../views/SettingsView";
 import { TrustView } from "../views/TrustView";
+import { VoiceView } from "../views/VoiceView";
 import { useSleipnir } from "./useSleipnir";
 
 export type ColorScheme = "orbit" | "index" | "glasshouse";
@@ -56,14 +57,11 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
     if (activeView === "trust") return <TrustView snapshot={snapshot} />;
     if (activeView === "settings") return <SettingsView />;
     if (activeView === "voice") {
-      return (
-        <section className="view empty-view">
-          <AudioLines size={34} aria-hidden="true" />
-          <span className="kicker">Ambient voice · {snapshot.voice.phase}</span>
-          <h1>Hey, {snapshot.voice.settings.wakeName}.</h1>
-          <p>{snapshot.voice.privacyLabel}. Voice setup continues in the next build stage.</p>
-        </section>
-      );
+      return <VoiceView
+        snapshot={snapshot}
+        onSetListening={(enabled) => runAndRefresh(() => bridge.setListening(enabled))}
+        onSave={(settings) => runAndRefresh(() => bridge.setVoiceSettings(settings))}
+      />;
     }
     return <CommandView snapshot={snapshot} onSubmit={(text) => runAndRefresh(() => bridge.sendMessage(text))} />;
   }, [activeView, bridge, error, runAndRefresh, snapshot]);

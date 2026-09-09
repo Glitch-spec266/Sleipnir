@@ -9,7 +9,15 @@ export type TaskState =
   | "skipped";
 
 export type Tier = "mechanical" | "code" | "longctx" | "reason" | "control";
-export type VoicePhase = "off" | "armed" | "hearing" | "thinking" | "speaking" | "error";
+export type VoicePhase =
+  | "off"
+  | "armed"
+  | "hearing"
+  | "thinking"
+  | "acting"
+  | "approval"
+  | "speaking"
+  | "error";
 
 export interface RuntimeStatus {
   connected: boolean;
@@ -126,7 +134,7 @@ export interface VoiceSettings {
   transcription: "local" | "gemini";
   responseModel: string;
   escalation: "automatic" | "confirm";
-  voiceProvider: "system" | "gemini" | "elevenlabs";
+  voiceProvider: "system" | "gemini" | "openrouter" | "elevenlabs";
   voiceId: string;
   accent: "neutral" | "american" | "british" | "australian" | "indian";
   interruptible: boolean;
