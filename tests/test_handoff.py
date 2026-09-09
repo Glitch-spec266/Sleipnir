@@ -11,6 +11,7 @@ import asyncio
 import json
 
 import pytest
+from conftest import requires_symlink
 
 from sleipnir import console, theme
 from sleipnir.capabilities import handoff
@@ -85,6 +86,7 @@ def test_dead_or_forged_requester_is_not_allowed_to_prompt_the_operator(requests
     assert not forged.exists()
 
 
+@requires_symlink
 def test_request_and_answer_symlinks_are_never_followed(requests_dir, tmp_path):
     requests_dir.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "outside"

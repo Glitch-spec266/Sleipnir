@@ -152,16 +152,53 @@ if _kernel32 is not None:
 
 def _run_windows(args: list[str], job_name: str | None) -> int:
     job_handle = None
+    assigned = False
     if job_name:
         job_handle = _kernel32.OpenJobObjectW(_JOB_OBJECT_ALL_ACCESS, False, job_name)
         if job_handle:
-            _kernel32.AssignProcessToJobObject(job_handle, _kernel32.GetCurrentProcess())
+            assigned = bool(
+                _kernel32.AssignProcessToJobObject(job_handle, _kernel32.GetCurrentProcess())
+            )
         # A failed open/assign means no isolation guarantee for this dispatch
         # rather than a refusal to run it -- the same posture the Linux path
         # takes when prctl fails for a reason other than the race it checks.
+        # It is said out loud, though: silence here was reproduced as a guard
+        # that watched the wrong process and killed nothing, and the operator
+        # had no way to know the kill guarantee was gone. The most common
+        # cause is an interpreter whose launcher re-executes the real process
+        # (a Microsoft Store Python venv redirector does exactly this), which
+        # leaves this guard one hop away from the process the job was made for.
+        if not assigned:
+            print(
+                "process guard: could not join the job object; "
+                "falling back to a process-tree kill on parent death",
+                file=sys.stderr,
+                flush=True,
+            )
 
+    # Holds the child once Popen returns, so the watcher thread -- which is
+    # started first, deliberately, to close the window where a parent dies
+    # during spawn -- can reach it.
+    child_box: list[subprocess.Popen] = []
     handler_ref = None  # keeps the ctypes trampoline alive; see below
-    if job_handle:
+
+    def _terminate_tree() -> None:
+        # No grace period, unlike the Linux path's SIGTERM-then-SIGKILL:
+        # there is no Windows signal a provider CLI could trap here to earn
+        # one, and either kill below reaches the whole tree regardless of
+        # what any member does.
+        if assigned:
+            _kernel32.TerminateJobObject(job_handle, 1)
+            return
+        if child_box:
+            subprocess.run(  # nosec B603 B607
+                ["taskkill", "/F", "/T", "/PID", str(child_box[0].pid)],
+                capture_output=True,
+                check=False,
+            )
+        os._exit(1)
+
+    if job_name:
         ppid = os.getppid()
 
         def _watch_parent() -> None:
@@ -170,11 +207,7 @@ def _run_windows(args: list[str], job_name: str | None) -> int:
                 return  # parent already gone
             _kernel32.WaitForSingleObject(handle, _INFINITE)
             _kernel32.CloseHandle(handle)
-            # No grace period, unlike the Linux path's SIGTERM-then-SIGKILL:
-            # there is no Windows signal a provider CLI could trap here to
-            # earn one, and a job kill reaches the whole tree unconditionally
-            # regardless of what any member does.
-            _kernel32.TerminateJobObject(job_handle, 1)
+            _terminate_tree()
 
         threading.Thread(target=_watch_parent, name="sleipnir-guard-watch", daemon=True).start()
 
@@ -182,7 +215,7 @@ def _run_windows(args: list[str], job_name: str | None) -> int:
         def _on_ctrl(event: int) -> bool:
             if event != _CTRL_BREAK_EVENT:
                 return False
-            _kernel32.TerminateJobObject(job_handle, 1)
+            _terminate_tree()
             return True
 
         # ctypes does not keep a reference to a callback once it is passed
@@ -194,6 +227,7 @@ def _run_windows(args: list[str], job_name: str | None) -> int:
     # The validated adapter invocation is passed as an argv vector; no shell,
     # interpolation, or command-string parsing occurs here.
     child = subprocess.Popen(args, shell=False)  # nosec B603
+    child_box.append(child)
     return child.wait()
 
 

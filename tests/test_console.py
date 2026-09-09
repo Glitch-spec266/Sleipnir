@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from fakes import fake_spawner
 
+from sleipnir import platform
 from sleipnir import chat, console
 from sleipnir.capabilities import clipboard
 from sleipnir.process import ProcessRunner
@@ -348,7 +349,8 @@ def test_chat_turn_uses_guarded_process_runner_and_stdin():
     )
     assert reply.text == "hello"
     assert processes[0].stdin.text == "private prompt"
-    assert calls[0]["kwargs"]["start_new_session"] is True
+    for key, value in platform.CHILD_SPAWN_KWARGS.items():
+        assert calls[0]["kwargs"][key] == value
 
 
 def test_chat_timeout_terminates_the_process_group():
@@ -647,7 +649,8 @@ def test_project_stage_uses_guarded_process_runner(tmp_path):
         console._run_project_stage(state, "orchestrate", runner=runner)
     )
     assert output == "stage complete"
-    assert calls[0]["kwargs"]["start_new_session"] is True
+    for key, value in platform.CHILD_SPAWN_KWARGS.items():
+        assert calls[0]["kwargs"][key] == value
     assert calls[0]["kwargs"]["cwd"] == str(tmp_path)
 
 

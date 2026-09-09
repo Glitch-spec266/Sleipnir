@@ -13,6 +13,7 @@ wants the real thing has to say so.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -58,6 +59,44 @@ def _probe_symlink_privilege() -> bool:
 #: Computed once per test session; creating a real symlink to probe this on
 #: every call would be needless I/O for what is a fixed machine capability.
 CAN_SYMLINK = _probe_symlink_privilege()
+
+
+def _probe_pid_identity() -> bool:
+    """Does spawning ``sys.executable`` produce a process with that pid?
+
+    Normally an absurd question. On Windows it is not: a virtualenv built from
+    Microsoft Store Python gets a ``Scripts\\python.exe`` that *re-executes*
+    the real interpreter as a separate child, so ``Popen.pid`` names a
+    redirector and the interpreter is one hop below it. Any test that spawns a
+    process and then reasons about that pid -- which is every parent-death
+    test -- measures the wrong process there, and fails in a way that looks
+    like a broken job object rather than a broken interpreter.
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import os; print(os.getpid())"],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        reported, _ = child.communicate(timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return True  # cannot tell; do not silently disable a real test
+    return reported.strip() == str(child.pid)
+
+
+#: Computed once per session, for the same reason as CAN_SYMLINK.
+PID_IDENTITY = _probe_pid_identity()
+
+requires_pid_identity = pytest.mark.skipif(
+    not PID_IDENTITY,
+    reason="this interpreter's launcher re-executes the real process, so a "
+    "spawned child's pid names a redirector rather than the interpreter "
+    "(a Microsoft Store Python virtualenv does this). Parent-death guarantees "
+    "cannot be measured here -- use a python.org interpreter or the `py` "
+    "launcher to run this test",
+)
 
 requires_symlink = pytest.mark.skipif(
     not CAN_SYMLINK,

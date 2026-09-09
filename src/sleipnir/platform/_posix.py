@@ -54,6 +54,25 @@ def pid_is_alive(pid: int) -> bool:
     return True
 
 
+def is_elevated() -> bool:
+    """Running as root. Reported, never required: nothing in Sleipnir asks
+    for it, and a run that needs it is a bug worth seeing in ``doctor``."""
+    return os.geteuid() == 0
+
+
+def pid_is_alive_and_same_user(pid: int) -> bool:
+    """Is ``pid`` a live process owned by this uid?
+
+    ``/proc`` is what supplies the owner, so this is a Linux answer; on a
+    POSIX system without ``/proc`` it reports False, which is the refusal
+    this gate wants when it cannot establish ownership.
+    """
+    try:
+        return (Path("/proc") / str(pid)).stat().st_uid == os.getuid()
+    except OSError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Console encoding and colour
 # ---------------------------------------------------------------------------
@@ -177,6 +196,38 @@ def resolve_executable(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def open_nofollow(path: Path | str, flags: int, mode: int = 0o600) -> int:
+    return os.open(path, flags | os.O_NOFOLLOW, mode)
+
+
+def open_in_directory_nofollow(
+    directory: Path, filename: str, flags: int, mode: int = 0o600
+) -> int:
+    directory_fd = _open_directory_nofollow(directory)
+    try:
+        return os.open(filename, flags | os.O_NOFOLLOW, mode, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _open_directory_nofollow(directory: Path) -> int:
+    """A directory fd, refusing a symlinked directory.
+
+    Every failure is reported as ``NotADirectoryError`` so callers can tell
+    "the directory is not what it should be" from "the file is not what it
+    should be" -- ``O_NOFOLLOW`` reports the former as ``ELOOP`` and a
+    non-directory as ``ENOTDIR``, and both mean the same thing here.
+    """
+    try:
+        return os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise NotADirectoryError(exc.errno, str(exc), str(directory)) from exc
+
+
+def restrict_to_owner(descriptor: int) -> None:
+    os.chmod(descriptor, 0o600)
+
+
 def is_reparse_point(path: Path) -> bool:
     return path.is_symlink()
 
@@ -255,11 +306,16 @@ __all__ = [
     "create_guarded_launch",
     "enable_ansi",
     "force_kill_tree",
+    "is_elevated",
     "is_reparse_point",
     "key_reader",
     "kill_pid_tree",
+    "open_in_directory_nofollow",
+    "open_nofollow",
     "pid_is_alive",
+    "pid_is_alive_and_same_user",
     "posix_shell",
+    "restrict_to_owner",
     "prepare_stdio_encoding",
     "raw_console",
     "replace_atomic",

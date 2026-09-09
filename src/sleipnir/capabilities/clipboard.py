@@ -12,10 +12,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from sleipnir import platform
 from sleipnir.capabilities import audit
 
 DEFAULT_DIR = Path.home() / ".sleipnir" / "clipboard"
@@ -43,8 +45,21 @@ class ClipboardPayload:
     path: Path | None = None
 
 
+def supported() -> bool:
+    """Whether this platform has a clipboard backend at all.
+
+    Distinct from :func:`available`, and the distinction is what keeps
+    ``doctor`` honest: "wl-paste is not installed" is a fixable gap on Linux,
+    while on Windows and macOS there is nothing to install because this module
+    only speaks Wayland. Reporting the second as the first sent Windows users
+    to `sleipnir setup` for a package that has no Windows build and no setup
+    step -- and made `host control: ready` unreachable there forever.
+    """
+    return sys.platform.startswith("linux")
+
+
 def available() -> bool:
-    return shutil.which("wl-paste") is not None
+    return supported() and shutil.which("wl-paste") is not None
 
 
 def _run(*args: str) -> bytes:
@@ -90,7 +105,7 @@ def read(*, destination_dir: Path = DEFAULT_DIR) -> ClipboardPayload:
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = destination_dir / f"clipboard-{uuid.uuid4().hex}{suffix}"
         with destination.open("xb") as handle:
-            os.chmod(handle.fileno(), 0o600)
+            platform.restrict_to_owner(handle.fileno())
             handle.write(body)
             handle.flush()
             os.fsync(handle.fileno())

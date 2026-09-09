@@ -557,6 +557,7 @@ def test_preexisting_attempt_workspace_is_never_reused_as_provider_output(tmp_pa
     assert log.read() == []
 
 
+@requires_symlink
 def test_workspace_harness_write_refuses_provider_created_symlink(tmp_path: Path):
     from sleipnir.artifacts import AttemptWorkspace, WorkspaceCollisionError
 
@@ -580,6 +581,7 @@ def test_workspace_harness_write_requires_preclaimed_directory(tmp_path: Path):
     assert not workspace.dir.exists()
 
 
+@requires_symlink
 def test_workspace_claim_rejects_artifacts_symlink_before_external_mutation(tmp_path: Path):
     from sleipnir.artifacts import AttemptWorkspace, WorkspaceCollisionError
 

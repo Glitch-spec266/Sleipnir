@@ -21,6 +21,7 @@ kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
 
 ULONG_PTR = ctypes.c_size_t
 
@@ -33,6 +34,70 @@ ULONG_PTR = ctypes.c_size_t
 
 LOCKFILE_EXCLUSIVE_LOCK = 0x00000002
 LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
+
+# ---------------------------------------------------------------------------
+# File opening (CreateFileW -- the no-follow open in _windows.py; Windows has
+# no O_NOFOLLOW/O_DIRECTORY, so the reparse-point refusal is expressed as
+# "open the link itself, then reject the handle if it is one".)
+# ---------------------------------------------------------------------------
+
+INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+GENERIC_READ = 0x80000000
+GENERIC_WRITE = 0x40000000
+FILE_APPEND_DATA = 0x0004
+
+FILE_SHARE_READ = 0x00000001
+FILE_SHARE_WRITE = 0x00000002
+FILE_SHARE_DELETE = 0x00000004
+
+CREATE_NEW = 1
+CREATE_ALWAYS = 2
+OPEN_EXISTING = 3
+OPEN_ALWAYS = 4
+TRUNCATE_EXISTING = 5
+
+FILE_ATTRIBUTE_NORMAL = 0x00000080
+FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
+FILE_ATTRIBUTE_DIRECTORY = 0x00000010
+FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+
+
+class FILETIME(ctypes.Structure):
+    _fields_ = [("dwLowDateTime", w.DWORD), ("dwHighDateTime", w.DWORD)]
+
+
+class BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("dwFileAttributes", w.DWORD),
+        ("ftCreationTime", FILETIME),
+        ("ftLastAccessTime", FILETIME),
+        ("ftLastWriteTime", FILETIME),
+        ("dwVolumeSerialNumber", w.DWORD),
+        ("nFileSizeHigh", w.DWORD),
+        ("nFileSizeLow", w.DWORD),
+        ("nNumberOfLinks", w.DWORD),
+        ("nFileIndexHigh", w.DWORD),
+        ("nFileIndexLow", w.DWORD),
+    ]
+
+
+kernel32.CreateFileW.argtypes = [
+    w.LPCWSTR,
+    w.DWORD,
+    w.DWORD,
+    ctypes.c_void_p,
+    w.DWORD,
+    w.DWORD,
+    w.HANDLE,
+]
+kernel32.CreateFileW.restype = w.HANDLE
+kernel32.GetFileInformationByHandle.argtypes = [
+    w.HANDLE,
+    ctypes.POINTER(BY_HANDLE_FILE_INFORMATION),
+]
+kernel32.GetFileInformationByHandle.restype = w.BOOL
 
 # ---------------------------------------------------------------------------
 # Console
@@ -151,6 +216,37 @@ kernel32.SetConsoleCtrlHandler.argtypes = [HANDLER_ROUTINE, w.BOOL]
 kernel32.SetConsoleCtrlHandler.restype = w.BOOL
 
 shell32.IsUserAnAdmin.restype = w.BOOL
+
+# ---------------------------------------------------------------------------
+# Process identity (token user SID -- the Windows answer to comparing st_uid)
+# ---------------------------------------------------------------------------
+
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+TOKEN_QUERY = 0x0008
+TokenUser = 1
+ERROR_INSUFFICIENT_BUFFER = 122
+
+
+class SID_AND_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", w.DWORD)]
+
+
+class TOKEN_USER(ctypes.Structure):
+    _fields_ = [("User", SID_AND_ATTRIBUTES)]
+
+
+advapi32.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE)]
+advapi32.OpenProcessToken.restype = w.BOOL
+advapi32.GetTokenInformation.argtypes = [
+    w.HANDLE,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    w.DWORD,
+    ctypes.POINTER(w.DWORD),
+]
+advapi32.GetTokenInformation.restype = w.BOOL
+advapi32.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+advapi32.EqualSid.restype = w.BOOL
 
 kernel32.GetCurrentProcessId.argtypes = []
 kernel32.GetCurrentProcessId.restype = w.DWORD

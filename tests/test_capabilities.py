@@ -26,12 +26,18 @@ import sys
 
 import pytest
 
-from sleipnir import cli
+from sleipnir import cli, platform
 from sleipnir.capabilities import audit, browser, clipboard, computer, ios, secrets
 from sleipnir.capabilities.computer import _linux, _png
 
+from conftest import requires_symlink
+
 windows_only = pytest.mark.skipif(
     sys.platform != "win32", reason="Windows SendInput/GDI backend"
+)
+
+linux_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux ydotool backend"
 )
 
 
@@ -125,6 +131,7 @@ def test_typed_text_is_recorded_by_length_not_content(audit_log, fake_backend):
     assert '"chars": 16' in body
 
 
+@requires_symlink
 def test_audit_log_never_follows_a_precreated_symlink(tmp_path):
     outside = tmp_path / "outside"
     outside.write_text("keep", encoding="utf-8")
@@ -213,6 +220,7 @@ def test_chord_releases_modifiers_in_reverse_order(fake_ydotool):
     assert argv[2:] == ["29:1", "42:1", "20:1", "20:0", "42:0", "29:0"]
 
 
+@linux_only
 def test_copy_and_paste_use_linux_terminal_chords_without_touching_payload(
     audit_log, fake_ydotool
 ):
@@ -332,9 +340,14 @@ def test_wayland_clipboard_materialises_an_image_privately(audit_log, tmp_path, 
     assert payload.kind == "image"
     assert payload.mime_type == "image/png"
     assert payload.path is not None and payload.path.read_bytes() == b"\x89PNGpixels"
-    assert payload.path.stat().st_mode & 0o777 == 0o600
+    if sys.platform != "win32":
+        # A POSIX permission bit, so a POSIX assertion. Windows has none to
+        # check: the file inherits the containing directory's ACL, which is
+        # what platform.restrict_to_owner documents as this platform's answer.
+        assert payload.path.stat().st_mode & 0o777 == 0o600
 
 
+@requires_symlink
 def test_clipboard_image_rejects_a_symlinked_destination(audit_log, tmp_path, monkeypatch):
     def fake_run(argv, **kwargs):
         stdout = b"image/png\n" if "--list-types" in argv else b"pixels"
@@ -598,6 +611,7 @@ def test_browser_profile_defaults_outside_the_repo():
     assert browser.DEFAULT_PROFILE.name == "browser-profile"
 
 
+@requires_symlink
 def test_browser_pid_is_published_without_following_an_old_symlink(tmp_path):
     pid_file = tmp_path / "browser.pid"
     outside = tmp_path / "outside"
@@ -609,6 +623,7 @@ def test_browser_pid_is_published_without_following_an_old_symlink(tmp_path):
     assert outside.read_text(encoding="utf-8") == "do not overwrite"
 
 
+@requires_symlink
 def test_browser_pid_reader_rejects_symlink_and_implausible_pid(tmp_path):
     real = tmp_path / "real"
     real.write_text("1234", encoding="ascii")
@@ -636,6 +651,7 @@ def test_browser_pid_must_match_the_expected_port_and_profile(tmp_path):
     assert not browser._pid_matches_browser(4321, profile, proc_root=proc)
 
 
+@requires_symlink
 def test_browser_rejects_a_symlinked_profile_before_launch(tmp_path, monkeypatch):
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -986,3 +1002,44 @@ def test_darwin_screenshot_raises_rather_than_returning_a_missing_file(monkeypat
 
     with pytest.raises(computer.CapabilityError, match="screencapture failed"):
         _darwin.screenshot(tmp_path / "nope.png")
+
+
+# ── doctor's honesty about this host ─────────────────────────────────────
+#
+# doctor is the one command whose whole job is to describe the machine, so a
+# wrong line here is worse than a missing feature: it sends the operator to
+# fix something that is not broken. Both regressions below were real on
+# Windows -- an elevation state it never mentioned, and a Wayland package it
+# told Windows users to install.
+
+
+def _doctor_output(capsys) -> str:
+    asyncio.run(cli.cmd_doctor(argparse.Namespace()))
+    return capsys.readouterr().out
+
+
+def test_doctor_reports_the_elevation_state(capsys):
+    out = _doctor_output(capsys)
+    assert "elevated" in out
+    expected = "yes (not required)" if platform.is_elevated() else "no"
+    assert expected in out
+
+
+def test_doctor_does_not_prescribe_a_package_this_platform_cannot_install(capsys):
+    out = _doctor_output(capsys)
+    if clipboard.supported():
+        return
+    assert "wl-clipboard" not in out
+    assert "Wayland-only" in out
+
+
+def test_a_platform_without_a_clipboard_backend_is_not_an_incomplete_install():
+    """`available()` false for two different reasons must not read the same.
+
+    On Linux it means "install wl-clipboard". Elsewhere it means "there is no
+    backend", which is not something `sleipnir setup` can resolve -- and
+    treating it as a missing install made `host control: ready` unreachable
+    on Windows and macOS no matter what the operator did.
+    """
+    if not clipboard.supported():
+        assert clipboard.available() is False

@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import requires_pid_identity
 from fakes import fake_spawner
 
 from sleipnir import platform
@@ -169,17 +170,23 @@ def test_real_spawn_is_wrapped_with_a_parent_death_guard(tmp_path: Path, monkeyp
             stderr_path=tmp_path / "err.log",
         )
     )
-    guard = str(Path(__file__).parents[1] / "src" / "sleipnir" / "process_guard.py")
-    argv = calls[0]["argv"]
+    # normcase, because the source resolves this path and Windows resolve()
+    # returns the on-disk casing -- which need not match the casing the test
+    # runner was invoked with, and a plain string compare would turn that into
+    # a failure that depends on how the user typed the directory name.
+    guard = os.path.normcase(
+        str(Path(__file__).parents[1] / "src" / "sleipnir" / "process_guard.py")
+    )
+    argv = [os.path.normcase(part) for part in calls[0]["argv"]]
     if platform.IS_WINDOWS:
         # ['python', guard.py, '--job', <uuid-based name>, '--', 'provider-cli', '--flag']
-        assert argv[0] == sys.executable
+        assert argv[0] == os.path.normcase(sys.executable)
         assert argv[1] == guard
         assert argv[2] == "--job"
         assert argv[3].startswith("sleipnir-")
         assert argv[4:] == ["--", "provider-cli", "--flag"]
     elif sys.platform.startswith("linux"):
-        assert argv == [sys.executable, guard, "--", "provider-cli", "--flag"]
+        assert argv == [os.path.normcase(sys.executable), guard, "--", "provider-cli", "--flag"]
     else:
         # No guard implementation on this POSIX platform (e.g. macOS):
         # platform.WRAPS_CHILDREN is False there, so argv passes through.
@@ -322,6 +329,7 @@ time.sleep(30)
 
 
 @pytest.mark.skipif(not platform.IS_WINDOWS, reason="Windows job-object contract")
+@requires_pid_identity
 def test_windows_job_guard_terminates_after_hard_parent_kill(tmp_path: Path):
     """The Windows analogue of the two Linux tests above: a
     process_guard.py invocation must not survive a hard kill (TerminateProcess,

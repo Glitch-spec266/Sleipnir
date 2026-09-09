@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from conftest import make_junction, requires_junction, requires_symlink
 from test_schema import make_task
@@ -275,3 +277,80 @@ def test_attempt_workspace_parent_junction_is_refused(tmp_path):
     with pytest.raises(WorkspaceCollisionError, match="symlink"):
         workspace.prepare()
     assert list(outside.iterdir()) == []
+
+
+# ── the no-follow open, at the seam itself ───────────────────────────────
+#
+# artifacts.py, audit.py, browser.py and handoff.py all rest on this one
+# primitive, and each of them tests it only through its own behaviour. These
+# test the seam directly, because the two ways to get it wrong on Windows are
+# invisible from those call sites: a write that *replaces* an attacker's
+# symlink instead of refusing it looks like success, and a junction is not a
+# symlink so Path.is_symlink() never sees it.
+
+
+@requires_symlink
+def test_open_nofollow_refuses_a_symlink_for_reading_and_for_writing(tmp_path):
+    host = tmp_path / "host.txt"
+    host.write_text("keep", encoding="utf-8")
+    link = tmp_path / "outcome.json"
+    link.symlink_to(host)
+
+    for flags in (
+        os.O_RDONLY,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+    ):
+        with pytest.raises(OSError):
+            os.close(platform.open_nofollow(link, flags))
+
+    # Refused, not quietly repaired: the link is still a link, and the file it
+    # pointed at still says what it said.
+    assert link.is_symlink()
+    assert host.read_text(encoding="utf-8") == "keep"
+
+
+def test_open_nofollow_still_creates_and_truncates_an_ordinary_file(tmp_path):
+    path = tmp_path / "outcome.json"
+    descriptor = platform.open_nofollow(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write("first, and longer")
+    descriptor = platform.open_nofollow(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write("second")
+    assert path.read_text(encoding="utf-8") == "second"
+
+
+@requires_junction
+def test_open_in_directory_nofollow_refuses_a_junction_directory(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "outcome.json").write_text("host", encoding="utf-8")
+    linked = tmp_path / "workspace"
+    make_junction(linked, outside)
+
+    with pytest.raises(NotADirectoryError):
+        platform.open_in_directory_nofollow(
+            linked, "outcome.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        )
+    assert (outside / "outcome.json").read_text(encoding="utf-8") == "host"
+
+
+def test_open_in_directory_nofollow_writes_into_an_ordinary_directory(tmp_path):
+    descriptor = platform.open_in_directory_nofollow(
+        tmp_path, "outcome.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write("{}")
+    assert (tmp_path / "outcome.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_pid_is_alive_and_same_user_accepts_this_process_and_refuses_a_dead_pid():
+    """The gate on whether a process may prompt the operator for a secret.
+
+    Its POSIX form reads /proc, which does not exist on Windows -- left
+    unported it answered False for every pid, so the console silently
+    discarded every credential request rather than showing it.
+    """
+    assert platform.pid_is_alive_and_same_user(os.getpid()) is True
+    assert platform.pid_is_alive_and_same_user(0) is False

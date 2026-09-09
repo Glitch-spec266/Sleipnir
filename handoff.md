@@ -32,8 +32,25 @@ The revision printed by `git rev-parse HEAD` should match the tip of
 testing. Do not add API keys; the suite blocks real OAuth credential and usage
 endpoint reads by default.
 
-If `py -3.12` is unavailable but `python --version` reports 3.12 or newer,
-replace it with `python`. Record `python --version`, `git --version`, Windows
+**Do not use Microsoft Store Python for this gate.** Install from python.org (or
+use the `py` launcher, which never resolves to the Store build). A virtualenv
+created from Store Python gets a `Scripts\python.exe` that re-executes the real
+interpreter as a *separate child process*, so every pid the suite records for a
+child names a redirector one hop above the interpreter. That makes the
+parent-death drill measure the wrong process and fail as though the job object
+were broken. The suite now detects this and skips
+`test_windows_job_guard_terminates_after_hard_parent_kill` with an explanatory
+reason rather than failing — but a run with that test skipped does not satisfy
+this gate. On a default Windows 11 install, a bare `python` is exactly the Store
+build, so check before you start:
+
+```powershell
+python -c "import sys; print(sys.base_prefix)"   # must not contain WindowsApps
+```
+
+If `py -3.12` is unavailable but `python --version` reports 3.12 or newer and is
+not the Store build, replace it with `python`. Record `python --version`,
+`git --version`, Windows
 edition/build (`winver`), CPU architecture, terminal host, elevation state,
 display scale, and monitor layout in the report.
 

@@ -73,6 +73,7 @@ else:  # pragma: posix cover
     from sleipnir.platform import _posix as _impl
 
 pid_is_alive = _impl.pid_is_alive
+pid_is_alive_and_same_user = _impl.pid_is_alive_and_same_user
 try_lock_exclusive = _impl.try_lock_exclusive
 unlock = _impl.unlock
 prepare_stdio_encoding = _impl.prepare_stdio_encoding
@@ -88,7 +89,11 @@ posix_shell = _impl.posix_shell
 shell_argv = _impl.shell_argv
 shell_kind = _impl.shell_kind
 resolve_executable = _impl.resolve_executable
+is_elevated = _impl.is_elevated
 is_reparse_point = _impl.is_reparse_point
+open_nofollow = _impl.open_nofollow
+open_in_directory_nofollow = _impl.open_in_directory_nofollow
+restrict_to_owner = _impl.restrict_to_owner
 raw_console = _impl.raw_console
 key_reader = _impl.key_reader
 replace_atomic = _impl.replace_atomic
@@ -105,16 +110,21 @@ __all__ = [
     "create_guarded_launch",
     "enable_ansi",
     "force_kill_tree",
+    "is_elevated",
     "is_reparse_point",
     "key_reader",
     "kill_pid_tree",
+    "open_in_directory_nofollow",
+    "open_nofollow",
     "pid_is_alive",
+    "pid_is_alive_and_same_user",
     "posix_shell",
     "prepare_stdio_encoding",
     "raw_console",
     "replace_atomic",
     "request_group_stop",
     "resolve_executable",
+    "restrict_to_owner",
     "shell_argv",
     "shell_kind",
     "stop_pid_group",

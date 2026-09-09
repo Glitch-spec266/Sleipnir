@@ -26,6 +26,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from sleipnir import platform
+
 REQUEST_DIR = Path.home() / ".sleipnir" / "secret-requests"
 _MAX_REQUEST_BYTES = 4_096
 _ANSWER_STATUSES = frozenset({"supplied", "cancelled", "failed"})
@@ -75,7 +77,7 @@ def request_secret(
         "browser_selector": browser_selector,
     }
     with path.open("x", encoding="utf-8") as handle:
-        os.chmod(handle.fileno(), 0o600)
+        platform.restrict_to_owner(handle.fileno())
         json.dump(payload, handle)
         handle.flush()
         os.fsync(handle.fileno())
@@ -91,7 +93,7 @@ def request_secret(
 
 def _read_json_regular(path: Path) -> dict[str, object] | None:
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = platform.open_nofollow(path, os.O_RDONLY)
     except OSError:
         return None
     try:
@@ -110,10 +112,7 @@ def _read_json_regular(path: Path) -> dict[str, object] | None:
 def _requester_alive(pid: object) -> bool:
     if not isinstance(pid, int) or isinstance(pid, bool) or pid < 2:
         return False
-    try:
-        return (Path("/proc") / str(pid)).stat().st_uid == os.getuid()
-    except OSError:
-        return False
+    return platform.pid_is_alive_and_same_user(pid)
 
 
 def await_answer(request: SecretRequest, *, timeout_s: float = 300.0, poll_s: float = 0.25) -> str:
@@ -176,7 +175,7 @@ def answer(request: SecretRequest, status: str) -> None:
     if status not in _ANSWER_STATUSES:
         raise HandoffError(f"invalid credential handoff status: {status!r}")
     with request.answer_path.open("x", encoding="utf-8") as handle:
-        os.chmod(handle.fileno(), 0o600)
+        platform.restrict_to_owner(handle.fileno())
         json.dump({"status": status}, handle)
         handle.flush()
         os.fsync(handle.fileno())

@@ -989,6 +989,7 @@ async def cmd_doctor(args: argparse.Namespace) -> int:
             ("screenshot", probe.screenshot_tool or "NONE"),
             ("browser control", "yes" if browser.available() else "NO"),
             ("shell for plan checks", platform.shell_kind()),
+            ("elevated", "yes (not required)" if platform.is_elevated() else "no"),
         ]
     elif platform.IS_MACOS:
         rows = [
@@ -1041,9 +1042,22 @@ async def cmd_doctor(args: argparse.Namespace) -> int:
         )
     if not browser.available():
         print("  ! playwright is not installed — run `sleipnir setup`")
-    if not clipboard.available():
+    if clipboard.supported() and not clipboard.available():
         print("  ! wl-clipboard is not installed — run `sleipnir setup`")
-    ready = probe.ready and browser.available() and clipboard.available()
+    elif not clipboard.supported():
+        # Not a missing install: there is no backend to install. Saying
+        # "run `sleipnir setup`" here named a Wayland package on Windows and
+        # pointed at a setup step that does not exist.
+        print(
+            "  ! clipboard capture is Wayland-only; Sleipnir has no backend "
+            "on this platform. Keyboard-driven copy/paste (`sleipnir computer "
+            "copy` / `paste`) is unaffected."
+        )
+    ready = (
+        probe.ready
+        and browser.available()
+        and (clipboard.available() or not clipboard.supported())
+    )
     print("\nhost control:", "ready" if ready else "incomplete — run `sleipnir setup`")
     return 0 if ready else 1
 

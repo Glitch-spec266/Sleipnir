@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from sleipnir import platform
+
 DEFAULT_LOG = Path.home() / ".sleipnir" / "capability-audit.jsonl"
 
 # Keys whose values must never be written, whatever a caller passes.
@@ -57,10 +59,10 @@ def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | Non
         "action": action,
         "detail": redact(detail or {}),
     }
-    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
-    descriptor = os.open(path, flags, 0o600)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    descriptor = platform.open_nofollow(path, flags)
     with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
-        os.chmod(handle.fileno(), 0o600)
+        platform.restrict_to_owner(handle.fileno())
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
         handle.flush()
         os.fsync(handle.fileno())

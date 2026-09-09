@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import ctypes.wintypes
+import errno
 import msvcrt
 import os
 import shutil
@@ -97,6 +98,89 @@ def pid_is_alive(pid: int) -> bool:
         return _win32.kernel32.WaitForSingleObject(handle, 0) == _win32.WAIT_TIMEOUT
     finally:
         _win32.kernel32.CloseHandle(handle)
+
+
+def is_elevated() -> bool:
+    """Running with an elevated (administrator) token.
+
+    Worth reporting rather than hiding, because it changes what the operator
+    should expect from two things they will otherwise blame on Sleipnir:
+    ``SendInput`` from an elevated process reaches elevated windows that a
+    normal run cannot, and symlink creation stops needing Developer Mode. It
+    is never required -- every capability here works unelevated.
+    """
+    return bool(_win32.shell32.IsUserAnAdmin())
+
+
+def pid_is_alive_and_same_user(pid: int) -> bool:
+    """Is ``pid`` a live process owned by the account Sleipnir is running as?
+
+    POSIX answers this by comparing ``/proc/<pid>``'s owner to ``getuid()``.
+    Windows has no uid, so the equivalent question is asked of the process
+    token: open the process, read its ``TokenUser`` SID, and compare it to
+    our own. ``pid_is_alive`` alone would not do -- it deliberately reports
+    an access-denied process as alive, which is the right answer for "is it
+    running" and the wrong one for "is it mine".
+
+    Anything that cannot be established is False. This gates whether a
+    process may prompt the operator for a credential, so an unanswerable
+    question is a refusal.
+    """
+    process = _win32.kernel32.OpenProcess(
+        _win32.PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if not process:
+        return False
+    try:
+        their_sid = _token_user_sid(process)
+        our_sid = _own_user_sid()
+        if their_sid is None or our_sid is None:
+            return False
+        return bool(_win32.advapi32.EqualSid(their_sid[0], our_sid[0]))
+    finally:
+        _win32.kernel32.CloseHandle(process)
+
+
+def _token_user_sid(process) -> tuple[int, Any] | None:
+    """The process's user SID, plus the buffer that owns it.
+
+    The buffer is returned alongside the pointer deliberately: the SID lives
+    inside it, so letting it be collected would leave ``EqualSid`` reading
+    freed memory.
+    """
+    token = ctypes.wintypes.HANDLE()
+    if not _win32.advapi32.OpenProcessToken(
+        process, _win32.TOKEN_QUERY, ctypes.byref(token)
+    ):
+        return None
+    try:
+        needed = ctypes.wintypes.DWORD()
+        _win32.advapi32.GetTokenInformation(
+            token, _win32.TokenUser, None, 0, ctypes.byref(needed)
+        )
+        if not needed.value:
+            return None
+        buffer = ctypes.create_string_buffer(needed.value)
+        if not _win32.advapi32.GetTokenInformation(
+            token, _win32.TokenUser, buffer, needed.value, ctypes.byref(needed)
+        ):
+            return None
+        user = ctypes.cast(buffer, ctypes.POINTER(_win32.TOKEN_USER)).contents
+        return user.User.Sid, buffer
+    finally:
+        _win32.kernel32.CloseHandle(token)
+
+
+_own_sid_cache: tuple[int, Any] | None = None
+
+
+def _own_user_sid() -> tuple[int, Any] | None:
+    # Cached: the console asks this every poll, and our own SID cannot change
+    # within the life of the process.
+    global _own_sid_cache
+    if _own_sid_cache is None:
+        _own_sid_cache = _token_user_sid(_win32.kernel32.GetCurrentProcess())
+    return _own_sid_cache
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +452,193 @@ def resolve_executable(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def open_nofollow(path: Path | str, flags: int, mode: int = 0o600) -> int:
+    """``os.open`` with ``O_NOFOLLOW``, rebuilt from what Windows has.
+
+    There is no ``O_NOFOLLOW`` here, and the POSIX trick of asking the kernel
+    to refuse a symlink has no direct equivalent. What Windows offers instead
+    is the opposite phrasing of the same guarantee:
+    ``FILE_FLAG_OPEN_REPARSE_POINT`` opens the *link itself* rather than what
+    it points at, so the handle that comes back can be inspected and rejected
+    without anything having been read from or written through the link. The
+    check is on the handle, not on the path, so there is no window between
+    deciding and opening.
+
+    Rejection is reported as ``ELOOP`` because that is what ``O_NOFOLLOW``
+    raises, and every caller of this seam already catches ``OSError``.
+
+    ``mode`` is accepted and ignored: Windows files inherit their ACL from the
+    containing directory, and there is no POSIX permission bit to set. Callers
+    that need the file kept private must place it somewhere already private --
+    which every caller here does, under the user's profile.
+    """
+    handle = _create_file_nofollow(Path(path), flags)
+    descriptor = _fd_from_handle(handle, flags, Path(path))
+    if flags & os.O_TRUNC:
+        # Truncation happens here rather than through a CREATE_ALWAYS
+        # disposition, because that disposition *replaces* an existing
+        # reparse point instead of refusing it -- reproduced: a symlink at
+        # the target was silently swapped for a fresh regular file, which is
+        # a quieter outcome than POSIX's ELOOP and hides the attempt.
+        os.ftruncate(descriptor, 0)
+    return descriptor
+
+
+def open_in_directory_nofollow(
+    directory: Path, filename: str, flags: int, mode: int = 0o600
+) -> int:
+    """Open ``filename`` inside ``directory``, refusing a reparse point at
+    either level.
+
+    POSIX does this with a directory fd and a ``dir_fd``-relative open, so the
+    directory cannot be swapped between the check and the open. Windows has no
+    relative open, but it has something POSIX does not: a directory handle
+    opened *without* ``FILE_SHARE_DELETE`` blocks any rename or delete of that
+    directory for as long as it is held. Holding one across the file open buys
+    the same "the directory I checked is the directory I wrote into"
+    guarantee by a different mechanism.
+
+    A directory that is a reparse point -- symlink or NTFS junction, and the
+    junction is the one that needs no privilege to create -- raises
+    ``NotADirectoryError`` so callers can tell it apart from anything wrong
+    with the file itself.
+    """
+    directory_handle = _open_directory_nofollow(directory)
+    try:
+        return open_nofollow(directory / filename, flags, mode)
+    finally:
+        _win32.kernel32.CloseHandle(directory_handle)
+
+
+def _open_directory_nofollow(directory: Path):
+    handle = _win32.kernel32.CreateFileW(
+        str(directory),
+        _win32.GENERIC_READ,
+        # Deliberately no FILE_SHARE_DELETE: that omission is the lock that
+        # keeps the directory from being renamed out from under the open below.
+        _win32.FILE_SHARE_READ | _win32.FILE_SHARE_WRITE,
+        None,
+        _win32.OPEN_EXISTING,
+        _win32.FILE_FLAG_BACKUP_SEMANTICS | _win32.FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    if not handle or handle == _win32.INVALID_HANDLE_VALUE:
+        error = ctypes.get_last_error()
+        raise NotADirectoryError(errno.ENOTDIR, ctypes.FormatError(error), str(directory))
+    attributes = _handle_attributes(handle)
+    if (
+        attributes is None
+        or attributes & _win32.FILE_ATTRIBUTE_REPARSE_POINT
+        or not attributes & _win32.FILE_ATTRIBUTE_DIRECTORY
+    ):
+        _win32.kernel32.CloseHandle(handle)
+        raise NotADirectoryError(
+            errno.ENOTDIR, "not a directory, or a reparse point", str(directory)
+        )
+    return handle
+
+
+def _create_file_nofollow(path: Path, flags: int):
+    """Open ``path`` without ever following a link at the final component.
+
+    Only two dispositions are used, and the choice is the whole point.
+    ``CREATE_NEW`` creates atomically and fails if anything is already there,
+    so a link that appears in the gap loses the race rather than being
+    followed. ``OPEN_EXISTING`` never creates, so it cannot replace what it
+    finds. The dispositions Windows offers for "create or open" --
+    ``CREATE_ALWAYS`` and ``OPEN_ALWAYS`` -- are deliberately unused:
+    ``CREATE_ALWAYS`` overwrites an existing symlink with a fresh regular
+    file, which loses the refusal POSIX's ``O_NOFOLLOW`` gives and destroys
+    the evidence of the attempt.
+    """
+    creating = bool(flags & os.O_CREAT)
+    handle = None
+    if creating:
+        handle = _try_create_file(path, flags, _win32.CREATE_NEW)
+        if handle is None and flags & os.O_EXCL:
+            raise _last_open_error(path)
+    if handle is None:
+        handle = _try_create_file(path, flags, _win32.OPEN_EXISTING)
+    if handle is None:
+        raise _last_open_error(path)
+    attributes = _handle_attributes(handle)
+    if attributes is None or attributes & _win32.FILE_ATTRIBUTE_REPARSE_POINT:
+        _win32.kernel32.CloseHandle(handle)
+        raise OSError(errno.ELOOP, "path is a reparse point", str(path))
+    return handle
+
+
+def _try_create_file(path: Path, flags: int, disposition: int):
+    handle = _win32.kernel32.CreateFileW(
+        str(path),
+        _desired_access(flags),
+        _win32.FILE_SHARE_READ | _win32.FILE_SHARE_WRITE | _win32.FILE_SHARE_DELETE,
+        None,
+        disposition,
+        _win32.FILE_ATTRIBUTE_NORMAL | _win32.FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    if not handle or handle == _win32.INVALID_HANDLE_VALUE:
+        return None
+    return handle
+
+
+def _last_open_error(path: Path) -> OSError:
+    error = ctypes.get_last_error()
+    # ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND are the common ones and map
+    # to ENOENT; anything else keeps the Win32 code in winerror for triage.
+    code = errno.ENOENT if error in (2, 3) else errno.EACCES
+    return OSError(code, ctypes.FormatError(error), str(path), error)
+
+
+def restrict_to_owner(descriptor: int) -> None:
+    """POSIX ``chmod 0600`` on an already-open file; a no-op on Windows.
+
+    There is no permission bit to clear here. A Windows file inherits its ACL
+    from the directory it is created in, and ``os.chmod`` on a descriptor only
+    toggles the read-only attribute -- which is not a privacy control, and
+    which fails outright (``WinError 5``) on a handle opened for append, as
+    every caller of this seam opens theirs. Callers keep private files private
+    by placing them under the user's profile, which they already do.
+    """
+    return None
+
+
+def _handle_attributes(handle) -> int | None:
+    info = _win32.BY_HANDLE_FILE_INFORMATION()
+    if not _win32.kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+        return None
+    return int(info.dwFileAttributes)
+
+
+def _desired_access(flags: int) -> int:
+    if flags & os.O_APPEND:
+        access = _win32.FILE_APPEND_DATA
+    elif flags & (os.O_WRONLY | os.O_RDWR):
+        access = _win32.GENERIC_WRITE
+    else:
+        access = _win32.GENERIC_READ
+    if flags & os.O_RDWR:
+        access |= _win32.GENERIC_READ
+    return access
+
+
+def _fd_from_handle(handle, flags: int, path: Path) -> int:
+    # O_BINARY, always: the caller wraps this fd in a text stream, and that
+    # stream already translates "\n" on write. Letting the CRT translate as
+    # well would put "\r\r\n" in every file.
+    fd_flags = os.O_BINARY
+    if flags & os.O_APPEND:
+        fd_flags |= os.O_APPEND
+    if not flags & (os.O_WRONLY | os.O_RDWR):
+        fd_flags |= os.O_RDONLY
+    try:
+        return msvcrt.open_osfhandle(handle, fd_flags)
+    except OSError:
+        _win32.kernel32.CloseHandle(handle)
+        raise
+
+
 def is_reparse_point(path: Path) -> bool:
     """True for a symlink *or* an NTFS junction.
 
@@ -518,11 +789,16 @@ __all__ = [
     "create_guarded_launch",
     "enable_ansi",
     "force_kill_tree",
+    "is_elevated",
     "is_reparse_point",
     "key_reader",
     "kill_pid_tree",
+    "open_in_directory_nofollow",
+    "open_nofollow",
     "pid_is_alive",
+    "pid_is_alive_and_same_user",
     "posix_shell",
+    "restrict_to_owner",
     "prepare_stdio_encoding",
     "raw_console",
     "replace_atomic",
