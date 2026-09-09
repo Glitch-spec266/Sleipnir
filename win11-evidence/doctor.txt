@@ -1,0 +1,12 @@
+﻿  session                      windows
+  input injection (SendInput)  yes
+  interactive desktop session  yes
+  input daemon running         n/a (none needed)
+  screenshot                   gdi (BitBlt)
+  browser control              NO
+  shell for plan checks        posix
+  ! Codex's worker sandbox is kernel-enforced on Linux and macOS but not here; treat `workspace-write` as an intention on Windows.
+  ! playwright is not installed — run `sleipnir setup`
+  ! wl-clipboard is not installed — run `sleipnir setup`
+
+host control: incomplete — run `sleipnir setup`

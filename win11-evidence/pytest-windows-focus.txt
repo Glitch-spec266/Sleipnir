@@ -1,0 +1,784 @@
+........Fss...........FFFFF...F.F....F.FF..................FF...F..F.... [ 74%]
+...sFFFFF................                                                [100%]
+================================== FAILURES ===================================
+____________ test_real_spawn_is_wrapped_with_a_parent_death_guard _____________
+
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_real_spawn_is_wrapped_wit0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D52AAFD310>
+
+    def test_real_spawn_is_wrapped_with_a_parent_death_guard(tmp_path: Path, monkeypatch):
+        """Only a *real* spawner (spawn=None, the ProcessRunner() default) gets
+        wrapped -- test/injected spawners receive the adapter argv untouched, per
+        test_spawn_requests_its_own_group above."""
+        calls: list = []
+        monkeypatch.setattr("sleipnir.process._default_spawn", fake_spawner(calls=calls))
+        runner = ProcessRunner()
+        run(
+            runner.run(
+                ["provider-cli", "--flag"],
+                stdout_path=tmp_path / "out.log",
+                stderr_path=tmp_path / "err.log",
+            )
+        )
+        guard = str(Path(__file__).parents[1] / "src" / "sleipnir" / "process_guard.py")
+        argv = calls[0]["argv"]
+        if platform.IS_WINDOWS:
+            # ['python', guard.py, '--job', <uuid-based name>, '--', 'provider-cli', '--flag']
+            assert argv[0] == sys.executable
+>           assert argv[1] == guard
+E           AssertionError: assert 'C:\\Users\\v...cess_guard.py' == 'C:\\Users\\v...cess_guard.py'
+E             
+E             Skipping 46 identical leading characters in diff, use -v to show
+E             Skipping 96 identical trailing characters in diff, use -v to show
+E             - ers-USER-downloads-sleipnir-m
+E             ?           ^         ^
+E             + ers-USER-Downloads-Sleipnir-m
+E             ?           ^         ^
+
+tests\test_process.py:177: AssertionError
+___________________ test_audit_never_writes_a_secret_value ____________________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_audit_never_writes_a_secr0/audit.jsonl')
+
+    def test_audit_never_writes_a_secret_value(audit_log):
+>       audit.record("secret.test", {"password": "hunter2", "token": "sk-live-abc", "url": "x"})
+
+tests\test_capabilities.py:113: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'secret.test'
+detail = {'password': 'hunter2', 'token': 'sk-live-abc', 'url': 'x'}, log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+______________ test_typed_text_is_recorded_by_length_not_content ______________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_typed_text_is_recorded_by0/audit.jsonl')
+fake_backend = <test_capabilities._Recorder object at 0x000001D52AA52F90>
+
+    def test_typed_text_is_recorded_by_length_not_content(audit_log, fake_backend):
+>       computer.type_text("my-api-key-value")
+
+tests\test_capabilities.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\computer\__init__.py:75: in type_text
+    audit.record("desktop.type", {"text": text, "chars": len(text)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'desktop.type', detail = {'text': 'my-api-key-value', 'chars': 16}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+______________ test_audit_log_never_follows_a_precreated_symlink ______________
+
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_audit_log_never_follows_a0')
+
+    def test_audit_log_never_follows_a_precreated_symlink(tmp_path):
+        outside = tmp_path / "outside"
+        outside.write_text("keep", encoding="utf-8")
+        linked = tmp_path / "audit.jsonl"
+        linked.symlink_to(outside)
+        with pytest.raises(OSError):
+>           audit.record("desktop.test", log=linked)
+
+tests\test_capabilities.py:134: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'desktop.test', detail = None
+log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_audit_log_never_follows_a0/audit.jsonl')
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+_____________________ test_every_public_action_is_audited _____________________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_every_public_action_is_au0/audit.jsonl')
+fake_backend = <test_capabilities._Recorder object at 0x000001D52AB58550>
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_every_public_action_is_au0')
+
+    def test_every_public_action_is_audited(audit_log, fake_backend, tmp_path):
+        # The reason auditing lives in __init__ and not in the backends: one
+        # place to forget, and this test notices if it is forgotten there.
+>       computer.type_text("hi")
+
+tests\test_capabilities.py:143: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\computer\__init__.py:75: in type_text
+    audit.record("desktop.type", {"text": text, "chars": len(text)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'desktop.type', detail = {'text': 'hi', 'chars': 2}, log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+_____________ test_chord_presses_in_order_and_releases_in_reverse _____________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_chord_presses_in_order_an0/audit.jsonl')
+fake_backend = <test_capabilities._Recorder object at 0x000001D52AB58F50>
+
+    def test_chord_presses_in_order_and_releases_in_reverse(audit_log, fake_backend):
+        # The public layer owns the ordering contract; each backend only has to
+        # speak it. Codes are this host's — evdev or VK — so the test asserts
+        # against the table rather than hard-coded numbers.
+>       computer.key("ctrl", "shift", "t")
+
+tests\test_capabilities.py:167: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\computer\__init__.py:93: in key
+    audit.record("desktop.key", {"combo": list(combo)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'desktop.key', detail = {'combo': ['ctrl', 'shift', 't']}, log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+_______ test_screenshot_returns_the_resolved_path_and_makes_its_parent ________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_screenshot_returns_the_re0/audit.jsonl')
+fake_backend = <test_capabilities._Recorder object at 0x000001D52A97D480>
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_screenshot_returns_the_re0')
+
+    def test_screenshot_returns_the_resolved_path_and_makes_its_parent(
+        audit_log, fake_backend, tmp_path
+    ):
+>       destination = computer.screenshot(tmp_path / "nested" / "shot.png")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_capabilities.py:200: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\computer\__init__.py:162: in screenshot
+    audit.record("desktop.screenshot", {"path": str(destination), "tool": tool})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'desktop.screenshot'
+detail = {'path': 'C:\\Users\\USER\\AppData\\Local\\Temp\\pytest-of-USER\\pytest-69\\test_screenshot_returns_the_re0\\nested\\shot.png', 'tool': 'fake'}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+___ test_copy_and_paste_use_linux_terminal_chords_without_touching_payload ____
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_copy_and_paste_use_linux_0/audit.jsonl')
+fake_ydotool = []
+
+    def test_copy_and_paste_use_linux_terminal_chords_without_touching_payload(
+        audit_log, fake_ydotool
+    ):
+>       computer.copy()
+
+tests\test_capabilities.py:219: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\computer\__init__.py:121: in copy
+    key(*combo)
+src\sleipnir\capabilities\computer\__init__.py:93: in key
+    audit.record("desktop.key", {"combo": list(combo)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'desktop.key', detail = {'combo': ['ctrl', 'c']}, log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+__________ test_ios_runner_never_uses_a_shell_and_keeps_project_cwd ___________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_ios_runner_never_uses_a_s0/audit.jsonl')
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_ios_runner_never_uses_a_s0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D52AC36CF0>
+
+    def test_ios_runner_never_uses_a_shell_and_keeps_project_cwd(
+        audit_log, tmp_path, monkeypatch
+    ):
+        (tmp_path / "Package.swift").write_text("// swift-tools-version: 6.0\n")
+        (tmp_path / "xtool.yml").write_text("version: 1\n")
+        calls = []
+    
+        def fake_run(command, **kwargs):
+            calls.append((command, kwargs))
+            return type("Result", (), {"returncode": 0})()
+    
+        monkeypatch.setattr(ios.shutil, "which", lambda name: f"/usr/bin/{name}")
+>       assert ios.run("build", root=tmp_path, run=fake_run) == 0
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_capabilities.py:289: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\ios.py:112: in run
+    audit.record("ios.xtool", {"action": action, "project": str(root), "arg_count": len(extra)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'ios.xtool'
+detail = {'action': 'build', 'project': 'C:\\Users\\USER\\AppData\\Local\\Temp\\pytest-of-USER\\pytest-69\\test_ios_runner_never_uses_a_s0', 'arg_count': 0}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+____________ test_wayland_clipboard_reads_text_without_logging_it _____________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_wayland_clipboard_reads_t0/audit.jsonl')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D52AC36900>
+
+    def test_wayland_clipboard_reads_text_without_logging_it(audit_log, monkeypatch):
+        calls = []
+    
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            stdout = b"text/plain;charset=utf-8\n" if "--list-types" in argv else b"private text"
+            return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": b""})()
+    
+        monkeypatch.setattr(clipboard.shutil, "which", lambda name: "/usr/bin/wl-paste")
+        monkeypatch.setattr(clipboard.subprocess, "run", fake_run)
+>       payload = clipboard.read()
+                  ^^^^^^^^^^^^^^^^
+
+tests\test_capabilities.py:315: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\clipboard.py:108: in read
+    audit.record("clipboard.text_read", {"mime_type": mime_type, "chars": len(text)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'clipboard.text_read'
+detail = {'mime_type': 'text/plain;charset=utf-8', 'chars': 12}, log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+___________ test_wayland_clipboard_materialises_an_image_privately ____________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_wayland_clipboard_materia0/audit.jsonl')
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_wayland_clipboard_materia0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D52ACECD70>
+
+    def test_wayland_clipboard_materialises_an_image_privately(audit_log, tmp_path, monkeypatch):
+        def fake_run(argv, **kwargs):
+            stdout = b"image/png\ntext/plain\n" if "--list-types" in argv else b"\x89PNGpixels"
+            return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": b""})()
+    
+        monkeypatch.setattr(clipboard.shutil, "which", lambda name: "/usr/bin/wl-paste")
+        monkeypatch.setattr(clipboard.subprocess, "run", fake_run)
+>       payload = clipboard.read(destination_dir=tmp_path)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_capabilities.py:330: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\clipboard.py:97: in read
+    audit.record(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'clipboard.image_read'
+detail = {'mime_type': 'image/png', 'bytes': 10, 'path': 'C:\\Users\\USER\\AppData\\Local\\Temp\\pytest-of-USER\\pytest-69\\test_wayland_clipboard_materia0\\clipboard-b4a92207e26f492bb42a929808826c26.png'}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+_______________ test_capture_records_only_the_label_and_length ________________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_capture_records_only_the_0/audit.jsonl')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D52ACED940>
+
+    def test_capture_records_only_the_label_and_length(audit_log, monkeypatch):
+        monkeypatch.setattr(secrets.getpass, "getpass", lambda *a, **k: "correct horse")
+>       secret = secrets.capture("github password")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_capabilities.py:569: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\secrets.py:101: in capture
+    audit.record("secret.captured", {"label": label, "length": len(secret)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'secret.captured', detail = {'label': 'github password', 'length': 13}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+__________ test_typing_a_secret_wipes_it_and_logs_nothing_sensitive ___________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_typing_a_secret_wipes_it_0/audit.jsonl')
+fake_backend = <test_capabilities._Recorder object at 0x000001D52AACB820>
+
+    def test_typing_a_secret_wipes_it_and_logs_nothing_sensitive(audit_log, fake_backend):
+        secret = secrets.Secret("aws key", bytearray(b"AKIAsecretvalue"))
+>       secrets.type_into_focused_window(secret, submit=True)
+
+tests\test_capabilities.py:579: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\secrets.py:113: in type_into_focused_window
+    computer.type_text(secret.consume(), key_delay_ms=18)
+src\sleipnir\capabilities\computer\__init__.py:75: in type_text
+    audit.record("desktop.type", {"text": text, "chars": len(text)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'desktop.type', detail = {'text': 'AKIAsecretvalue', 'chars': 15}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+_________ test_browser_pid_reader_rejects_symlink_and_implausible_pid _________
+
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_browser_pid_reader_reject0')
+
+    def test_browser_pid_reader_rejects_symlink_and_implausible_pid(tmp_path):
+        real = tmp_path / "real"
+        real.write_text("1234", encoding="ascii")
+        linked = tmp_path / "linked"
+        linked.symlink_to(real)
+>       assert browser._read_pid(linked) is None
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_capabilities.py:617: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_browser_pid_reader_reject0/linked')
+
+    def _read_pid(path: Path | None = None) -> int | None:
+        path = PID_FILE if path is None else path
+        try:
+>           descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                                                     ^^^^^^^^^^^^^
+E           AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\browser.py:70: AttributeError
+_________________ test_browser_close_does_not_start_a_browser _________________
+
+audit_log = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_browser_close_does_not_st0/audit.jsonl')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D52ACEFD20>
+capsys = <_pytest.capture.CaptureFixture object at 0x000001D52AA53B60>
+
+    def test_browser_close_does_not_start_a_browser(audit_log, monkeypatch, capsys):
+        monkeypatch.setattr(browser, "stop_browser", lambda: False)
+    
+        class MustNotStart:
+            def __init__(self, **kwargs):
+                raise AssertionError("close must not construct or attach a browser")
+    
+        monkeypatch.setattr(browser, "Browser", MustNotStart)
+        args = argparse.Namespace(action="close", args=[], headless=False)
+>       assert asyncio.run(cli.cmd_browser(args)) == 0
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_capabilities.py:658: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:196: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:119: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+src\sleipnir\cli.py:1258: in cmd_browser
+    audit.record("browser.shutdown", {"was_running": stopped})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'browser.shutdown', detail = {'was_running': False}, log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+________ test_ios_host_level_commands_do_not_require_a_project[setup] _________
+
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_ios_host_level_commands_d1')
+action = 'setup'
+
+    @pytest.mark.parametrize("action", ["doctor", "setup", "auth", "sdk", "new", "devices"])
+    def test_ios_host_level_commands_do_not_require_a_project(tmp_path, action):
+        """A host-level command is not project-scoped and must stay usable."""
+        if action == "doctor":
+            pytest.skip("doctor reports rather than dispatching")
+        calls: list[list[str]] = []
+    
+        class Done:
+            returncode = 0
+    
+>       ios.run(action, root=tmp_path, executable="/usr/bin/true",
+                run=lambda argv, **k: (calls.append(argv), Done())[1])
+
+tests\test_capabilities.py:709: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\ios.py:112: in run
+    audit.record("ios.xtool", {"action": action, "project": str(root), "arg_count": len(extra)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'ios.xtool'
+detail = {'action': 'setup', 'project': 'C:\\Users\\USER\\AppData\\Local\\Temp\\pytest-of-USER\\pytest-69\\test_ios_host_level_commands_d1', 'arg_count': 0}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+_________ test_ios_host_level_commands_do_not_require_a_project[auth] _________
+
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_ios_host_level_commands_d2')
+action = 'auth'
+
+    @pytest.mark.parametrize("action", ["doctor", "setup", "auth", "sdk", "new", "devices"])
+    def test_ios_host_level_commands_do_not_require_a_project(tmp_path, action):
+        """A host-level command is not project-scoped and must stay usable."""
+        if action == "doctor":
+            pytest.skip("doctor reports rather than dispatching")
+        calls: list[list[str]] = []
+    
+        class Done:
+            returncode = 0
+    
+>       ios.run(action, root=tmp_path, executable="/usr/bin/true",
+                run=lambda argv, **k: (calls.append(argv), Done())[1])
+
+tests\test_capabilities.py:709: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\ios.py:112: in run
+    audit.record("ios.xtool", {"action": action, "project": str(root), "arg_count": len(extra)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'ios.xtool'
+detail = {'action': 'auth', 'project': 'C:\\Users\\USER\\AppData\\Local\\Temp\\pytest-of-USER\\pytest-69\\test_ios_host_level_commands_d2', 'arg_count': 0}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+_________ test_ios_host_level_commands_do_not_require_a_project[sdk] __________
+
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_ios_host_level_commands_d3')
+action = 'sdk'
+
+    @pytest.mark.parametrize("action", ["doctor", "setup", "auth", "sdk", "new", "devices"])
+    def test_ios_host_level_commands_do_not_require_a_project(tmp_path, action):
+        """A host-level command is not project-scoped and must stay usable."""
+        if action == "doctor":
+            pytest.skip("doctor reports rather than dispatching")
+        calls: list[list[str]] = []
+    
+        class Done:
+            returncode = 0
+    
+>       ios.run(action, root=tmp_path, executable="/usr/bin/true",
+                run=lambda argv, **k: (calls.append(argv), Done())[1])
+
+tests\test_capabilities.py:709: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\ios.py:112: in run
+    audit.record("ios.xtool", {"action": action, "project": str(root), "arg_count": len(extra)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'ios.xtool'
+detail = {'action': 'sdk', 'project': 'C:\\Users\\USER\\AppData\\Local\\Temp\\pytest-of-USER\\pytest-69\\test_ios_host_level_commands_d3', 'arg_count': 0}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+_________ test_ios_host_level_commands_do_not_require_a_project[new] __________
+
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_ios_host_level_commands_d4')
+action = 'new'
+
+    @pytest.mark.parametrize("action", ["doctor", "setup", "auth", "sdk", "new", "devices"])
+    def test_ios_host_level_commands_do_not_require_a_project(tmp_path, action):
+        """A host-level command is not project-scoped and must stay usable."""
+        if action == "doctor":
+            pytest.skip("doctor reports rather than dispatching")
+        calls: list[list[str]] = []
+    
+        class Done:
+            returncode = 0
+    
+>       ios.run(action, root=tmp_path, executable="/usr/bin/true",
+                run=lambda argv, **k: (calls.append(argv), Done())[1])
+
+tests\test_capabilities.py:709: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\ios.py:112: in run
+    audit.record("ios.xtool", {"action": action, "project": str(root), "arg_count": len(extra)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'ios.xtool'
+detail = {'action': 'new', 'project': 'C:\\Users\\USER\\AppData\\Local\\Temp\\pytest-of-USER\\pytest-69\\test_ios_host_level_commands_d4', 'arg_count': 0}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+_______ test_ios_host_level_commands_do_not_require_a_project[devices] ________
+
+tmp_path = WindowsPath('C:/Users/USER/AppData/Local/Temp/pytest-of-USER/pytest-69/test_ios_host_level_commands_d5')
+action = 'devices'
+
+    @pytest.mark.parametrize("action", ["doctor", "setup", "auth", "sdk", "new", "devices"])
+    def test_ios_host_level_commands_do_not_require_a_project(tmp_path, action):
+        """A host-level command is not project-scoped and must stay usable."""
+        if action == "doctor":
+            pytest.skip("doctor reports rather than dispatching")
+        calls: list[list[str]] = []
+    
+        class Done:
+            returncode = 0
+    
+>       ios.run(action, root=tmp_path, executable="/usr/bin/true",
+                run=lambda argv, **k: (calls.append(argv), Done())[1])
+
+tests\test_capabilities.py:709: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\sleipnir\capabilities\ios.py:112: in run
+    audit.record("ios.xtool", {"action": action, "project": str(root), "arg_count": len(extra)})
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+action = 'ios.xtool'
+detail = {'action': 'devices', 'project': 'C:\\Users\\USER\\AppData\\Local\\Temp\\pytest-of-USER\\pytest-69\\test_ios_host_level_commands_d5', 'arg_count': 0}
+log = None
+
+    def record(action: str, detail: dict[str, Any] | None = None, *, log: Path | None = None) -> None:
+        path = DEFAULT_LOG if log is None else log
+        if path.parent.exists() and (path.parent.is_symlink() or not path.parent.is_dir()):
+            raise OSError(f"unsafe capability audit directory: {path.parent}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action,
+            "detail": redact(detail or {}),
+        }
+>       flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                                                         ^^^^^^^^^^^^^
+E       AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+
+src\sleipnir\capabilities\audit.py:60: AttributeError
+=========================== short test summary info ===========================
+SKIPPED [1] tests\test_process.py:189: Linux prctl contract
+SKIPPED [1] tests\test_process.py:250: Linux prctl contract
+SKIPPED [1] tests\test_capabilities.py:703: doctor reports rather than dispatching
+FAILED tests/test_process.py::test_real_spawn_is_wrapped_with_a_parent_death_guard
+FAILED tests/test_capabilities.py::test_audit_never_writes_a_secret_value - A...
+FAILED tests/test_capabilities.py::test_typed_text_is_recorded_by_length_not_content
+FAILED tests/test_capabilities.py::test_audit_log_never_follows_a_precreated_symlink
+FAILED tests/test_capabilities.py::test_every_public_action_is_audited - Attr...
+FAILED tests/test_capabilities.py::test_chord_presses_in_order_and_releases_in_reverse
+FAILED tests/test_capabilities.py::test_screenshot_returns_the_resolved_path_and_makes_its_parent
+FAILED tests/test_capabilities.py::test_copy_and_paste_use_linux_terminal_chords_without_touching_payload
+FAILED tests/test_capabilities.py::test_ios_runner_never_uses_a_shell_and_keeps_project_cwd
+FAILED tests/test_capabilities.py::test_wayland_clipboard_reads_text_without_logging_it
+FAILED tests/test_capabilities.py::test_wayland_clipboard_materialises_an_image_privately
+FAILED tests/test_capabilities.py::test_capture_records_only_the_label_and_length
+FAILED tests/test_capabilities.py::test_typing_a_secret_wipes_it_and_logs_nothing_sensitive
+FAILED tests/test_capabilities.py::test_browser_pid_reader_rejects_symlink_and_implausible_pid
+FAILED tests/test_capabilities.py::test_browser_close_does_not_start_a_browser
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[setup]
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[auth]
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[sdk]
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[new]
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[devices]
+20 failed, 74 passed, 3 skipped in 1.72s

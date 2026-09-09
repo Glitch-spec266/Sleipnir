@@ -1,0 +1,437 @@
+FF.FFFFF...FFFFFFFF.FFFFFFF.FFFFFFFF..FF......FF........................ [ 12%]
+..................FFFFF...F.F....F.FF..................FF...F..F.......s [ 24%]
+FFFFF........................................FFFF.FFFFFFFFFFFFFFFF.....F [ 36%]
+........................................F................F.............. [ 48%]
+.................................FFFFFFFFFFFFFFFFFFF..FF.FF.FF.....FFF.. [ 60%]
+F.................................FF.FFF.........F..FF.................. [ 72%]
+............Fss......................................................... [ 84%]
+........................................................................ [ 97%]
+.................                                                        [100%]
+================================== FAILURES ===================================
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\browser.py:70: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\audit.py:60: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+---------------------------- Captured stderr call -----------------------------
+planning with big-sub via claude ...
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   KeyError: 'start_new_session'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\tests\test_console.py:351: KeyError: 'start_new_session'
+E   KeyError: 'start_new_session'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\tests\test_console.py:650: KeyError: 'start_new_session'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+------------------------------ Captured log call ------------------------------
+ERROR    asyncio:base_events.py:1889 Task exception was never retrieved
+future: <Task finished name='t0#1' coro=<Executor._attempt() done, defined at C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\executor.py:523> exception=AttributeError("module 'os' has no attribute 'O_DIRECTORY'")>
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\executor.py", line 536, in _attempt
+    request = self._request(task, attempt, routing, dry_run=False)
+  File "C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\executor.py", line 336, in _request
+    workspace.write_json(INPUT_MANIFEST_FILENAME, resolved.manifest())
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py", line 207, in write_json
+    self.write_text(filename, json.dumps(payload, indent=2, default=str))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py", line 190, in write_text
+    directory_fd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                                                   ^^^^^^^^^^^^^^
+AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+ERROR    asyncio:base_events.py:1889 Task exception was never retrieved
+future: <Task finished name='t2#1' coro=<Executor._attempt() done, defined at C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\executor.py:523> exception=AttributeError("module 'os' has no attribute 'O_DIRECTORY'")>
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\executor.py", line 536, in _attempt
+    request = self._request(task, attempt, routing, dry_run=False)
+  File "C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\executor.py", line 336, in _request
+    workspace.write_json(INPUT_MANIFEST_FILENAME, resolved.manifest())
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py", line 207, in write_json
+    self.write_text(filename, json.dumps(payload, indent=2, default=str))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py", line 190, in write_text
+    directory_fd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                                                   ^^^^^^^^^^^^^^
+AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\handoff.py:94: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\handoff.py:94: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\handoff.py:94: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\handoff.py:94: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\handoff.py:94: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\capabilities\handoff.py:94: AttributeError: module 'os' has no attribute 'O_NOFOLLOW'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\src\sleipnir\artifacts.py:190: AttributeError: module 'os' has no attribute 'O_DIRECTORY'
+E   AssertionError: assert 'C:\\Users\\v...cess_guard.py' == 'C:\\Users\\v...cess_guard.py'
+      
+      Skipping 46 identical leading characters in diff, use -v to show
+      Skipping 96 identical trailing characters in diff, use -v to show
+      - ers-USER-downloads-sleipnir-m
+      ?           ^         ^
+      + ers-USER-Downloads-Sleipnir-m
+      ?           ^         ^
+C:\Users\USER\AppData\Local\Temp\claude\C--Users-USER-downloads-sleipnir-main\a2463401-5531-4335-b2d0-648252a8ac49\scratchpad\win11\Sleipnir\tests\test_process.py:177: AssertionError: assert 'C:\\Users\\v...cess_guard.py' == 'C:\\Users\\v...cess_guard.py'
+=========================== short test summary info ===========================
+SKIPPED [1] tests\test_capabilities.py:703: doctor reports rather than dispatching
+SKIPPED [1] tests\test_process.py:189: Linux prctl contract
+SKIPPED [1] tests\test_process.py:250: Linux prctl contract
+FAILED tests/test_adapters.py::test_claude_reads_model_usage_not_last_message_usage
+FAILED tests/test_adapters.py::test_claude_retains_server_tool_counts_when_model_usage_omits_them
+FAILED tests/test_adapters.py::test_claude_cost_is_authoritative_not_estimated
+FAILED tests/test_adapters.py::test_claude_sums_usage_across_fallback_models
+FAILED tests/test_adapters.py::test_claude_prompt_goes_over_stdin_not_argv - ...
+FAILED tests/test_adapters.py::test_claude_subprocess_does_not_inherit_unrelated_credentials
+FAILED tests/test_adapters.py::test_claude_argv_uses_verified_flags - Attribu...
+FAILED tests/test_adapters.py::test_claude_max_tokens_is_partial_not_failed
+FAILED tests/test_adapters.py::test_claude_permission_denials_do_not_downgrade_a_clean_run
+FAILED tests/test_adapters.py::test_claude_denials_on_a_failed_run_are_tool_errors
+FAILED tests/test_adapters.py::test_claude_api_error_is_provider_error - Attr...
+FAILED tests/test_adapters.py::test_claude_unparseable_output_keeps_the_bytes
+FAILED tests/test_adapters.py::test_claude_timeout - AttributeError: module '...
+FAILED tests/test_adapters.py::test_claude_missing_executable_is_adapter_error
+FAILED tests/test_adapters.py::test_claude_writes_prompt_and_outcome_to_disk
+FAILED tests/test_adapters.py::test_codex_invocation_is_configurable - Attrib...
+FAILED tests/test_adapters.py::test_codex_cli_default_omits_stale_model_override
+FAILED tests/test_adapters.py::test_codex_subprocess_does_not_inherit_unrelated_credentials
+FAILED tests/test_adapters.py::test_codex_finds_usage_at_an_unknown_nesting_depth
+FAILED tests/test_adapters.py::test_codex_accepts_openai_style_key_names - At...
+FAILED tests/test_adapters.py::test_codex_normalizes_observed_cli_usage_without_double_counting_cache
+FAILED tests/test_adapters.py::test_codex_says_so_when_usage_is_unknown - Att...
+FAILED tests/test_adapters.py::test_codex_default_invocation_is_writable_noninteractive_and_sandboxed
+FAILED tests/test_adapters.py::test_openrouter_streams_content_usage_and_cost
+FAILED tests/test_adapters.py::test_openrouter_materializes_file_blocks - Att...
+FAILED tests/test_adapters.py::test_openrouter_warns_when_no_file_blocks_are_emitted
+FAILED tests/test_adapters.py::test_openrouter_refuses_an_unbounded_provider_stream
+FAILED tests/test_adapters.py::test_openrouter_length_finish_is_truncated - A...
+FAILED tests/test_adapters.py::test_openrouter_rate_limit_is_retryable_but_bad_request_is_not
+FAILED tests/test_adapters.py::test_openrouter_requires_an_api_key - Attribut...
+FAILED tests/test_adapters.py::test_openai_compatible_adapter_uses_configured_secret_name
+FAILED tests/test_adapters.py::test_anthropic_adapter_translates_messages_response
+FAILED tests/test_adapters.py::test_a_non_sse_two_hundred_is_parsed_rather_than_discarded
+FAILED tests/test_adapters.py::test_a_two_hundred_that_is_neither_sse_nor_json_is_a_provider_error
+FAILED tests/test_capabilities.py::test_audit_never_writes_a_secret_value - A...
+FAILED tests/test_capabilities.py::test_typed_text_is_recorded_by_length_not_content
+FAILED tests/test_capabilities.py::test_audit_log_never_follows_a_precreated_symlink
+FAILED tests/test_capabilities.py::test_every_public_action_is_audited - Attr...
+FAILED tests/test_capabilities.py::test_chord_presses_in_order_and_releases_in_reverse
+FAILED tests/test_capabilities.py::test_screenshot_returns_the_resolved_path_and_makes_its_parent
+FAILED tests/test_capabilities.py::test_copy_and_paste_use_linux_terminal_chords_without_touching_payload
+FAILED tests/test_capabilities.py::test_ios_runner_never_uses_a_shell_and_keeps_project_cwd
+FAILED tests/test_capabilities.py::test_wayland_clipboard_reads_text_without_logging_it
+FAILED tests/test_capabilities.py::test_wayland_clipboard_materialises_an_image_privately
+FAILED tests/test_capabilities.py::test_capture_records_only_the_label_and_length
+FAILED tests/test_capabilities.py::test_typing_a_secret_wipes_it_and_logs_nothing_sensitive
+FAILED tests/test_capabilities.py::test_browser_pid_reader_rejects_symlink_and_implausible_pid
+FAILED tests/test_capabilities.py::test_browser_close_does_not_start_a_browser
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[setup]
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[auth]
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[sdk]
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[new]
+FAILED tests/test_capabilities.py::test_ios_host_level_commands_do_not_require_a_project[devices]
+FAILED tests/test_cli.py::test_plan_writes_a_validated_dag - AttributeError: ...
+FAILED tests/test_cli.py::test_plan_clips_a_long_goal_before_persisting_it - ...
+FAILED tests/test_cli.py::test_plan_refuses_to_clobber_an_existing_plan - Att...
+FAILED tests/test_cli.py::test_plan_rejects_an_invalid_dag - AttributeError: ...
+FAILED tests/test_cli.py::test_dry_run_dispatches_nothing - AttributeError: m...
+FAILED tests/test_cli.py::test_run_executes_the_dag_in_dependency_order - Att...
+FAILED tests/test_cli.py::test_resume_does_not_repeat_completed_work - Attrib...
+FAILED tests/test_cli.py::test_explain_flag_prints_routing_for_every_task - A...
+FAILED tests/test_cli.py::test_status_shows_every_task_and_the_budget - Attri...
+FAILED tests/test_cli.py::test_status_before_any_run_shows_pending_work - Att...
+FAILED tests/test_cli.py::test_tui_renders_a_safe_static_dashboard - Attribut...
+FAILED tests/test_cli.py::test_tui_can_own_and_execute_the_run - AttributeErr...
+FAILED tests/test_cli.py::test_tui_can_own_sparse_orchestration_without_an_extra_brain_call
+FAILED tests/test_cli.py::test_orchestrate_completes_without_spending_a_brain_call_when_workers_succeed
+FAILED tests/test_cli.py::test_orchestrate_applies_brain_revision_and_resumes_failed_work
+FAILED tests/test_cli.py::test_phase_gate_escalates_a_failed_module_without_waking_the_brain
+FAILED tests/test_cli.py::test_apply_revision_requires_explicit_operator_command_for_semantic_change
+FAILED tests/test_cli.py::test_apply_revision_clears_pending_proposal_badge_source
+FAILED tests/test_cli.py::test_explain_shows_contract_and_attempts - Attribut...
+FAILED tests/test_cli.py::test_explain_rejects_an_unknown_task - AttributeErr...
+FAILED tests/test_cli.py::test_no_catalogue_and_no_network_refuses_to_run - A...
+FAILED tests/test_console.py::test_chat_turn_uses_guarded_process_runner_and_stdin
+FAILED tests/test_console.py::test_project_stage_uses_guarded_process_runner
+FAILED tests/test_executor.py::test_dependencies_are_respected - AttributeErr...
+FAILED tests/test_executor.py::test_concurrency_cap_is_enforced - AttributeEr...
+FAILED tests/test_executor.py::test_concurrency_of_one_serializes - Attribute...
+FAILED tests/test_executor.py::test_independent_tasks_actually_run_in_parallel
+FAILED tests/test_executor.py::test_higher_priority_dispatches_first - Attrib...
+FAILED tests/test_executor.py::test_semantic_revision_reruns_superseded_then_stale_descendants
+FAILED tests/test_executor.py::test_start_record_precedes_the_finish_record
+FAILED tests/test_executor.py::test_producing_nothing_is_failed_not_partial
+FAILED tests/test_executor.py::test_some_outputs_present_and_some_missing_is_partial
+FAILED tests/test_executor.py::test_failed_acceptance_check_fails_a_complete_attempt
+FAILED tests/test_executor.py::test_passing_acceptance_check_succeeds - Attri...
+FAILED tests/test_executor.py::test_adapter_exception_becomes_an_adapter_error_record
+FAILED tests/test_executor.py::test_summary_comes_from_the_subagents_file_and_is_clipped
+FAILED tests/test_executor.py::test_summary_symlink_cannot_read_a_host_file
+FAILED tests/test_executor.py::test_declared_output_symlink_cannot_read_a_host_file
+FAILED tests/test_executor.py::test_metered_and_subscription_costs_are_tallied_separately
+FAILED tests/test_executor.py::test_codex_subscription_usage_does_not_consume_the_claude_window
+FAILED tests/test_executor.py::test_reported_cost_marks_the_estimate_as_authoritative
+FAILED tests/test_executor.py::test_report_preserves_server_tool_counts_with_the_authoritative_total
+FAILED tests/test_executor.py::test_a_failed_task_is_retried_then_succeeds - ...
+FAILED tests/test_executor.py::test_attempts_do_not_share_a_directory - Attri...
+FAILED tests/test_executor.py::test_workspace_harness_write_refuses_provider_created_symlink
+FAILED tests/test_executor.py::test_workspace_harness_write_requires_preclaimed_directory
+FAILED tests/test_executor.py::test_completed_work_is_not_redispatched_on_resume
+FAILED tests/test_executor.py::test_resume_closes_an_open_attempt_and_retries_in_a_fresh_workspace
+FAILED tests/test_executor.py::test_downstream_receives_the_upstream_summary
+FAILED tests/test_executor.py::test_dependents_are_skipped_when_a_dependency_fails
+FAILED tests/test_executor.py::test_cancellation_records_every_in_flight_attempt
+FAILED tests/test_executor.py::test_dry_run_skips_already_completed_tasks - A...
+FAILED tests/test_handoff.py::test_the_console_sees_a_pending_request - Attri...
+FAILED tests/test_handoff.py::test_console_polls_for_a_secret_while_the_model_turn_is_busy
+FAILED tests/test_handoff.py::test_an_unreadable_request_is_discarded_not_retried_forever
+FAILED tests/test_handoff.py::test_dead_or_forged_requester_is_not_allowed_to_prompt_the_operator
+FAILED tests/test_handoff.py::test_request_and_answer_symlinks_are_never_followed
+FAILED tests/test_handoff.py::test_the_console_notices_a_request_raised_while_a_turn_is_running
+FAILED tests/test_orchestrator.py::test_control_cycle_parses_a_typed_stop_decision
+FAILED tests/test_orchestrator.py::test_invalid_control_decision_preserves_outcome_for_durable_accounting
+FAILED tests/test_process.py::test_real_spawn_is_wrapped_with_a_parent_death_guard
+114 failed, 476 passed, 3 skipped in 8.16s
