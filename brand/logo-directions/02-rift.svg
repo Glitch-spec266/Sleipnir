@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 680" role="img" aria-labelledby="title desc">
+  <title id="title">ArcaFlame logo direction two — Rift</title>
+  <desc id="desc">An aggressive asymmetric black lightning bow, a taut violet string pulled down, and a sharp blue flame arrow aimed upward above the ArcaFlame wordmark.</desc>
+  <defs>
+    <linearGradient id="arrow-b" gradientUnits="userSpaceOnUse" x1="294" y1="431" x2="304" y2="28"><stop stop-color="#125FD3"/><stop offset=".48" stop-color="#29BFFF"/><stop offset="1" stop-color="#B9F3FF"/></linearGradient>
+    <filter id="blue-glow-b" x="-80%" y="-60%" width="260%" height="240%"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <g transform="translate(0 20)">
+    <!-- A broken, asymmetrical lightning profile gives the mark more attack and speed. -->
+    <path d="M68 292 121 221 92 200 169 151 144 119 249 54 297 78 351 45 462 112 432 143 508 190 477 218 532 285 468 251 478 225 398 187 416 155 344 120 320 145 294 125 263 146 236 123 181 162 196 190 123 224 134 252Z"
+      fill="#09070E" stroke="#240D46" stroke-width="11" stroke-linejoin="miter"/>
+    <path d="M68 292 121 221 92 200 169 151 144 119 249 54" fill="none" stroke="#37106B" stroke-width="8"/>
+    <path d="M351 45 462 112 432 143 508 190" fill="none" stroke="#7942E8" stroke-width="7"/>
+    <path d="M72 289 294 405 528 282" fill="none" stroke="#7131E0" stroke-width="5"/>
+    <path d="M294 405 305 393" stroke="#B99CFF" stroke-width="7" stroke-linecap="round"/>
+    <g filter="url(#blue-glow-b)">
+      <path d="M304 28 342 103 320 91 333 134 304 111 276 137 287 92 264 105Z" fill="url(#arrow-b)"/>
+      <path d="M304 48 315 96 304 83 293 98Z" fill="#E0FAFF"/>
+    </g>
+    <path d="M304 91 295 421" stroke="url(#arrow-b)" stroke-width="12"/>
+    <path d="M296 370 257 404 282 405 294 431 307 407 332 410Z" fill="#127AD9" stroke="#65D8FF" stroke-width="4"/>
+  </g>
+  <g font-family="Inter, Avenir Next, ui-sans-serif, system-ui, sans-serif" font-size="76" font-weight="850" letter-spacing="-5">
+    <text x="300" y="596" text-anchor="middle" transform="skewX(-4)"><tspan fill="#27084F">Arca</tspan><tspan fill="#20BFFF">Flame</tspan></text>
+  </g>
+  <text x="300" y="633" text-anchor="middle" fill="#574A69" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="5">BREAK THE CEILING</text>
+</svg>

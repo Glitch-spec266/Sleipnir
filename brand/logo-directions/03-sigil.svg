@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 680" role="img" aria-labelledby="title desc">
+  <title id="title">ArcaFlame logo direction three — Wild Current</title>
+  <desc id="desc">A thin, asymmetric dark-purple bow curves like spontaneous lightning with a bright violet core and matching drawn string around an upward blue arrow wrapped in tapered blue flames.</desc>
+  <defs>
+    <linearGradient id="arrow-c" gradientUnits="userSpaceOnUse" x1="300" y1="423" x2="300" y2="35"><stop stop-color="#0D6EDC"/><stop offset=".55" stop-color="#35C9FF"/><stop offset="1" stop-color="#D0F8FF"/></linearGradient>
+    <linearGradient id="flame-c" gradientUnits="userSpaceOnUse" x1="250" y1="340" x2="345" y2="105"><stop stop-color="#126DD8"/><stop offset=".52" stop-color="#2BC4FF"/><stop offset="1" stop-color="#B8F3FF"/></linearGradient>
+    <filter id="blue-glow-c" x="-80%" y="-60%" width="260%" height="240%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="flame-glow-c" x="-80%" y="-60%" width="260%" height="240%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="violet-glow-c" x="-30%" y="-80%" width="160%" height="260%"><feGaussianBlur stdDeviation="2.5" result="v"/><feMerge><feMergeNode in="v"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <g transform="translate(0 18)">
+    <!-- A single spontaneous current: mostly curved, interrupted by a few hard lightning bends. -->
+    <g fill="none" stroke-linecap="round" stroke-linejoin="miter">
+      <path d="M96 302 C119 268 137 241 173 222 L153 200 C187 181 209 151 249 133 L235 111 C273 94 311 92 341 103 L368 65 C389 88 405 115 449 107 L437 141 C481 151 507 177 489 202 L532 219 C507 244 521 267 550 291"
+        stroke="#211039" stroke-width="18"/>
+      <path d="M96 302 C119 268 137 241 173 222 L153 200 C187 181 209 151 249 133 L235 111 C273 94 311 92 341 103 L368 65 C389 88 405 115 449 107 L437 141 C481 151 507 177 489 202 L532 219 C507 244 521 267 550 291"
+        stroke="#B46FFF" stroke-width="4.5" filter="url(#violet-glow-c)"/>
+    </g>
+    <!-- The string uses the same dark sheath / bright core construction as the bow. -->
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M96 302 294 407 550 291" stroke="#211039" stroke-width="11"/>
+      <path d="M96 302 294 407 550 291" stroke="#C17CFF" stroke-width="3" filter="url(#violet-glow-c)"/>
+    </g>
+    <circle cx="294" cy="407" r="8" fill="#24113E" stroke="#D1AEFF" stroke-width="3"/>
+
+    <!-- Rear flame tongues: closed, tapered silhouettes rather than decorative lines. -->
+    <g fill="url(#flame-c)" filter="url(#flame-glow-c)">
+      <path d="M296 361 C279 350 272 336 277 321 C281 309 289 304 288 286 L299 300 C306 310 303 321 297 331 C292 341 296 349 303 352Z"/>
+      <path d="M302 282 C316 270 322 257 318 244 C315 233 308 228 308 208 L320 223 C330 235 329 248 324 259 C319 271 310 280 301 289Z"/>
+      <path d="M302 213 C288 203 284 190 289 178 C293 168 301 162 301 145 L311 157 C319 167 315 180 309 190 C304 199 306 206 311 209Z"/>
+    </g>
+
+    <!-- Arrow spine stays calm and vertical inside the chaotic bow and flame. -->
+    <g filter="url(#blue-glow-c)">
+      <path d="M304 34 329 83 317 77 322 108 304 94 284 111 292 78 277 88Z" fill="url(#arrow-c)"/>
+    </g>
+    <path d="M304 87 294 423" stroke="#0B63CC" stroke-width="16"/>
+    <path d="M304 87 294 423" stroke="url(#arrow-c)" stroke-width="8"/>
+
+    <!-- Front tongues cross the shaft, making the fire visibly wrap around it. -->
+    <g fill="#67DFFF" filter="url(#flame-glow-c)">
+      <path d="M294 335 C309 327 316 316 313 305 C311 298 308 293 309 281 L318 292 C325 301 323 313 318 322 C313 333 304 340 295 344Z"/>
+      <path d="M299 264 C286 255 282 244 286 233 C289 225 296 220 296 206 L306 218 C313 227 310 238 305 247 C301 255 305 260 309 261Z"/>
+      <path d="M302 193 C315 184 319 173 315 163 C312 155 309 150 309 138 L318 149 C325 158 322 169 317 178 C313 187 306 193 301 199Z"/>
+    </g>
+    <g fill="#CEF7FF" opacity=".9">
+      <path d="M298 350 C290 342 290 334 294 326 L299 337Z"/>
+      <path d="M305 274 C314 264 316 254 312 245 L320 255Z"/>
+      <path d="M304 205 C297 198 296 190 300 182 L305 193Z"/>
+    </g>
+    <path d="M294 369 263 402 281 403 294 433 309 405 330 404Z" fill="#167DDF" stroke="#8AE7FF" stroke-width="4"/>
+    <path d="M286 403 294 411 302 402" fill="none" stroke="#E6DDFF" stroke-width="4"/>
+  </g>
+  <g font-family="Inter, Avenir Next, ui-sans-serif, system-ui, sans-serif" font-size="76" font-weight="800" letter-spacing="-4">
+    <text x="300" y="596" text-anchor="middle"><tspan fill="#30105F">Arca</tspan><tspan fill="#28BFF8">Flame</tspan></text>
+  </g>
+  <text x="300" y="633" text-anchor="middle" fill="#574A69" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="5">AIM THE SYSTEM</text>
+</svg>

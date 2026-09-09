@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 680" role="img" aria-labelledby="title desc">
+  <title id="title">ArcaFlame logo direction one — Ascendant</title>
+  <desc id="desc">A balanced jagged black and violet bow, a violet string drawn downward, and a blue flame arrow aimed upward above the ArcaFlame wordmark.</desc>
+  <defs>
+    <linearGradient id="arrow-a" gradientUnits="userSpaceOnUse" x1="300" y1="428" x2="300" y2="37">
+      <stop stop-color="#1677E8"/><stop offset=".5" stop-color="#31C6FF"/><stop offset="1" stop-color="#A3ECFF"/>
+    </linearGradient>
+    <filter id="blue-glow-a" x="-80%" y="-60%" width="260%" height="240%">
+      <feGaussianBlur stdDeviation="9" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g transform="translate(0 20)">
+    <!-- The bow is an upward-facing lightning crown: heavy enough to survive at icon size. -->
+    <path d="M77 286 112 205 87 190 158 118 137 99 244 48 300 79 356 48 463 99 442 118 513 190 488 205 523 286 466 244 472 218 409 177 421 151 346 119 330 137 300 121 270 137 254 119 179 151 191 177 128 218 134 244Z"
+      fill="#0B0911" stroke="#29104E" stroke-width="10" stroke-linejoin="miter"/>
+    <path d="M87 190 158 118 137 99 244 48M356 48 463 99 442 118 513 190"
+      fill="none" stroke="#6B32D9" stroke-width="7" stroke-linecap="square" stroke-linejoin="miter"/>
+    <!-- One continuous violet string, visibly drawn below the bow. -->
+    <path d="M81 283 300 391 519 283" fill="none" stroke="#8A52F4" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="300" cy="391" r="8" fill="#B596FF"/>
+    <!-- Original blue ignition-arrow: forked flame crown, hot inner spine, cold-blue fletching. -->
+    <g filter="url(#blue-glow-a)">
+      <path d="M300 37 332 91 316 84 326 129 300 111 274 129 284 84 268 91Z" fill="url(#arrow-a)"/>
+      <path d="M300 55 310 93 300 84 290 93Z" fill="#D7F7FF"/>
+    </g>
+    <path d="M300 93V409" stroke="url(#arrow-a)" stroke-width="12" stroke-linecap="square"/>
+    <path d="M300 367 267 407 288 404 300 428 312 404 333 407Z" fill="#188DEB" stroke="#89E5FF" stroke-width="4"/>
+  </g>
+  <g font-family="Inter, Avenir Next, ui-sans-serif, system-ui, sans-serif" font-size="76" font-weight="800" letter-spacing="-4">
+    <text x="300" y="596" text-anchor="middle"><tspan fill="#30105F">Arca</tspan><tspan fill="#28BFF8">Flame</tspan></text>
+  </g>
+  <text x="300" y="633" text-anchor="middle" fill="#574A69" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="5">CONTAINED VOLTAGE</text>
+</svg>

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 680" style="display:block;width:auto;height:auto;max-width:min(520px,100%);max-height:calc(100vh - 80px)" role="img" aria-labelledby="t3 d3">
+  <title id="t3">ArcaFlame logo — Wild Current v3</title>
+  <desc id="d3">A bow drawn as two angular lightning limbs with spiky offshoots, rising from low tips to points either side of a single continuous flame arrow that tapers from its fire barbs down to a point at the base.</desc>
+  <defs>
+    <linearGradient id="fl3" gradientUnits="userSpaceOnUse" x1="300" y1="458" x2="300" y2="36"><stop stop-color="#0A57C4"></stop><stop offset=".4" stop-color="#1D96F0"></stop><stop offset=".76" stop-color="#5CD8FF"></stop><stop offset="1" stop-color="#EAFDFF"></stop></linearGradient>
+    <linearGradient id="fl3core" gradientUnits="userSpaceOnUse" x1="300" y1="450" x2="300" y2="60"><stop stop-color="#3BB9FF"></stop><stop offset=".62" stop-color="#ADEFFF"></stop><stop offset="1" stop-color="#FFFFFF"></stop></linearGradient>
+    <linearGradient id="lick3" gradientUnits="userSpaceOnUse" x1="250" y1="400" x2="350" y2="100"><stop stop-color="#0F72DE"></stop><stop offset=".55" stop-color="#4FD0FF"></stop><stop offset="1" stop-color="#CDF7FF"></stop></linearGradient>
+    <filter id="g3" x="-70%" y="-40%" width="240%" height="200%"><feGaussianBlur stdDeviation="6" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter>
+    <filter id="g3s" x="-70%" y="-40%" width="240%" height="200%"><feGaussianBlur stdDeviation="2.4" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter>
+  </defs>
+
+  <g transform="translate(0 10)">
+        <g fill="url(#lick3)" filter="url(#g3s)">
+      <path d="M292 66 C279 86 277 104 285 124 C280 102 289 84 297 72 Z"></path>
+      <path d="M281 182 C258 198 251 220 261 242 C255 220 267 200 284 192 Z"></path>
+      <path d="M320 236 C340 256 344 282 331 306 C338 278 327 254 314 246 Z"></path>
+      <path d="M286 300 C270 320 266 344 277 366 C271 342 280 320 292 310 Z"></path>
+      <path d="M313 356 C326 376 328 398 318 420 C324 396 316 378 307 368 Z"></path>
+    </g>
+
+       <g filter="url(#g3)">
+      <path d="M300 36 C288 74 280 96 274 122 C264 152 248 168 236 200 C258 178 274 168 284 150 C292 170 288 190 290 212 C292 240 280 252 286 288 C290 318 280 332 285 364 C288 392 296 412 297 460 C302 412 310 392 313 364 C318 332 308 318 312 288 C318 252 306 240 308 212 C310 190 306 170 314 148 C324 174 342 188 362 200 C350 168 334 152 326 122 C318 96 308 74 300 36 Z" fill="url(#fl3)"></path>
+    </g>
+
+ <path d="M300 62 C292 96 288 116 288 142 C282 166 268 182 258 206 C274 190 288 178 296 162 C302 178 300 196 300 214 C302 244 292 256 295 288 C298 316 292 330 295 362 C297 392 299 414 300 452 C303 414 305 392 306 362 C309 330 303 316 306 288 C309 256 300 244 301 214 C302 196 302 178 306 162 C316 180 328 192 344 208 C334 184 322 166 314 142 C310 116 306 96 300 62 Z" fill="url(#fl3core)" opacity=".8"></path>
+
+    <g fill="#FFFFFF" opacity=".9" filter="url(#g3s)">
+      <path d="M300 88 C297 122 297 136 299 160 C301 134 302 118 300 88 Z"></path>
+      <path d="M297 248 C294 274 291 286 294 308 C297 284 299 272 297 248 Z"></path>
+      <path d="M302 342 C300 366 299 380 301 404 C303 378 304 362 302 342 Z"></path>
+    </g>
+  </g>
+
+  <g font-family="Inter, Avenir Next, ui-sans-serif, system-ui, sans-serif" font-size="76" font-weight="800" letter-spacing="-4">
+    <text x="300" y="596" text-anchor="middle"><tspan fill="#30105F">Arca</tspan><tspan fill="#28BFF8">Flame</tspan></text>
+  </g>
+  <text x="300" y="633" text-anchor="middle" fill="#574A69" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="5">AIM THE SYSTEM</text>
+</svg>
