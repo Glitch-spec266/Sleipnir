@@ -6,9 +6,13 @@ export type TaskState =
   | "done"
   | "failed"
   | "blocked"
-  | "skipped";
+  | "skipped"
+  | "partial"
+  | "stale"
+  | "superseded"
+  | "cancelled";
 
-export type Tier = "mechanical" | "code" | "longctx" | "reason" | "control";
+export type Tier = "mechanical" | "code" | "extract" | "longctx" | "reason" | "control";
 export type VoicePhase =
   | "off"
   | "armed"

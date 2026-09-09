@@ -12,6 +12,10 @@ const stateIcon: Record<TaskState, typeof Check> = {
   failed: ShieldAlert,
   blocked: ShieldAlert,
   skipped: Clock3,
+  partial: ShieldAlert,
+  stale: Clock3,
+  superseded: Clock3,
+  cancelled: ShieldAlert,
 };
 
 export function GraphView({ snapshot }: { snapshot: DashboardSnapshot }) {
