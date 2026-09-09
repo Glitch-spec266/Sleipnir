@@ -38,8 +38,12 @@ LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
 # Console
 # ---------------------------------------------------------------------------
 
-STD_INPUT_HANDLE = -10
-STD_OUTPUT_HANDLE = -11
+# WinBase.h spells these as casts from signed values to DWORD. Writing their
+# actual unsigned 32-bit values avoids relying on ctypes' host-width coercion.
+STD_INPUT_HANDLE = 0xFFFFFFF6
+STD_OUTPUT_HANDLE = 0xFFFFFFF5
+STD_ERROR_HANDLE = 0xFFFFFFF4
+INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
 ENABLE_ECHO_INPUT = 0x0004
 ENABLE_LINE_INPUT = 0x0002

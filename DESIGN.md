@@ -843,7 +843,7 @@ failures into blind repeats.
 The phrase “Xcode capabilities” is scoped to the outcome the operator chose:
 develop, sign and deploy an iOS app from Linux or Windows without renting or
 owning a Mac. Sleipnir delegates compilation and device services to xtool. Its
-stable surface is `ios doctor|setup|auth|sdk|new|build|ipa|run|devices|install|launch`;
+stable surface is `ios doctor|setup|auth|logout|sdk|sdk-remove|new|build|ipa|run|xcodeproj|devices|install|uninstall|launch`;
 arguments are passed as an argv vector, never a shell string. Build, IPA and run
 refuse a directory without both `Package.swift` and `xtool.yml`.
 
@@ -852,7 +852,12 @@ documented unit is a SwiftPM iOS app. `.xcodeproj`, `.xcworkspace`, CocoaPods an
 mobile stacks whose iOS build depends on Xcode are outside this bridge. Native
 app code is Swift-first; C-family library targets may be usable through SwiftPM,
 but the wrapper makes no broader language guarantee. `ios doctor` reports
-missing tools and project files without installing anything.
+missing tools, Darwin SDK and project files without installing anything. On
+Linux `xcodeproj` refuses explicitly: xtool 1.19.0 says generation does nothing
+there, so a successful exit would be a false capability claim. A stock SwiftUI
+fixture has been built through Sleipnir on Linux to a Mach-O arm64 app. Signing,
+installation and launch still require valid Apple authentication and a real
+attached device and have not been hardware-verified here.
 
 App Store delivery is split at a clean boundary. xtool can produce the signed
 IPA. Apple's current Build Upload API can upload binaries from any platform via
@@ -862,6 +867,70 @@ is intentionally deferred: the operator said an Apple account exists but not
 to wire it yet. Sleipnir therefore has no App Store private-key reader, JWT
 signer or submit command, and does not pretend IPA creation equals App Review
 submission.
+
+# Credential retention: a protected operator-only agent
+
+Askpass is split because `sudo -A` starts a fresh helper for every prompt. The
+short-lived helper may write plaintext to its stdout only because that is the
+sudo protocol; no other component gains that exception. A separate session
+agent retains matching labels in anonymous `mlock`ed, `MADV_DONTDUMP` mappings,
+with core dumps and Linux dumpability disabled. Failure to establish locked
+memory fails cache insertion. Values are wiped on idle expiry, explicit drop,
+replacement and shutdown; no credential or encrypted vault is written to a
+file.
+
+The agent daemon inherits only an allowlist of runtime/import/locale variables,
+not the operator shell's API keys, cookies or askpass hooks. The UNIX socket
+lives in a private runtime directory, is mode 0600, and checks the
+kernel-supplied peer uid. Worker environments lose all askpass/agent
+variables and carry a worker marker that makes the helper refuse. On Linux the
+agent also walks the kernel-reported peer pid's ancestry for that marker, so an
+immediate child cannot bypass the refusal by merely removing its own copy. This
+is defense in depth around the provider's kernel sandbox, not a replacement for
+it. Only a direct operator command, or the awake brain acting on the operator's
+current explicit instruction, may use the capability. `secret prompt` uses the
+same cache for browser/focused-window delivery, so a Gmail label prompts once
+and later matching prompts are filled without disclosing the bytes to the
+provider. On Linux, focused-window delivery uses `ydotool type --file=-`, sends
+text on stdin, and suppresses third-party stderr on failure; credential bytes
+are never an argv element or model-visible diagnostic. Browser delivery uses
+Playwright's direct field API.
+
+The Windows parent-death guard joins the launcher's preconfigured job object and
+then closes its duplicate handle before spawning the provider. The launcher is
+therefore the sole job-handle owner. Its death triggers `KILL_ON_JOB_CLOSE` in
+the kernel without a pid-reuse-prone watcher thread, and every provider
+descendant inherits membership from the guard.
+
+# Parties: encrypted coordination, not distributed execution
+
+A party uses a random public ntfy topic because it requires no hosted service,
+account or inbound network reachability. The join code supplies a 256-bit
+AES-GCM key and pins the creator's Ed25519 public key. Each member has its own
+signing key and its id is derived from the public key; sharing the group cipher
+key therefore cannot forge the leader. Unique 96-bit nonces, signatures,
+message/replay bounds, recipient filtering and deduplication make the relay a
+dumb ciphertext carrier.
+
+Collaborate mode permits peer coordination. Delegate mode routes non-leaders
+to the leader and prevents sideways sends; only the pinned leader may change
+mode or issue assignments. Authenticated peers remain untrusted. Their text is
+displayed and bounded but never executed, never enters artifacts/transcripts,
+and never changes `plan.json`. The operator-triggered `/party sync` is the only
+agent bridge: it creates a fresh Claude turn with both built-in and MCP tools
+disabled, supplies at most eight messages/6,000 characters, and relays at most
+4,000 characters back. It is not automatic, preventing remote peers from
+creating an unbounded spend or prompt-injection loop.
+
+Party is reachable only from the console, never as a `sleipnir party`
+subcommand. The join code is a credential: it carries the group's AES-GCM key
+and pins the creator's public key, so a member could not be distinguished from
+an eavesdropper once it leaked. An argv-carried code is readable by any process
+on the host through `/proc/*/cmdline` and is recorded by the shell's history,
+neither of which the code's holder can undo. The console reads it from pinentry
+into a mutable buffer that is wiped after use, which a command line cannot
+offer. This is the same constraint that keeps credential text on `ydotool`'s
+stdin rather than after `--`.
 
 
 # Platform contracts

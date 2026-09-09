@@ -175,12 +175,32 @@ class BaseAdapter(ABC):
         mean "use the parent environment safely", not raw inheritance.
         """
         source = env or os.environ
-        secret = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH", "CREDENTIAL")
-        return {
+        # ASKPASS and SLEIPNIR_AGENT are here because neither `SUDO_ASKPASS`
+        # nor `SLEIPNIR_AGENT_SOCK` contains any of the other markers, so both
+        # passed straight through to delegated CLIs -- handing arbitrary model
+        # output a working route to the operator's cached root password.
+        # See `capabilities/askpass.py`; `tests/test_askpass.py` pins it.
+        secret = (
+            "KEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "AUTH",
+            "CREDENTIAL",
+            "ASKPASS",
+            "SLEIPNIR_AGENT",
+        )
+        stripped = {
             key: value
             for key, value in source.items()
             if not any(marker in key.upper() for marker in secret)
         }
+        # Stripping alone is not enough: a worker could rebuild the agent's
+        # default socket path from `$XDG_RUNTIME_DIR`. The marker is what
+        # `askpass.resolve` refuses on, so the refusal is positive rather than
+        # dependent on something being absent.
+        stripped["SLEIPNIR_WORKER"] = "1"
+        return stripped
 
 
 __all__ = [

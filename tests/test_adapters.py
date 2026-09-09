@@ -355,7 +355,14 @@ def test_codex_subprocess_does_not_inherit_unrelated_credentials(tmp_path: Path)
         "GITHUB_TOKEN": "gh-secret",
     })))
     child_env = calls[0]["kwargs"]["env"]
-    assert child_env == {"PATH": "/usr/bin"}
+    assert child_env["PATH"] == "/usr/bin"
+    assert "OPENROUTER_API_KEY" not in child_env
+    assert "GITHUB_TOKEN" not in child_env
+    # The worker marker is deliberately added rather than merely inherited:
+    # `askpass.resolve` refuses on it, so a task cannot reach the credential
+    # cache even if it reconstructs the agent's socket path itself.
+    assert child_env["SLEIPNIR_WORKER"] == "1"
+    assert set(child_env) == {"PATH", "SLEIPNIR_WORKER"}
 
 
 def test_codex_finds_usage_at_an_unknown_nesting_depth(tmp_path: Path):

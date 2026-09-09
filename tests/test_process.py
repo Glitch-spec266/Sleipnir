@@ -365,3 +365,65 @@ time.sleep(30)
         subprocess.run(
             ["taskkill", "/F", "/PID", str(guard_pid)], capture_output=True, check=False
         )
+
+
+def test_windows_guard_refuses_to_spawn_when_it_cannot_join_the_job(monkeypatch):
+    """Isolation setup failure must not become an unguarded paid dispatch."""
+    from sleipnir import process_guard
+
+    class Kernel:
+        def OpenJobObjectW(self, *args):
+            return 0
+
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(process_guard, "_kernel32", Kernel())
+    monkeypatch.setattr(
+        process_guard.subprocess,
+        "Popen",
+        lambda argv, **kwargs: spawned.append(argv),
+    )
+    assert process_guard._run_windows(["provider"], "job-name") == 126
+    assert spawned == []
+
+
+def test_windows_guard_leaves_the_launcher_as_sole_job_handle_owner(monkeypatch):
+    """KILL_ON_JOB_CLOSE is race-free only when the parent owns the last handle."""
+    from sleipnir import process_guard
+
+    events: list[object] = []
+
+    class Kernel:
+        def OpenJobObjectW(self, *args):
+            events.append("opened")
+            return 41
+
+        def GetCurrentProcess(self):
+            return 99
+
+        def AssignProcessToJobObject(self, job, process):
+            events.append(("assigned", job, process))
+            return 1
+
+        def CloseHandle(self, handle):
+            events.append(("closed", handle))
+            return 1
+
+    class Child:
+        def wait(self):
+            events.append("waited")
+            return 0
+
+    def spawn(argv, **kwargs):
+        events.append(("spawned", argv))
+        return Child()
+
+    monkeypatch.setattr(process_guard, "_kernel32", Kernel())
+    monkeypatch.setattr(process_guard.subprocess, "Popen", spawn)
+    assert process_guard._run_windows(["provider"], "job-name") == 0
+    assert events == [
+        "opened",
+        ("assigned", 41, 99),
+        ("closed", 41),
+        ("spawned", ["provider"]),
+        "waited",
+    ]

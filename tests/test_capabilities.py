@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import json
 import sys
+import subprocess
 
 import pytest
 
@@ -236,14 +237,41 @@ def test_unknown_mouse_button_is_refused(audit_log, fake_ydotool):
         computer.click("elbow")
 
 
-def test_type_passes_a_double_dash_so_text_cannot_become_flags(audit_log, fake_ydotool):
+def test_public_type_accepts_text_that_looks_like_flags(audit_log, fake_ydotool):
     computer.type_text("--help --socket-path=/tmp/evil")
+    assert "--help --socket-path=/tmp/evil" not in fake_ydotool[0]
 
-def test_type_passes_a_double_dash_so_text_cannot_become_flags(fake_ydotool):
-    _linux.type_text("--help --socket-path=/tmp/evil", key_delay_ms=12)
-    argv = fake_ydotool[0]
-    assert "--" in argv
-    assert argv.index("--") < argv.index("--help --socket-path=/tmp/evil")
+
+def test_type_sends_text_over_stdin_never_the_command_line(monkeypatch):
+    captured = {}
+
+    class Result:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr(_linux.subprocess, "run", fake_run)
+    value = "not-a-real credential --help"
+    _linux.type_text(value, key_delay_ms=12)
+    assert value not in captured["argv"]
+    assert captured["argv"][-1] == "--file=-"
+    assert captured["input"] == value
+
+
+def test_type_failure_never_echoes_sensitive_stdin_in_the_error(monkeypatch):
+    class Result:
+        returncode = 9
+        stderr = "failed while typing not-a-real-password"
+
+    monkeypatch.setattr(_linux.subprocess, "run", lambda *args, **kwargs: Result())
+    with pytest.raises(computer.CapabilityError) as raised:
+        _linux.type_text("not-a-real-password", key_delay_ms=12)
+    assert "not-a-real-password" not in str(raised.value)
+    assert "exit code 9" in str(raised.value)
 
 
 def test_probe_reports_notes_instead_of_raising(monkeypatch):
@@ -258,6 +286,11 @@ def test_probe_reports_notes_instead_of_raising(monkeypatch):
 
 def test_ios_probe_requires_xtool_swiftpm_manifest_and_project_config(tmp_path, monkeypatch):
     monkeypatch.setattr(ios.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        ios.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0),
+    )
     (tmp_path / "Package.swift").write_text("// swift-tools-version: 6.0\n")
     result = ios.probe(tmp_path)
     assert result.ready is False
@@ -270,7 +303,7 @@ def test_ios_probe_requires_xtool_swiftpm_manifest_and_project_config(tmp_path, 
 def test_ios_argv_uses_xtool_dev_for_build_and_ipa():
     assert ios.argv("build", executable="/opt/xtool") == ["/opt/xtool", "dev", "build"]
     assert ios.argv("ipa", executable="/opt/xtool") == [
-        "/opt/xtool", "dev", "build", "--ipa",
+        "/opt/xtool", "dev", "build", "--sign", "--ipa",
     ]
 
 
@@ -287,9 +320,12 @@ def test_ios_runner_never_uses_a_shell_and_keeps_project_cwd(
 
     monkeypatch.setattr(ios.shutil, "which", lambda name: f"/usr/bin/{name}")
     assert ios.run("build", root=tmp_path, run=fake_run) == 0
-    assert calls == [
-        (["/usr/bin/xtool", "dev", "build"], {"cwd": str(tmp_path), "check": False})
-    ]
+    command, kwargs = calls[0]
+    assert len(calls) == 1
+    assert command == ["/usr/bin/xtool", "dev", "build"]
+    assert kwargs["cwd"] == str(tmp_path)
+    assert kwargs["check"] is False
+    assert "shell" not in kwargs
     assert "ios.xtool" in audit_log.read_text(encoding="utf-8")
 
 
@@ -495,6 +531,48 @@ def test_capture_conversion_drops_alpha_and_swaps_channels():
 
 
 @windows_only
+def test_capture_deselects_the_bitmap_before_getdibits(monkeypatch):
+    """MSDN requires the HBITMAP not be selected during GetDIBits."""
+    from types import SimpleNamespace
+    from sleipnir.capabilities.computer import _windows
+
+    selected: list[int] = []
+    old_object = 303
+
+    class FakeGDI:
+        def CreateCompatibleDC(self, screen):
+            return 101
+
+        def CreateCompatibleBitmap(self, screen, width, height):
+            return 202
+
+        def SelectObject(self, dc, obj):
+            selected.append(obj)
+            return old_object if obj == 202 else 202
+
+        def BitBlt(self, *args):
+            return 1
+
+        def GetDIBits(self, dc, bitmap, start, height, buffer, info, colours):
+            assert selected[-1] == old_object
+            return height
+
+        def DeleteObject(self, bitmap):
+            return 1
+
+        def DeleteDC(self, dc):
+            return 1
+
+    fake_user = SimpleNamespace(GetDC=lambda _: 99, ReleaseDC=lambda *_: 1)
+    monkeypatch.setattr(_windows, "gdi32", FakeGDI())
+    monkeypatch.setattr(_windows, "user32", fake_user)
+    monkeypatch.setattr(_windows, "virtual_screen", lambda: (0, 0, 2, 2))
+    raw, width, height = _windows._capture_bgra()
+    assert (len(raw), width, height) == (16, 2, 2)
+    assert selected[:2] == [202, old_object]
+
+
+@windows_only
 def test_probe_reports_a_windows_shaped_machine():
     from sleipnir.capabilities.computer import _windows
 
@@ -687,16 +765,18 @@ def test_ios_probe_resolves_the_working_directory_when_called(tmp_path, monkeypa
     assert not [note for note in result.notes if "xtool.yml" in note]
 
 
-@pytest.mark.parametrize("action", ["build", "ipa", "run", "install", "launch"])
+@pytest.mark.parametrize("action", ["build", "ipa", "run"])
 def test_ios_project_commands_refuse_a_directory_that_is_not_an_xtool_app(tmp_path, action):
-    """install and launch act on the built product of the project in `root`,
-    so a directory with no manifest is the same category error there."""
+    """SwiftPM development actions need the manifest and xtool config."""
     with pytest.raises(ios.IOSCapabilityError, match="not an xtool SwiftPM app"):
         ios.run(action, root=tmp_path, executable="/usr/bin/true",
                 run=lambda *a, **k: pytest.fail("xtool must not be invoked"))
 
 
-@pytest.mark.parametrize("action", ["doctor", "setup", "auth", "sdk", "new", "devices"])
+@pytest.mark.parametrize(
+    "action",
+    ["doctor", "setup", "auth", "sdk", "new", "devices", "install", "uninstall", "launch"],
+)
 def test_ios_host_level_commands_do_not_require_a_project(tmp_path, action):
     """A host-level command is not project-scoped and must stay usable."""
     if action == "doctor":
@@ -709,6 +789,29 @@ def test_ios_host_level_commands_do_not_require_a_project(tmp_path, action):
     ios.run(action, root=tmp_path, executable="/usr/bin/true",
             run=lambda argv, **k: (calls.append(argv), Done())[1])
     assert calls, "a host-level command must still reach xtool"
+
+
+def test_xcode_project_generation_refuses_linux_noop(tmp_path, monkeypatch):
+    (tmp_path / "Package.swift").write_text("// swift-tools-version:5.9\n")
+    (tmp_path / "xtool.yml").write_text("version: 1\n")
+    monkeypatch.setattr(ios.platform, "system", lambda: "Linux")
+    with pytest.raises(ios.IOSCapabilityError, match="does nothing on Linux"):
+        ios.run("xcodeproj", root=tmp_path, executable="/usr/bin/true")
+
+
+def test_ios_probe_reports_a_missing_darwin_sdk(tmp_path, monkeypatch):
+    (tmp_path / "Package.swift").write_text("// swift-tools-version:5.9\n")
+    (tmp_path / "xtool.yml").write_text("version: 1\n")
+    monkeypatch.setattr(ios.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        ios.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1),
+    )
+    result = ios.probe(tmp_path)
+    assert result.sdk_installed is False
+    assert result.ready is False
+    assert any("Darwin Swift SDK" in note for note in result.notes)
 
 # ── _darwin ──────────────────────────────────────────────────────────────
 #
@@ -986,3 +1089,66 @@ def test_darwin_screenshot_raises_rather_than_returning_a_missing_file(monkeypat
 
     with pytest.raises(computer.CapabilityError, match="screencapture failed"):
         _darwin.screenshot(tmp_path / "nope.png")
+
+
+# --------------------------------------------------------------------------
+# xtool 1.19.0's real CLI surface (verified against the installed binary)
+# --------------------------------------------------------------------------
+
+
+def test_ios_sdk_action_uses_a_subcommand_that_exists():
+    """`xtool sdk list` does not exist and never did.
+
+    The real subcommands are install / remove / build / status. Every
+    `sleipnir ios sdk` call failed with a usage error, which reads to the
+    operator as their project being wrong rather than Sleipnir being wrong.
+    """
+    assert ios.argv("sdk", executable="/opt/xtool") == ["/opt/xtool", "sdk", "status"]
+
+
+def test_ios_devices_does_not_inherit_xtools_blocking_default():
+    """`xtool devices` defaults to `--wait`: with no device it never returns.
+
+    A capability that hangs forever is worse than one that reports nothing,
+    because the caller has no way to tell the two apart.
+    """
+    argv = ios.argv("devices", executable="/opt/xtool")
+    assert argv == ["/opt/xtool", "devices", "--no-wait"]
+
+
+def test_ios_devices_lets_the_operator_ask_to_wait():
+    assert "--no-wait" not in ios.argv("devices", ["--wait"], executable="/opt/xtool")
+
+
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ("uninstall", ["uninstall"]),
+        ("logout", ["auth", "logout"]),
+        ("sdk-remove", ["sdk", "remove"]),
+        ("xcodeproj", ["dev", "generate-xcode-project"]),
+    ],
+)
+def test_ios_exposes_the_remaining_xtool_verbs(action, expected):
+    assert ios.argv(action, executable="/opt/xtool") == ["/opt/xtool", *expected]
+
+
+def test_ios_run_gives_the_child_a_pollable_stdin(tmp_path, monkeypatch):
+    """xtool is SwiftNIO-based and calls epoll_ctl on stdin.
+
+    When stdin is /dev/null -- which is exactly what a tool subprocess gets --
+    epoll_ctl returns EPERM and xtool aborts with a 20-frame unsymbolicated
+    stack trace that reads nothing like "your stdin is wrong". Measured on
+    xtool 1.19.0.
+    """
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0)
+
+    (tmp_path / "Package.swift").write_text("// swift-tools-version:5.9\n", encoding="utf-8")
+    (tmp_path / "xtool.yml").write_text("version: 1\n", encoding="utf-8")
+    monkeypatch.setattr(ios.audit, "DEFAULT_LOG", tmp_path / "audit.jsonl")
+    ios.run("build", root=tmp_path, executable="/usr/bin/true", run=fake_run)
+    assert seen.get("stdin") is not None, "stdin must not be inherited from a tool subprocess"

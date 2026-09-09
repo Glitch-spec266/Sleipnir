@@ -1041,9 +1041,13 @@ async def cmd_doctor(args: argparse.Namespace) -> int:
         )
     if not browser.available():
         print("  ! playwright is not installed — run `sleipnir setup`")
-    if not clipboard.available():
+    if not (platform.IS_WINDOWS or platform.IS_MACOS) and not clipboard.available():
         print("  ! wl-clipboard is not installed — run `sleipnir setup`")
-    ready = probe.ready and browser.available() and clipboard.available()
+    # `clipboard.py` is specifically the Wayland console's MIME reader.
+    # Windows/macOS copy and paste use their native computer backend and must
+    # not make doctor depend on a Linux executable that cannot exist there.
+    clipboard_ready = True if (platform.IS_WINDOWS or platform.IS_MACOS) else clipboard.available()
+    ready = probe.ready and browser.available() and clipboard_ready
     print("\nhost control:", "ready" if ready else "incomplete — run `sleipnir setup`")
     return 0 if ready else 1
 
@@ -1161,7 +1165,11 @@ async def cmd_setup(args: argparse.Namespace) -> int:
     for description, command, needs_root in steps:
         full = f"sudo sh -c {shlex.quote(command)}" if needs_root else command
         print(f"→ {description}")
-        result = subprocess.run(full, shell=True, check=False)  # noqa: S602 - printed above
+        # The strings come only from the fixed setup table above and are shown
+        # for explicit operator approval before execution.
+        result = subprocess.run(  # nosec B602
+            full, shell=True, check=False
+        )
         if result.returncode != 0:
             print(f"error: step failed ({description}); stopping here.", file=sys.stderr)
             return 2
@@ -1216,6 +1224,7 @@ async def cmd_ios(args: argparse.Namespace) -> int:
             ("swift", report.swift or "NOT FOUND"),
             ("Package.swift", "yes" if report.package_manifest else "NO"),
             ("xtool.yml", "yes" if report.xtool_config else "NO"),
+            ("Darwin Swift SDK", "yes" if report.sdk_installed else "NO"),
             ("SwiftPM iOS ready", "yes" if report.ready else "NO"),
         ]
         for label, value in rows:
@@ -1274,6 +1283,135 @@ async def cmd_browser(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_askpass(args: argparse.Namespace) -> int:
+    """Print one credential on stdout. This is the sudo askpass protocol.
+
+    It is the single place in Sleipnir where plaintext is written to a file
+    descriptor, and it is confined to this short-lived process. Everything is
+    routed to stderr except the value itself, so a caller reading stdout can
+    never pick up a diagnostic by mistake.
+    """
+    from sleipnir.capabilities import agent as agent_module
+    from sleipnir.capabilities import askpass
+
+    prompt = args.label or args.prompt
+    try:
+        value = askpass.resolve(prompt)
+    except askpass.AskpassRefused as error:
+        raise CliError(str(error)) from error
+    except askpass.AskpassCancelled:
+        return 1
+    except (askpass.AskpassError, agent_module.AgentError) as error:
+        raise CliError(str(error)) from error
+    try:
+        # Do not decode to an immutable str: sudo's protocol is a byte pipe,
+        # and keeping it one avoids leaving another plaintext heap copy.
+        os.write(sys.stdout.fileno(), value)
+    finally:
+        askpass.wipe(value)
+    return 0
+
+
+async def cmd_agent(args: argparse.Namespace) -> int:
+    from sleipnir.capabilities import agent as agent_module
+
+    if os.environ.get(agent_module.WORKER_MARKER_ENV):
+        raise CliError("credential-agent commands are unavailable to dispatched workers")
+    if args.action == "start":
+        timeout = args.idle_timeout or agent_module.DEFAULT_IDLE_TIMEOUT_S
+        server = agent_module.Agent(idle_timeout_s=timeout)
+        if args.foreground:
+            # A foreground agent is still a dedicated daemon process. Drop
+            # unrelated API keys before entering its long-lived serve loop.
+            safe_env = agent_module.daemon_env()
+            os.environ.clear()
+            os.environ.update(safe_env)
+            print(f"agent listening on {server.socket_path} (idle timeout {timeout:.0f}s)")
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                server.shutdown()
+            return 0
+        # Detached: the whole point is to outlive the shell that started it.
+        # A bare os.fork() here would run the child inside this process's
+        # asyncio loop while still holding the parent's stdout, so the shell
+        # that started the agent would never see the command finish. Re-exec
+        # in a new session instead.
+        if agent_module.AgentClient(server.socket_path).alive():
+            print(f"agent already running on {server.socket_path}")
+            return 0
+        subprocess.Popen(
+            [
+                sys.executable, "-m", "sleipnir.cli", "agent", "start",
+                "--foreground", "--idle-timeout", str(timeout),
+            ],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=agent_module.daemon_env(),
+        )
+        for _ in range(100):
+            if agent_module.AgentClient(server.socket_path).alive():
+                print(f"agent started on {server.socket_path}")
+                return 0
+            await asyncio.sleep(0.05)
+        raise CliError("the agent did not start")
+
+    client = agent_module.AgentClient()
+    try:
+        if args.action == "status":
+            if not client.alive():
+                print("  agent               not running")
+                return 0
+            rows = client.list()
+            print(f"  agent               {client.socket_path}")
+            print(f"  cached              {len(rows)}")
+            for row in rows:
+                print(f"    {row['label']:<24} idle {row['age_s']:.0f}s, {row['length']} bytes")
+            return 0
+        if args.action == "drop":
+            if not args.label:
+                raise CliError("`agent drop` needs a label; use `agent drop-all` for everything")
+            client.drop(args.label)
+        elif args.action == "drop-all":
+            client.drop_all()
+        elif args.action == "stop":
+            client.stop()
+        print(f"agent {args.action} ok")
+        return 0
+    except agent_module.AgentError as error:
+        raise CliError(str(error)) from error
+
+
+async def cmd_sudo(args: argparse.Namespace) -> int:
+    """`sudo -A` with SUDO_ASKPASS pointed at Sleipnir's own helper."""
+    from sleipnir.capabilities import agent as agent_module
+    from sleipnir.capabilities import askpass, audit
+
+    command = list(args.args)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        raise CliError("`sudo` needs a command to run")
+    try:
+        agent_module.ensure_running()
+        env = askpass.sudo_env()
+        # Fail closed if the durable audit cannot be written. Record before
+        # spawning so even an exec failure has an honest attempted-action row.
+        audit.record("sudo.command", {"arg_count": len(command), "phase": "requested"})
+        process = subprocess.run(["sudo", "-A", *command], env=env, check=False)
+    except (agent_module.AgentError, askpass.AskpassError, OSError) as error:
+        raise CliError(f"could not start sudo askpass: {error}") from error
+    # Arguments may themselves contain credentials, so record only command
+    # shape and result, never argv.
+    audit.record(
+        "sudo.result",
+        {"arg_count": len(command), "returncode": int(process.returncode)},
+    )
+    return int(process.returncode)
+
+
 async def cmd_secret(args: argparse.Namespace) -> int:
     """Ask the operator for a credential and type it straight into the target.
 
@@ -1281,16 +1419,25 @@ async def cmd_secret(args: argparse.Namespace) -> int:
     command learns only that a credential was supplied — which is the entire
     point of routing sign-ins through Sleipnir instead of the conversation.
     """
-    from sleipnir.capabilities import handoff, secrets
+    from sleipnir.capabilities import askpass, secrets
 
-    # A tool subprocess has no controlling terminal, so it cannot prompt. When
-    # this command *is* run from a terminal — an operator testing it by hand —
-    # prompting directly is still the shortest path and avoids requiring a
-    # console to be open.
-    if sys.stdin.isatty():
-        print(f"Sleipnir needs a credential: {args.label}", file=sys.stderr)
-        print("It is typed into the focused window and never stored.", file=sys.stderr)
-        secret = secrets.capture(args.label)
+    # pinentry is a GUI and therefore works from the provider's tool subprocess
+    # without a controlling terminal. The protected agent is started
+    # automatically; later calls with the same label never show the dialog.
+    try:
+        value = await asyncio.to_thread(
+            askpass.resolve,
+            args.label,
+            description="Sleipnir will deliver this credential without showing it to the model.",
+        )
+    except askpass.AskpassError as exc:
+        raise CliError(str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - never render third-party exception text
+        # Keep the diagnostic to its type: a third-party exception may embed
+        # locals, and locals may include plaintext.
+        raise CliError(f"credential delivery failed: {type(exc).__name__}") from None
+    secret = secrets.Secret(label=args.label, _buffer=value)
+    try:
         if args.browser_selector:
             from sleipnir.capabilities.browser import Browser
 
@@ -1300,21 +1447,11 @@ async def cmd_secret(args: argparse.Namespace) -> int:
                     await web.press(args.browser_selector, "Enter")
         else:
             secrets.type_into_focused_window(secret, submit=args.submit)
-        print("credential supplied")
-        return 0
-
-    request = handoff.request_secret(
-        args.label,
-        submit=args.submit,
-        browser_selector=args.browser_selector,
-    )
-    print(f"waiting for the Sleipnir console to supply: {args.label}", file=sys.stderr)
-    try:
-        status = handoff.await_answer(request)
-    except TimeoutError as exc:
-        raise CliError(str(exc)) from exc
-    if status != "supplied":
-        raise CliError(f"credential was not supplied ({status})")
+    except Exception as exc:  # noqa: BLE001 - never render exception locals
+        secret.wipe()
+        raise CliError(f"credential delivery failed: {type(exc).__name__}") from None
+    if secret:
+        secret.wipe()
     print("credential supplied")
     return 0
 
@@ -1504,8 +1641,9 @@ def build_parser() -> argparse.ArgumentParser:
     ios_parser.add_argument(
         "action",
         choices=[
-            "doctor", "setup", "auth", "sdk", "new", "build", "ipa",
-            "run", "devices", "install", "launch",
+            "doctor", "setup", "auth", "logout", "sdk", "sdk-remove", "new",
+            "build", "ipa", "run", "xcodeproj", "devices", "install",
+            "uninstall", "launch",
         ],
     )
     ios_parser.add_argument(
@@ -1515,6 +1653,44 @@ def build_parser() -> argparse.ArgumentParser:
         "args", nargs="*", help="additional arguments passed directly to xtool"
     )
     ios_parser.set_defaults(func=cmd_ios)
+
+    # `sudo -A` execs its askpass helper with the prompt as the single
+    # argument, so this subcommand's whole contract is: one line of plaintext
+    # on stdout, nothing else, ever.
+    askpass_parser = subparsers.add_parser(
+        "askpass",
+        help="answer a password prompt from the session cache, asking the operator once",
+    )
+    askpass_parser.add_argument(
+        "prompt", nargs="?", default="Password:",
+        help="the prompt text the asking program supplied",
+    )
+    askpass_parser.add_argument(
+        "--label", help="override the cache key derived from the prompt"
+    )
+    askpass_parser.set_defaults(func=cmd_askpass)
+
+    agent_parser = subparsers.add_parser(
+        "agent", help="the in-memory credential cache that outlives a single sudo prompt"
+    )
+    agent_parser.add_argument(
+        "action", choices=["start", "status", "drop", "drop-all", "stop"]
+    )
+    agent_parser.add_argument("label", nargs="?", help="credential label, for `drop`")
+    agent_parser.add_argument(
+        "--idle-timeout", type=positive_float, default=None,
+        help="seconds a credential survives without use (default: 900)",
+    )
+    agent_parser.add_argument(
+        "--foreground", action="store_true", help="for `start`: do not detach"
+    )
+    agent_parser.set_defaults(func=cmd_agent)
+
+    sudo_parser = subparsers.add_parser(
+        "sudo", help="run a command under sudo, answering its prompt from the cache"
+    )
+    sudo_parser.add_argument("args", nargs=argparse.REMAINDER, help="the command to run")
+    sudo_parser.set_defaults(func=cmd_sudo)
 
     secret_parser = subparsers.add_parser(
         "secret", help="ask the operator for a credential and inject it without storing it"

@@ -10,10 +10,10 @@ are immutable and interned — there is no way to overwrite one in place.  The
 byte buffer is zeroed the moment the secret is consumed.
 
     # ponytail: a transient `str` still exists for the microseconds between
-    # decode and use, because both ydotool and Playwright take `str`. Killing
-    # that last copy would need a C shim or piping bytes to a helper process;
-    # upgrade path is a small setuid-free helper if the threat model ever
-    # includes a same-user heap reader.
+    # decode and use because Playwright and the desktop backends take `str`.
+    # Linux sends it to ydotool over stdin, never argv. Killing that last heap
+    # copy everywhere would need a native helper if the threat model ever
+    # includes a same-user heap reader inside the delivery process.
 """
 
 from __future__ import annotations

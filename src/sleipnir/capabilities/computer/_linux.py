@@ -113,7 +113,11 @@ def ensure_daemon(timeout_s: float = 5.0) -> None:
     raise CapabilityError(f"ydotoold did not create {YDOTOOL_SOCKET} within {timeout_s}s")
 
 
-def _ydotool(*args: str, timeout_s: float = 15.0) -> None:
+def _ydotool(
+    *args: str,
+    timeout_s: float = 15.0,
+    stdin_data: str | None = None,
+) -> None:
     """Run one ydotool invocation.
 
     Does not call ``ensure_daemon()`` itself: the public API in
@@ -129,8 +133,15 @@ def _ydotool(*args: str, timeout_s: float = 15.0) -> None:
         timeout=timeout_s,
         env=env,
         check=False,
+        input=stdin_data,
     )
     if result.returncode != 0:
+        if stdin_data is not None:
+            # This path carries credentials. A third-party tool is not trusted
+            # to keep its diagnostic from echoing stdin, so expose only shape.
+            raise CapabilityError(
+                f"ydotool {args[0]} failed with exit code {result.returncode}"
+            )
         raise CapabilityError(f"ydotool {args[0]} failed: {result.stderr.strip()[:200]}")
 
 
@@ -141,7 +152,16 @@ def type_text(text: str, *, key_delay_ms: int) -> None:
     validate per keystroke, and a zero-delay burst gets dropped or mangled by
     them.
     """
-    _ydotool("type", "--key-delay", str(key_delay_ms), "--", text)
+    # `ydotool type` accepts `--file=-` and reads the payload from stdin. Text
+    # used to be an argv element, exposing credentials through `/proc/*/cmdline`
+    # even though Sleipnir's own audit correctly redacted it.
+    _ydotool(
+        "type",
+        "--key-delay",
+        str(key_delay_ms),
+        "--file=-",
+        stdin_data=text,
+    )
 
 
 def key_chord(codes: list[int]) -> None:

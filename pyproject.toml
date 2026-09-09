@@ -17,6 +17,16 @@ classifiers = [
 dependencies = [
     "pydantic>=2.7",
     "httpx>=0.27",
+    # A public party relay must never carry plaintext or unauthenticated
+    # hierarchy messages. Party is a first-class console feature, so its AEAD
+    # and signature implementation ships with the normal installation.
+    "cryptography>=46",
+    # Every dependency above is pure Python and cross-platform, so none carries
+    # an environment marker.  One wheel serves Linux, Windows and macOS because
+    # the OS-specific backends in `sleipnir.platform` are `ctypes`, not compiled
+    # extensions.  The first dependency that is NOT available everywhere must be
+    # added with an explicit `; sys_platform == "..."` marker -- without one it
+    # installs on all three and fails at import on two.
 ]
 
 [project.optional-dependencies]
@@ -26,7 +36,6 @@ dependencies = [
 host = [
     "playwright>=1.40",
 ]
-
 [dependency-groups]
 dev = [
     "pytest>=8",

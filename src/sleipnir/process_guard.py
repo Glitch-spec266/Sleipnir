@@ -12,10 +12,10 @@ neither POSIX signals nor Windows job objects exist on the other side:
   process group (the provider CLI and anything it spawned).
 * **Windows** — this process joins a job object the launcher created *before*
   spawning anything (see ``platform.create_guarded_launch``), so every
-  descendant inherits membership automatically. A background thread waits on
-  a handle to the launcher's pid; when that wait returns, the job is
-  terminated directly, killing the whole tree unconditionally — no signal to
-  trap, no grace period to outlast.
+  descendant inherits membership automatically. It closes its duplicate job
+  handle immediately after joining. The launcher is therefore the sole handle
+  owner, and the kernel's ``KILL_ON_JOB_CLOSE`` rule kills the whole tree when
+  that process dies — no pid watcher or signal to race.
 
 Neither platform's Sleipnir process is guaranteed to survive to run a
 ``finally``, so both guards act independently of it: :mod:`sleipnir.process`
@@ -27,9 +27,9 @@ from __future__ import annotations
 import contextlib
 import os
 import signal
-import subprocess  # nosec B404 - exact argv execution is this module's sole purpose
+# Exact argv execution is this module's sole purpose; no shell is used.
+import subprocess  # nosec B404
 import sys
-import threading
 import time
 
 if sys.platform == "win32":
@@ -127,69 +127,34 @@ def _run_linux(args: list[str]) -> int:
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if sys.platform == "win32" else None
 
 _JOB_OBJECT_ALL_ACCESS = 0x1F001F
-_SYNCHRONIZE = 0x00100000
-_INFINITE = 0xFFFFFFFF
-_CTRL_BREAK_EVENT = 1
-
 if _kernel32 is not None:
     _kernel32.OpenJobObjectW.argtypes = [_wintypes.DWORD, _wintypes.BOOL, _wintypes.LPCWSTR]
     _kernel32.OpenJobObjectW.restype = _wintypes.HANDLE
     _kernel32.AssignProcessToJobObject.argtypes = [_wintypes.HANDLE, _wintypes.HANDLE]
     _kernel32.AssignProcessToJobObject.restype = _wintypes.BOOL
-    _kernel32.TerminateJobObject.argtypes = [_wintypes.HANDLE, _wintypes.UINT]
-    _kernel32.TerminateJobObject.restype = _wintypes.BOOL
     _kernel32.GetCurrentProcess.restype = _wintypes.HANDLE
-    _kernel32.OpenProcess.argtypes = [_wintypes.DWORD, _wintypes.BOOL, _wintypes.DWORD]
-    _kernel32.OpenProcess.restype = _wintypes.HANDLE
-    _kernel32.WaitForSingleObject.argtypes = [_wintypes.HANDLE, _wintypes.DWORD]
-    _kernel32.WaitForSingleObject.restype = _wintypes.DWORD
     _kernel32.CloseHandle.argtypes = [_wintypes.HANDLE]
     _kernel32.CloseHandle.restype = _wintypes.BOOL
-    _HANDLER_ROUTINE = ctypes.WINFUNCTYPE(_wintypes.BOOL, _wintypes.DWORD)
-    _kernel32.SetConsoleCtrlHandler.argtypes = [_HANDLER_ROUTINE, _wintypes.BOOL]
-    _kernel32.SetConsoleCtrlHandler.restype = _wintypes.BOOL
 
 
 def _run_windows(args: list[str], job_name: str | None) -> int:
     job_handle = None
     if job_name:
         job_handle = _kernel32.OpenJobObjectW(_JOB_OBJECT_ALL_ACCESS, False, job_name)
-        if job_handle:
-            _kernel32.AssignProcessToJobObject(job_handle, _kernel32.GetCurrentProcess())
-        # A failed open/assign means no isolation guarantee for this dispatch
-        # rather than a refusal to run it -- the same posture the Linux path
-        # takes when prctl fails for a reason other than the race it checks.
-
-    handler_ref = None  # keeps the ctypes trampoline alive; see below
-    if job_handle:
-        ppid = os.getppid()
-
-        def _watch_parent() -> None:
-            handle = _kernel32.OpenProcess(_SYNCHRONIZE, False, ppid)
-            if not handle:
-                return  # parent already gone
-            _kernel32.WaitForSingleObject(handle, _INFINITE)
-            _kernel32.CloseHandle(handle)
-            # No grace period, unlike the Linux path's SIGTERM-then-SIGKILL:
-            # there is no Windows signal a provider CLI could trap here to
-            # earn one, and a job kill reaches the whole tree unconditionally
-            # regardless of what any member does.
-            _kernel32.TerminateJobObject(job_handle, 1)
-
-        threading.Thread(target=_watch_parent, name="sleipnir-guard-watch", daemon=True).start()
-
-        @_HANDLER_ROUTINE
-        def _on_ctrl(event: int) -> bool:
-            if event != _CTRL_BREAK_EVENT:
-                return False
-            _kernel32.TerminateJobObject(job_handle, 1)
-            return True
-
-        # ctypes does not keep a reference to a callback once it is passed
-        # to a C function; without this the handler could be garbage
-        # collected while SetConsoleCtrlHandler's table still points at it.
-        handler_ref = _on_ctrl
-        _kernel32.SetConsoleCtrlHandler(handler_ref, True)
+        if not job_handle:
+            print("process guard could not open its provider job", file=sys.stderr)
+            return 126
+        if not _kernel32.AssignProcessToJobObject(
+            job_handle, _kernel32.GetCurrentProcess()
+        ):
+            _kernel32.CloseHandle(job_handle)
+            print("process guard could not join its provider job", file=sys.stderr)
+            return 126
+        # The launcher configured KILL_ON_JOB_CLOSE and still owns the
+        # original handle. Closing this duplicate makes the launcher the sole
+        # owner. If it died before this close, this close kills us; if it dies
+        # later, its handle close kills us and every inherited descendant.
+        _kernel32.CloseHandle(job_handle)
 
     # The validated adapter invocation is passed as an argv vector; no shell,
     # interpolation, or command-string parsing occurs here.

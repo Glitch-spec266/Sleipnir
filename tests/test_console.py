@@ -150,7 +150,8 @@ def test_first_turn_carries_the_capability_brief_and_later_turns_do_not():
     # The brief is what tells Claude it has host control. Repeating it every
     # turn would re-pay its token cost for information the session already has.
     assert "computer screenshot" in console.capability_brief()
-    assert "never stored, logged, or shown to you" in console.capability_brief()
+    assert "protected session memory" in console.capability_brief()
+    assert "never use\na cached credential on your own initiative" in console.capability_brief()
 
 
 def test_claude_argv_opens_a_session_then_resumes_it():
@@ -1016,3 +1017,304 @@ def test_cache_read_weight_accepts_zero_and_rejects_non_finite():
     assert state.cache_read_weight == 0
     console.apply_slash(state, "/cache-read-weight nan")
     assert state.cache_read_weight == 0
+
+
+def test_party_is_a_local_command_and_never_reaches_the_model(monkeypatch):
+    from sleipnir import party
+
+    events: list[object] = []
+
+    class Code:
+        def wipe(self):
+            events.append("wiped")
+
+    class Session:
+        member_id = "leader123456"
+        leader_id = member_id
+        mode = party.PartyMode.COLLABORATE
+        members = {member_id: "lead"}
+        last_error = None
+
+        def start(self):
+            events.append("started")
+
+        def close(self):
+            events.append("closed")
+
+        def say(self, text, recipient=None):
+            events.append(("say", text, recipient))
+
+        def question(self, text, recipient=None):
+            events.append(("question", text, recipient))
+
+        def set_mode(self, mode):
+            self.mode = party.PartyMode(mode)
+            events.append(("mode", self.mode))
+
+        def assign(self, member, text):
+            events.append(("assign", member, text))
+
+        def drain(self):
+            return ()
+
+    session = Session()
+    monkeypatch.setattr(party.PartySession, "create", lambda name: (session, Code()))
+    monkeypatch.setattr(party, "copy_join_code", lambda code: events.append("copied"))
+
+    state = console.ConsoleState()
+    assert console.apply_slash(state, "/party create lead") is True
+    assert state.party_session is session
+    assert events[:3] == ["copied", "started", "wiped"]
+    assert console.apply_slash(state, "/party say hello peers") is True
+    assert events[-1] == ("say", "hello peers", None)
+    assert console.apply_slash(state, "/party ask all ready?") is True
+    assert events[-1] == ("question", "ready?", None)
+    assert console.apply_slash(state, "/party mode delegate") is True
+    assert events[-1] == ("mode", party.PartyMode.DELEGATE)
+    assert console.apply_slash(state, "/party assign worker12345 review this") is True
+    assert events[-1] == ("assign", "worker12345", "review this")
+
+
+def test_party_create_failure_preserves_the_old_session_and_closes_the_new(monkeypatch):
+    from sleipnir import party
+
+    events: list[str] = []
+
+    class Code:
+        def wipe(self):
+            events.append("code-wiped")
+
+    class Session:
+        def __init__(self, name):
+            self.name = name
+
+        def start(self):
+            events.append(f"{self.name}-started")
+
+        def close(self):
+            events.append(f"{self.name}-closed")
+
+    old = Session("old")
+    new = Session("new")
+    monkeypatch.setattr(party.PartySession, "create", lambda name: (new, Code()))
+
+    def fail_copy(code):
+        raise party.PartyError("clipboard failed")
+
+    monkeypatch.setattr(party, "copy_join_code", fail_copy)
+    state = console.ConsoleState(party_session=old)
+    assert console.apply_slash(state, "/party create replacement") is True
+    assert state.party_session is old
+    assert events == ["new-closed", "code-wiped"]
+
+
+def test_unexpected_party_failure_does_not_crash_or_render_dependency_locals(monkeypatch):
+    from sleipnir import party
+
+    class Code:
+        def wipe(self):
+            return None
+
+    class Session:
+        def close(self):
+            return None
+
+    monkeypatch.setattr(party.PartySession, "create", lambda name: (Session(), Code()))
+    monkeypatch.setattr(
+        party,
+        "copy_join_code",
+        lambda code: (_ for _ in ()).throw(RuntimeError("spj1.must-not-render")),
+    )
+    state = console.ConsoleState()
+    assert console.apply_slash(state, "/party create lead") is True
+    assert "RuntimeError" in state.messages[-1].text
+    assert "spj1" not in state.messages[-1].text
+
+
+def test_party_say_respects_shell_quoting():
+    sent: list[str] = []
+
+    class Session:
+        def say(self, text):
+            sent.append(text)
+
+    state = console.ConsoleState(party_session=Session())
+    assert console.apply_slash(state, '/party say "hello peers"') is True
+    assert sent == ["hello peers"]
+
+
+def test_party_question_reports_delegate_mode_routing_to_the_leader():
+    from sleipnir import party
+
+    class Session:
+        mode = party.PartyMode.DELEGATE
+        is_leader = False
+        leader_id = "leader123456"
+
+        def question(self, text, recipient=None):
+            assert recipient is None
+
+    state = console.ConsoleState(party_session=Session())
+    assert console.apply_slash(state, "/party ask all what next") is True
+    assert "leader123456" in state.messages[-1].text
+    assert "all members" not in state.messages[-1].text
+
+
+def test_party_join_code_is_prompted_in_a_gui_not_read_from_command_text(monkeypatch):
+    from sleipnir import party
+    from sleipnir.capabilities import askpass
+
+    supplied = bytearray(b"spj1.not-actually-logged")
+
+    class Session:
+        member_id = "worker123456"
+        leader_id = "leader123456"
+        mode = party.PartyMode.COLLABORATE
+        members = {member_id: "worker"}
+        last_error = None
+
+        def start(self):
+            return None
+
+        def close(self):
+            return None
+
+        def drain(self):
+            return ()
+
+    monkeypatch.setattr(askpass, "prompt_gui", lambda *args, **kwargs: supplied)
+    monkeypatch.setattr(party.PartySession, "join", lambda code, name: Session())
+    state = console.ConsoleState()
+    console.apply_slash(state, "/party join worker")
+    assert state.party_session is not None
+    assert supplied == bytearray(), "the entered join credential must be wiped"
+    assert "spj1" not in "\n".join(message.text for message in state.messages)
+
+
+def test_party_inbox_is_rendered_as_untrusted_coordination_only():
+    from sleipnir import party
+
+    message = party.PartyMessage(
+        id="1" * 32,
+        sent_at=1,
+        kind=party.MessageKind.ASSIGNMENT,
+        sender="member123456",
+        sender_name="peer\x1b[31m",
+        recipient="local1234567",
+        text="review module\x1b[2J",
+        mode=None,
+    )
+
+    class Session:
+        last_error = None
+
+        def drain(self):
+            return (message,)
+
+    state = console.ConsoleState(party_session=Session())
+    console.poll_party(state)
+    rendered = console.render(state, width=90, height=26, colour=False)
+    assert "review module" in rendered
+    assert "\x1b[2J" not in rendered
+    assert state.party_pending == [message]
+
+
+def test_party_sync_uses_isolated_tool_free_turn_and_replies_to_sender(monkeypatch):
+    from sleipnir import party
+
+    message = party.PartyMessage(
+        id="2" * 32,
+        sent_at=1,
+        kind=party.MessageKind.QUESTION,
+        sender="member123456",
+        sender_name="peer",
+        recipient="local1234567",
+        text="Can you take the review?",
+        mode=None,
+    )
+    sent: list[tuple[str, str]] = []
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class Session:
+        def reply(self, text, recipient):
+            sent.append((text, recipient))
+
+    async def fake_ask(prompt, session_id, **kwargs):
+        calls.append((prompt, kwargs))
+        return chat.Reply("I can review after local approval.", "claude", session_id)
+
+    monkeypatch.setattr(chat, "ask_claude", fake_ask)
+    state = console.ConsoleState(party_session=Session(), party_pending=[message])
+    assert console.apply_slash(state, "/party sync") is True
+    assert state.party_sync_requested is True
+    asyncio.run(console.sync_party(state))
+
+    assert calls[0][1]["tools"] == ()
+    assert calls[0][1]["system_prompt"] == console.PARTY_PEER_SYSTEM
+    assert "Can you take the review?" in calls[0][0]
+    assert sent == [("I can review after local approval.", "member123456")]
+    assert state.party_pending == []
+
+
+def test_console_shutdown_wipes_and_closes_the_party_session():
+    closed: list[bool] = []
+
+    class Session:
+        def close(self):
+            closed.append(True)
+
+    state = console.ConsoleState(party_session=Session())
+    asyncio.run(state.aclose())
+    assert closed == [True]
+
+
+def test_console_shutdown_closes_party_even_when_a_transport_close_fails():
+    closed: list[bool] = []
+
+    class Transport:
+        async def close(self):
+            raise RuntimeError("provider teardown failed")
+
+    class ProviderSession:
+        _transport = Transport()
+
+    class PartySession:
+        def close(self):
+            closed.append(True)
+
+    state = console.ConsoleState(
+        sessions={"claude": ProviderSession()},
+        party_session=PartySession(),
+    )
+    with pytest.raises(RuntimeError, match="provider teardown failed"):
+        asyncio.run(state.aclose())
+    assert closed == [True]
+    assert state.party_session is None
+
+
+def test_sudo_is_a_local_operator_command_not_a_model_message(monkeypatch, tmp_path):
+    from sleipnir.capabilities import askpass, audit
+
+    calls: list[tuple[list[str], dict[str, str]]] = []
+    audit_log = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_LOG", audit_log)
+
+    class Result:
+        returncode = 0
+
+    monkeypatch.setattr(askpass.agent, "ensure_running", lambda: object())
+    monkeypatch.setattr(askpass, "sudo_env", lambda: {"SUDO_ASKPASS": "/private/helper"})
+    monkeypatch.setattr(
+        console.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs["env"])) or Result(),
+    )
+    state = console.ConsoleState()
+    assert console.apply_slash(state, "/sudo id -u") is True
+    assert calls == [(["sudo", "-A", "id", "-u"], {"SUDO_ASKPASS": "/private/helper"})]
+    assert "finished" in state.messages[-1].text
+    recorded = audit_log.read_text(encoding="utf-8")
+    assert "sudo.command" in recorded
+    assert "sudo.result" in recorded
+    assert '"arg_count": 2' in recorded
+    assert "id" not in recorded and "-u" not in recorded

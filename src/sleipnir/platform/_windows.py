@@ -141,9 +141,12 @@ def enable_ansi(stream: Any) -> bool:
     isatty = getattr(stream, "isatty", None)
     if not (isatty and isatty()):
         return False
-    which = _win32.STD_OUTPUT_HANDLE if stream is sys.stdout else _win32.STD_INPUT_HANDLE
+    # stderr is an output screen buffer too. The old fallback selected stdin
+    # for every non-stdout stream and then tried to enable an *output* mode on
+    # the input buffer, so colour capability checks on stderr always failed.
+    which = _win32.STD_ERROR_HANDLE if stream is sys.stderr else _win32.STD_OUTPUT_HANDLE
     handle = _std_handle(which)
-    if not handle or handle == -1:
+    if not handle or handle == _win32.INVALID_HANDLE_VALUE:
         return False
     mode = ctypes.wintypes.DWORD()
     if not _win32.kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
@@ -208,20 +211,20 @@ def create_guarded_launch(argv: list[str]):
     job_name = f"sleipnir-{uuid.uuid4().hex}"
     handle = _win32.kernel32.CreateJobObjectW(None, job_name)
     if not handle:
-        # No isolation available; still run the child rather than refuse.
-        from sleipnir.platform import GuardedLaunch
-
-        wrapped = [sys.executable, str(_guard_path()), "--", *argv]
-        return GuardedLaunch(wrapped, close=lambda: None)
+        raise OSError(ctypes.get_last_error(), "could not create provider job object")
 
     info = _win32.JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
     info.BasicLimitInformation.LimitFlags = _win32.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    _win32.kernel32.SetInformationJobObject(
+    configured = _win32.kernel32.SetInformationJobObject(
         handle,
         _win32.JobObjectExtendedLimitInformation,
         ctypes.byref(info),
         ctypes.sizeof(info),
     )
+    if not configured:
+        error = ctypes.get_last_error()
+        _win32.kernel32.CloseHandle(handle)
+        raise OSError(error, "could not configure provider job object")
 
     wrapped = [sys.executable, str(_guard_path()), "--job", job_name, "--", *argv]
 
@@ -432,16 +435,27 @@ def raw_console() -> Iterator[bool]:
     hout = _std_handle(_win32.STD_OUTPUT_HANDLE)
     saved_in = ctypes.wintypes.DWORD()
     saved_out = ctypes.wintypes.DWORD()
-    _win32.kernel32.GetConsoleMode(hin, ctypes.byref(saved_in))
-    _win32.kernel32.GetConsoleMode(hout, ctypes.byref(saved_out))
+    if not _win32.kernel32.GetConsoleMode(hin, ctypes.byref(saved_in)):
+        yield False
+        return
+    if not _win32.kernel32.GetConsoleMode(hout, ctypes.byref(saved_out)):
+        yield False
+        return
     raw_mode = saved_in.value & ~(
         _win32.ENABLE_ECHO_INPUT | _win32.ENABLE_LINE_INPUT | _win32.ENABLE_PROCESSED_INPUT
     )
+    if not _win32.kernel32.SetConsoleMode(
+        hin, raw_mode | _win32.ENABLE_VIRTUAL_TERMINAL_INPUT
+    ):
+        yield False
+        return
+    if not _win32.kernel32.SetConsoleMode(
+        hout, saved_out.value | _win32.ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    ):
+        _win32.kernel32.SetConsoleMode(hin, saved_in.value)
+        yield False
+        return
     try:
-        _win32.kernel32.SetConsoleMode(hin, raw_mode | _win32.ENABLE_VIRTUAL_TERMINAL_INPUT)
-        _win32.kernel32.SetConsoleMode(
-            hout, saved_out.value | _win32.ENABLE_VIRTUAL_TERMINAL_PROCESSING
-        )
         yield True
     finally:
         _win32.kernel32.SetConsoleMode(hin, saved_in.value)

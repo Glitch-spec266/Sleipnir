@@ -138,23 +138,22 @@ def flicker_level(frame: int, *, seed: int = 0, base: int = NORMAL) -> int:
 # Logo
 # ---------------------------------------------------------------------------
 
-# Sleipnir: Odin's eight-legged horse. This is an emblem rather than a rendered
-# product name: the frame already carries the name, while the mark itself should
-# remain recognisable without letters. Four pairs below the body make all eight
-# legs explicit, including in the compact form.
+# One hub, eight routes. The deliberately blocky construction follows the same
+# constraint as a fastfetch logo: it has to read immediately in a monospace
+# terminal, without shading, animation, or explanatory lettering.
 LOGO = (
-    "                 ╭╮",
-    "        ╭────────╯╰──╮",
-    "   ╭────╯             ╰╮",
-    "≋≋╯    ╭────────╮   ◉  ╰╮",
-    " ╰─────╯        ╰───────╯",
-    "    ││   ││   ││   ││",
-    "    ╱╲   ╱╲   ╱╲   ╱╲",
+    "██      █      ██",
+    "  ██    █    ██",
+    "    ██  █  ██",
+    "████████◉████████",
+    "    ██  █  ██",
+    "  ██    █    ██",
+    "██      █      ██",
 )
 
 LOGO_WIDTH = max(len(line) for line in LOGO)
 
-COMPACT_LOGO = ("♞  ││ ││ ││ ││", "   ╱╲ ╱╲ ╱╲ ╱╲")
+COMPACT_LOGO = ("╲ │ ╱", "─ ◉ ─", "╱ │ ╲")
 
 def logo_lines(width: int) -> tuple[str, ...]:
     return LOGO if width >= LOGO_WIDTH + 4 else COMPACT_LOGO

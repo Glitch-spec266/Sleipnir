@@ -1,7 +1,7 @@
 # Sleipnir
 
 <p align="center">
-  <img src="assets/sleipnir-mark.svg" width="600" alt="Sleipnir — eight-lane orchestration">
+  <img src="assets/sleipnir-mark.svg" width="600" alt="Sleipnir — eight-spoke orchestration mark">
 </p>
 
 A budget-aware agentic orchestrator. Takes one complex project prompt,
@@ -14,7 +14,7 @@ never re-enters the orchestrator's context.** The plan lives on disk. The
 orchestrator is re-invoked fresh each cycle with only a compact, size-bounded
 manifest.
 
-## Status: Phases 1–18 implemented
+## Status: Phases 1–20 implemented
 
 | Phase | Scope | State |
 |---|---|---|
@@ -35,7 +35,9 @@ manifest.
 | 15 | staged dependency delivery + live sparse-control route | complete |
 | 16 | provider-outage failover allowance | complete |
 | 17 | live console routing and provider controls | complete |
-| 18 | Linux-native SwiftPM iOS capability through xtool | implemented; live build pending toolchain |
+| 18 | Linux-native SwiftPM iOS capability through xtool | complete; live arm64 build verified |
+| 19 | capability audit of every old and new ability | complete |
+| 20 | protected askpass agent, encrypted party, iOS gate, Windows audit | complete on Linux; hardware gates recorded |
 
 Read [`DESIGN.md`](DESIGN.md) for the tradeoffs, the manifest size math, and the
 open decisions.
@@ -66,15 +68,20 @@ src/sleipnir/gate.py         constant-size phase verdict + finite escalation
 src/sleipnir/tui.py          bounded DAG / routing / budget terminal dashboard
 src/sleipnir/console.py      guarded chat + `/project` multi-model front door
 src/sleipnir/chat.py         Claude session transport + tool-free fast-lane gate
+src/sleipnir/party.py        encrypted, signed cross-machine agent collaboration
+src/sleipnir/capabilities/agent.py
+                             session-only credential cache outside worker context
+src/sleipnir/capabilities/askpass.py
+                             pinentry/GUI prompt and bounded askpass protocol
 src/sleipnir/capabilities/ios.py  xtool/SwiftPM iOS bridge for Linux and Windows
-src/sleipnir/cli.py          plan / run / status / resume / explain / tui / orchestrate / ios
+src/sleipnir/cli.py          plan / run / console / ios / agent / askpass / sudo
 src/sleipnir/platform/       the one seam between Sleipnir and the OS:
                              POSIX, macOS and Windows backends behind one API
 src/sleipnir/capabilities/computer/
                              desktop control: ydotool on Linux, Quartz on
                              macOS, SendInput and GDI on Windows, audited
                              in one place
-tests/                       593 tests, including the executable form of the
+tests/                       676 passing tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -99,7 +106,8 @@ growth.
 
 ## Development
 
-Python 3.12+. Runtime dependencies: `pydantic` and `httpx`. No agent frameworks.
+Python 3.12+. Runtime dependencies: `pydantic`, `httpx`, and `cryptography`.
+No agent frameworks.
 
 ## Install
 
@@ -144,7 +152,7 @@ sleipnir setup
 
 ```sh
 uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python "pydantic>=2.7" "httpx>=0.27" "pytest>=8"
+uv pip install --python .venv/bin/python "pydantic>=2.7" "httpx>=0.27" "cryptography>=46" "pytest>=8"
 .venv/bin/python -m pytest -q
 ```
 
@@ -152,7 +160,7 @@ On Windows the same three commands, with the interpreter where Windows puts it:
 
 ```powershell
 uv venv --python 3.12 .venv
-uv pip install --python .venv\Scripts\python.exe "pydantic>=2.7" "httpx>=0.27" "pytest>=8"
+uv pip install --python .venv\Scripts\python.exe "pydantic>=2.7" "httpx>=0.27" "cryptography>=46" "pytest>=8"
 .venv\Scripts\python.exe -m pytest -q
 ```
 
@@ -231,10 +239,28 @@ as a private `0600` attachment, and gives Claude the path. The agent-facing
 Ctrl+Shift+C/V chords, preserving either text or image MIME in the focused app.
 For browser credentials, `secret prompt "<label>" --browser-selector "<css>"`
 fills the persistent page over CDP; focusing the console to type the masked
-value therefore cannot steal the target field.
+value therefore cannot steal the target field. The first matching request
+opens a native `pinentry` dialog; later requests reuse the value from an
+idle-expiring agent. Retained values exist only in locked, non-dumpable session
+memory and are wiped on expiry or `sleipnir agent stop`. Dispatched workers are
+stripped of the socket address and askpass hook; on Linux the agent also rejects
+a peer whose process ancestry carries Sleipnir's worker marker. The provider's
+kernel sandbox remains the outer boundary. For privileged commands use
+`sleipnir sudo -- <command>` or the console's explicit `/sudo <command>`.
 
-The splash uses a letter-free eight-legged horse emblem; the frame title carries
-the product name, so the mark itself is a logo rather than another nameplate.
+`/party create [name]` starts an encrypted cross-machine party and places its
+join code on the clipboard without printing it. A peer uses `/party join
+[name]` and pastes the code into a GUI, keeping the relay credential out of the
+console and model transcript. `/party say`, `/party ask`, `/party mode
+collaborate|delegate`, and leader-only `/party assign` provide coordination and
+hierarchy. `/party sync` lets the local Claude agent answer waiting peers in a
+fresh, bounded turn with built-in and MCP tools disabled. Peer text is never
+executed or applied to a plan; local work and plan revisions keep their normal
+operator gates. The default ntfy relay sees only a random topic and signed
+AES-GCM ciphertext.
+
+The splash uses a letter-free eight-spoke radial emblem; the frame title carries
+the product name, so the mark itself stays legible even in a narrow terminal.
 
 The local command registry also exposes `/router`, `/provider`, `/config`,
 `/run-root`, and `/cache-read-weight`. Provider additions are session-scoped and
@@ -267,9 +293,12 @@ sleipnir ios run --project ./MyApp -- --usb
 The build/run actions require `Package.swift` and `xtool.yml`. This is not a
 general `.xcodeproj` or `.xcworkspace` runner: native SwiftPM iOS apps are the
 supported project shape, while Xcode-only build systems and other mobile
-language ecosystems need their own bridge. App Store Connect's Build Upload API
-makes a no-Mac upload path possible, but Apple credential wiring and submission
-remain intentionally unconfigured.
+language ecosystems need their own bridge. On Linux, `ios xcodeproj` fails
+explicitly because xtool 1.19.0 documents project generation there as a no-op.
+A stock SwiftUI fixture has been built through this command to a Mach-O arm64
+app on Linux. Signing, install, and launch need Apple authentication and a real
+attached iOS device; App Store credential wiring and submission remain
+intentionally unconfigured.
 
 ## Sparse brain control
 

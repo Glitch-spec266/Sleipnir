@@ -297,16 +297,31 @@ def _capture_bgra() -> tuple[bytes, int, int]:
         raise CapabilityError("GetDC(NULL) failed; no desktop is attached to this session")
     memory_dc = None
     bitmap = None
+    previous = None
+    bitmap_selected = False
     try:
         memory_dc = gdi32.CreateCompatibleDC(screen_dc)
         bitmap = gdi32.CreateCompatibleBitmap(screen_dc, width, height)
         if not memory_dc or not bitmap:
             raise CapabilityError("could not allocate a GDI capture surface")
-        gdi32.SelectObject(memory_dc, bitmap)
+        previous = gdi32.SelectObject(memory_dc, bitmap)
+        if not previous or previous == ctypes.c_void_p(-1).value:
+            raise CapabilityError("could not select the GDI capture bitmap")
+        bitmap_selected = True
         if not gdi32.BitBlt(
             memory_dc, 0, 0, width, height, screen_dc, left, top, _win32.SRCCOPY
         ):
             raise CapabilityError("BitBlt failed to copy the screen")
+
+        # GetDIBits explicitly requires that `bitmap` is not selected into a
+        # device context. The old code called it while selected, which is an
+        # API-contract violation and fails on real drivers even when a simple
+        # mocked function returns pixels. Restoring the stock object also makes
+        # DeleteObject(bitmap) legal in the finally block.
+        restored = gdi32.SelectObject(memory_dc, previous)
+        if not restored or restored == ctypes.c_void_p(-1).value:
+            raise CapabilityError("could not release the GDI capture bitmap")
+        bitmap_selected = False
 
         info = _BITMAPINFO()
         info.header.biSize = ctypes.sizeof(_win32.BITMAPINFOHEADER)
@@ -332,6 +347,8 @@ def _capture_bgra() -> tuple[bytes, int, int]:
             raise CapabilityError(f"GetDIBits returned {copied} of {height} scanlines")
         return buffer.raw, width, height
     finally:
+        if bitmap_selected and memory_dc and previous:
+            gdi32.SelectObject(memory_dc, previous)
         if bitmap:
             gdi32.DeleteObject(bitmap)
         if memory_dc:
