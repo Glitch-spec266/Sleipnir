@@ -139,6 +139,7 @@ class WorkRelay:
         permission_mode: str = "ask",
         model: str | None = None,
         effort: str | None = None,
+        session_id: str | None = None,
     ) -> WorkReply:
         if provider not in chat.PROVIDERS:
             raise ValueError(f"unsupported work provider {provider!r}")
@@ -149,7 +150,11 @@ class WorkRelay:
         if not clean:
             raise ValueError("work prompt cannot be empty")
         posture = "bypassPermissions" if permission_mode == "always" else "acceptEdits"
-        session = self.sessions.setdefault(provider, chat.ChatSession(provider))
+        if provider not in self.sessions:
+            session = chat.ChatSession(provider, **({"session_id": session_id} if session_id else {}))
+            session.opened = session_id is not None
+            self.sessions[provider] = session
+        session = self.sessions[provider]
         transport = self.transports.get(provider)
         if transport is None:
             async def spawn(*argv: str, **kwargs: Any) -> Any:

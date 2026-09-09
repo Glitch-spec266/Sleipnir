@@ -19,7 +19,7 @@ describe("demo bridge", () => {
     expect(snapshot.voice.phase).toBe("armed");
   });
 
-  it("updates voice state and appends operator messages", async () => {
+  it("updates voice state and appends a routed exchange", async () => {
     const bridge = createDemoBridge();
 
     await bridge.setListening(false);
@@ -27,9 +27,13 @@ describe("demo bridge", () => {
     const snapshot = await bridge.loadDashboard();
 
     expect(snapshot.voice.phase).toBe("off");
-    expect(snapshot.messages.at(-1)).toMatchObject({
+    expect(snapshot.messages.at(-2)).toMatchObject({
       role: "operator",
       text: "Prepare the release notes",
+    });
+    expect(snapshot.messages.at(-1)).toMatchObject({
+      role: "sleipnir",
+      route: "ambient · approved",
     });
   });
 });

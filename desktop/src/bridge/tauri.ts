@@ -2,11 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { SleipnirBridge } from ".";
 import type { AppSettings, DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
+import type { InstructionRoute } from "../routing/intent";
 
 export function createTauriBridge(): SleipnirBridge {
   return {
     loadDashboard: () => invoke<DashboardSnapshot>("load_dashboard"),
-    sendMessage: (text: string) => invoke<void>("send_message", { text }),
+    sendMessage: (text: string, route?: InstructionRoute) => invoke<void>("send_message", { text, route }),
     startProject: (goal: string) => invoke<void>("start_project", { goal }),
     review: (itemId: string, decision: ReviewDecision) =>
       invoke<void>("review_item", { itemId, decision }),

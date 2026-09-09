@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { createDemoBridge } from "../bridge/demo";
@@ -37,8 +37,13 @@ describe("simple-mode navigation", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Start task" }));
 
-    expect((await bridge.loadDashboard()).messages.at(-1)?.text).toBe(
-      "Map this repository and continue the application",
-    );
+    expect(await screen.findByRole("dialog", { name: "Choose a work lane" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Use Codex" }));
+    await waitFor(async () => {
+      expect((await bridge.loadDashboard()).messages.at(-2)).toMatchObject({
+        role: "operator",
+        text: "Map this repository and continue the application",
+      });
+    });
   });
 });

@@ -1,8 +1,9 @@
 import type { AppSettings, DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
+import type { InstructionRoute } from "../routing/intent";
 
 export interface SleipnirBridge {
   loadDashboard(): Promise<DashboardSnapshot>;
-  sendMessage(text: string): Promise<void>;
+  sendMessage(text: string, route?: InstructionRoute): Promise<void>;
   startProject(goal: string): Promise<void>;
   review(itemId: string, decision: ReviewDecision): Promise<void>;
   setVoiceSettings(settings: VoiceSettings): Promise<void>;

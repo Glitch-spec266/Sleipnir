@@ -11,7 +11,7 @@ export function createDemoBridge(): SleipnirBridge {
     async loadDashboard() {
       return refresh();
     },
-    async sendMessage(text: string) {
+    async sendMessage(text: string, route = "ambient") {
       const clean = text.trim();
       if (!clean) return;
       snapshot.messages.push({
@@ -20,6 +20,13 @@ export function createDemoBridge(): SleipnirBridge {
         role: "operator",
         text: clean,
         route: "conversation",
+      });
+      snapshot.messages.push({
+        id: `m-${snapshot.messages.length + 1}`,
+        at: new Date().toISOString(),
+        role: "sleipnir",
+        text: route === "ambient" ? "I kept that on the fast lane." : `The instruction is with the ${route} work lane.`,
+        route: `${route} · approved`,
       });
     },
     async startProject(goal: string) {

@@ -545,6 +545,14 @@ input:focus-visible {
   }
 }
 
+.decision-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 24px; background: color-mix(in oklch, var(--ink) 72%, transparent); backdrop-filter: blur(12px); }
+.route-decision { width: min(100%, 520px); padding: 25px; }
+.route-decision h2 { margin: 12px 0 8px; font-size: 27px; letter-spacing: -.035em; }
+.route-decision > p { margin: 0; color: var(--text-soft); font-size: 12px; line-height: 1.55; }
+.route-decision blockquote { margin: 19px 0; padding: 13px 15px; border-left: 2px solid var(--signal); background: var(--surface-soft); color: var(--text-soft); font-size: 11px; line-height: 1.5; }
+.route-decision__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.route-decision__cancel { margin-top: 17px; padding: 0; border: 0; background: none; color: var(--text-faint); font-size: 10px; cursor: pointer; }
+
 /* Ambient voice ------------------------------------------------------------ */
 
 .voice-view { padding: 8px 0 28px; }

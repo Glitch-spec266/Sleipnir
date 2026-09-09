@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -8,7 +9,14 @@ use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri_plugin_shell::process::{Command as ShellCommand, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+
+struct CoreOutput {
+    success: bool,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,6 +115,8 @@ struct DesktopState {
     preferences: Mutex<Preferences>,
     listening: Mutex<bool>,
     preferences_path: PathBuf,
+    messages: Mutex<Vec<Value>>,
+    sessions: Mutex<HashMap<String, String>>,
 }
 
 fn initial_run_root() -> PathBuf {
@@ -142,39 +152,94 @@ fn python_executable() -> String {
     env::var("SLEIPNIR_PYTHON").unwrap_or_else(|_| "python3".into())
 }
 
-async fn run_core(
+fn core_command(
     app: &AppHandle,
-    gui_command: bool,
+    entrypoint: &str,
     arguments: Vec<OsString>,
-) -> Result<tauri_plugin_shell::process::Output, String> {
+) -> Result<ShellCommand, String> {
     let command = if cfg!(debug_assertions) || env::var_os("SLEIPNIR_PYTHON").is_some() {
         let mut command = app.shell().command(python_executable());
-        if gui_command {
-            command = command.args(["-m", "sleipnir.gui"]);
-        } else {
-            command = command.args(["-m", "sleipnir.cli"]);
-        }
+        let module = match entrypoint {
+            "gui" => "sleipnir.gui",
+            "agent" => "sleipnir.gui_agent",
+            _ => "sleipnir.cli",
+        };
+        command = command.args(["-m", module]);
         command.args(arguments)
     } else {
         let mut command = app
             .shell()
             .sidecar("sleipnir-core")
             .map_err(|error| format!("resolve bundled Sleipnir core: {error}"))?;
-        if gui_command {
-            command = command.arg("gui");
+        if entrypoint != "cli" {
+            command = command.arg(entrypoint);
         }
         command.args(arguments)
     };
-    command
+    Ok(command)
+}
+
+async fn run_core(
+    app: &AppHandle,
+    entrypoint: &str,
+    arguments: Vec<OsString>,
+) -> Result<CoreOutput, String> {
+    let output = core_command(app, entrypoint, arguments)?
         .output()
         .await
-        .map_err(|error| format!("start local Sleipnir core: {error}"))
+        .map_err(|error| format!("start local Sleipnir core: {error}"))?;
+    Ok(CoreOutput {
+        success: output.status.success(),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+async fn run_core_with_stdin(
+    app: &AppHandle,
+    entrypoint: &str,
+    arguments: Vec<OsString>,
+    input: &[u8],
+) -> Result<CoreOutput, String> {
+    let (mut receiver, mut child) = core_command(app, entrypoint, arguments)?
+        .spawn()
+        .map_err(|error| format!("start local Sleipnir core: {error}"))?;
+    child
+        .write(input)
+        .map_err(|error| format!("send instruction to local core: {error}"))?;
+    drop(child);
+    let mut code = None;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    while let Some(event) = receiver.recv().await {
+        match event {
+            CommandEvent::Stdout(line) => {
+                stdout.extend(line);
+                stdout.push(b'\n');
+            }
+            CommandEvent::Stderr(line) => {
+                stderr.extend(line);
+                stderr.push(b'\n');
+            }
+            CommandEvent::Terminated(payload) => code = payload.code,
+            CommandEvent::Error(error) => stderr.extend(error.as_bytes()),
+            _ => {}
+        }
+        if stdout.len() + stderr.len() > 16 * 1024 * 1024 {
+            return Err("local agent response exceeded 16 MiB".into());
+        }
+    }
+    Ok(CoreOutput {
+        success: code == Some(0),
+        stdout,
+        stderr,
+    })
 }
 
 async fn core_snapshot(app: &AppHandle, run_root: &Path) -> Result<Value, String> {
     let output = run_core(
         app,
-        true,
+        "gui",
         vec![
             "snapshot".into(),
             "--run-root".into(),
@@ -182,7 +247,7 @@ async fn core_snapshot(app: &AppHandle, run_root: &Path) -> Result<Value, String
         ],
     )
     .await?;
-    if !output.status.success() {
+    if !output.success {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
             "local Sleipnir core returned no dashboard".into()
@@ -212,6 +277,13 @@ async fn load_dashboard(app: AppHandle, state: State<'_, DesktopState>) -> Resul
     });
     snapshot["settings"] = serde_json::to_value(preferences.settings)
         .map_err(|error| format!("encode desktop settings: {error}"))?;
+    snapshot["messages"] = Value::Array(
+        state
+            .messages
+            .lock()
+            .map_err(|_| "message lock poisoned")?
+            .clone(),
+    );
     Ok(snapshot)
 }
 
@@ -297,11 +369,77 @@ fn set_app_settings(settings: AppSettings, state: State<'_, DesktopState>) -> Re
 }
 
 #[tauri::command]
-fn send_message(text: String) -> Result<(), String> {
+async fn send_message(
+    app: AppHandle,
+    text: String,
+    route: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
     if text.trim().is_empty() {
         return Ok(());
     }
-    Err("The native agent service is not running yet; the instruction was not sent.".into())
+    let selected = route.unwrap_or_else(|| "ambient".into());
+    if !matches!(selected.as_str(), "ambient" | "claude" | "codex") {
+        return Err("unknown instruction route".into());
+    }
+    let preferences = state
+        .preferences
+        .lock()
+        .map_err(|_| "settings lock poisoned")?
+        .clone();
+    let config_dir = state
+        .preferences_path
+        .parent()
+        .ok_or("invalid desktop config directory")?
+        .to_path_buf();
+    let mut arguments = vec![
+        "--workspace".into(),
+        preferences.run_root.as_os_str().to_owned(),
+        "--route".into(),
+        selected.clone().into(),
+        "--permission-mode".into(),
+        preferences.settings.permission_mode.clone().into(),
+        "--history".into(),
+        config_dir.join("history.enc.jsonl").into_os_string(),
+        "--history-key".into(),
+        config_dir.join("history.key").into_os_string(),
+        "--openrouter-env".into(),
+        preferences.settings.provider_env.openrouter.clone().into(),
+        "--gemini-env".into(),
+        preferences.settings.provider_env.gemini.clone().into(),
+        "--nvidia-env".into(),
+        preferences.settings.provider_env.nvidia.clone().into(),
+    ];
+    if let Some(session_id) = state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned")?
+        .get(&selected)
+        .cloned()
+    {
+        arguments.extend(["--session-id".into(), session_id.into()]);
+    }
+    let output = run_core_with_stdin(&app, "agent", arguments, text.as_bytes()).await?;
+    let result: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode local agent response: {error}"))?;
+    if !output.success || result["status"] == "error" {
+        return Err(result["text"]
+            .as_str()
+            .unwrap_or("local agent failed")
+            .to_owned());
+    }
+    if let Some(session_id) = result["sessionId"].as_str() {
+        state
+            .sessions
+            .lock()
+            .map_err(|_| "session lock poisoned")?
+            .insert(selected.clone(), session_id.into());
+    }
+    let mut messages = state.messages.lock().map_err(|_| "message lock poisoned")?;
+    let next = messages.len() + 1;
+    messages.push(json!({"id": format!("native-{next}"), "at": "now", "role": "operator", "text": text, "route": "conversation"}));
+    messages.push(json!({"id": format!("native-{}", next + 1), "at": "now", "role": "sleipnir", "text": result["text"], "route": result["route"]}));
+    Ok(())
 }
 
 #[tauri::command]
@@ -339,7 +477,7 @@ async fn review_item(
         "approve" => {
             let output = run_core(
                 &app,
-                false,
+                "cli",
                 vec![
                     "--run-root".into(),
                     root.as_os_str().to_owned(),
@@ -348,7 +486,7 @@ async fn review_item(
                 ],
             )
             .await?;
-            if output.status.success() {
+            if output.success {
                 Ok(())
             } else {
                 Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
@@ -382,6 +520,8 @@ pub fn run() {
                 preferences: Mutex::new(load_preferences(&preferences_path)),
                 listening: Mutex::new(false),
                 preferences_path,
+                messages: Mutex::new(Vec::new()),
+                sessions: Mutex::new(HashMap::new()),
             });
 
             let show = MenuItem::with_id(app, "show", "Show Sleipnir", true, None::<&str>)?;
