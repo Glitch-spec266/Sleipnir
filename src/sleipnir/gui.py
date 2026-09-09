@@ -280,7 +280,7 @@ def build_dashboard_snapshot(
                 "startAtLogin": False,
                 "pushToTalkShortcut": "CommandOrControl+Shift+Space",
                 "transcription": "local",
-                "responseModel": "openrouter/auto",
+                "responseModel": "auto",
                 "escalation": "automatic",
                 "voiceProvider": "system",
                 "voiceId": "system-natural",

@@ -199,7 +199,7 @@ export function createDemoSnapshot(): DashboardSnapshot {
         startAtLogin: false,
         pushToTalkShortcut: "CommandOrControl+Shift+Space",
         transcription: "local",
-        responseModel: "openrouter/auto",
+        responseModel: "auto",
         escalation: "automatic",
         voiceProvider: "system",
         voiceId: "default",

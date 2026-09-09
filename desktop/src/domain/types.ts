@@ -139,7 +139,7 @@ export interface VoiceSettings {
   transcription: "local" | "gemini";
   responseModel: string;
   escalation: "automatic" | "confirm";
-  voiceProvider: "system" | "gemini" | "openrouter" | "elevenlabs";
+  voiceProvider: "system" | "gemini" | "openrouter";
   voiceId: string;
   accent: "neutral" | "american" | "british" | "australian" | "indian";
   interruptible: boolean;
@@ -184,3 +184,16 @@ export interface DashboardSnapshot {
 }
 
 export type ReviewDecision = "approve" | "request_changes" | "reject";
+
+export interface AgentResponse {
+  status: "complete" | "approval";
+  text: string;
+  route: string;
+  rationale: string;
+  sessionId: string | null;
+}
+
+export interface SpeechAudio {
+  data: string;
+  mimeType: string;
+}

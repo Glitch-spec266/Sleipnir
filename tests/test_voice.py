@@ -13,6 +13,9 @@ from sleipnir.chat import ChatEvent
 from sleipnir.voice.relay import AmbientRelay, WorkRelay
 from sleipnir.voice.routing import RouteMode, choose_ambient_provider, route_utterance
 from sleipnir.voice.runtime import VoiceRuntime
+from sleipnir.voice.transcription import GeminiTranscriber, MAX_AUDIO_BYTES
+from sleipnir.voice.synthesis import browser_audio
+from sleipnir.voice.providers import AudioPayload
 
 
 def test_configurable_wake_phrase_is_detected_without_network():
@@ -82,8 +85,51 @@ def test_gemini_speech_decodes_inline_audio():
     assert result.mime_type.startswith("audio/L16")
 
 
+def test_gemini_transcription_keeps_key_out_of_audio_payload():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["headers"] = request.headers
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "continue the build"}]}}]},
+        )
+
+    transcriber = GeminiTranscriber(
+        api_key="private-gemini-key",
+        transport=httpx.MockTransport(handler),
+    )
+    text = asyncio.run(transcriber.transcribe(b"webm-audio", mime_type="audio/webm"))
+
+    assert text == "continue the build"
+    assert captured["headers"]["x-goog-api-key"] == "private-gemini-key"
+    assert "private-gemini-key" not in json.dumps(captured["body"])
+    assert captured["body"]["contents"][0]["parts"][1]["inline_data"]["mime_type"] == "audio/webm"
+
+
+def test_transcription_rejects_oversized_audio_before_network():
+    transcriber = GeminiTranscriber(api_key="unused")
+
+    try:
+        asyncio.run(transcriber.transcribe(b"x" * (MAX_AUDIO_BYTES + 1), mime_type="audio/wav"))
+    except RuntimeError as error:
+        assert "12 MiB" in str(error)
+    else:
+        raise AssertionError("oversized recording was accepted")
+
+
+def test_raw_gemini_speech_is_wrapped_as_browser_playable_wav():
+    payload = browser_audio(AudioPayload(b"\x00\x00\x01\x00", "audio/L16;rate=24000", "gemini"))
+
+    assert payload.mime_type == "audio/wav"
+    assert payload.data.startswith(b"RIFF")
+    assert b"WAVE" in payload.data[:16]
+
+
 def test_system_speech_commands_never_use_a_shell():
     assert system_tts_command("linux", "Hello", preset="british-calm", executable="spd-say")[:2] == ["spd-say", "-l"]
+    assert system_tts_command("linux", "Hello", preset="british-calm", executable="espeak-ng")[-1] == "--stdin"
     assert system_tts_command("darwin", "Hello", preset="system-natural", executable="say")[-1] == "-"
     windows = system_tts_command("windows", "Hello", preset="system-natural", executable="powershell")
     assert windows[0] == "powershell"

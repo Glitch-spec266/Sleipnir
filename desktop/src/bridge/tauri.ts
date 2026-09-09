@@ -1,13 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { SleipnirBridge } from ".";
-import type { AppSettings, DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
+import type { AgentResponse, AppSettings, DashboardSnapshot, ReviewDecision, SpeechAudio, VoiceSettings } from "../domain/types";
 import type { InstructionRoute } from "../routing/intent";
 
 export function createTauriBridge(): SleipnirBridge {
   return {
     loadDashboard: () => invoke<DashboardSnapshot>("load_dashboard"),
-    sendMessage: (text: string, route?: InstructionRoute) => invoke<void>("send_message", { text, route }),
+    sendMessage: (text: string, route?: InstructionRoute) => invoke<AgentResponse>("send_message", { text, route }),
     startProject: (goal: string) => invoke<void>("start_project", { goal }),
     review: (itemId: string, decision: ReviewDecision) =>
       invoke<void>("review_item", { itemId, decision }),
@@ -17,5 +17,9 @@ export function createTauriBridge(): SleipnirBridge {
     setAppSettings: (settings: AppSettings) => invoke<void>("set_app_settings", { settings }),
     selectRunRoot: (path: string) => invoke<void>("select_run_root", { path }),
     showMain: () => invoke<void>("show_main_window"),
+    transcribeAudio: (audio: number[], mimeType: string) =>
+      invoke<string>("transcribe_audio", { audio, mimeType }),
+    handoffInstruction: (text: string) => invoke<void>("handoff_instruction", { text }),
+    speak: (text: string) => invoke<SpeechAudio | null>("speak_text", { text }),
   };
 }

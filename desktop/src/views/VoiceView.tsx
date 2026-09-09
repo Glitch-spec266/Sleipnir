@@ -98,7 +98,7 @@ export function VoiceView({ snapshot, onSetListening, onSave }: VoiceViewProps) 
             <label>
               <span>Ambient response model</span>
               <input aria-label="Ambient response model" value={draft.responseModel} onChange={(event) => patch("responseModel", event.target.value)} />
-              <small>Lightweight route; work escalates separately.</small>
+              <small>Use “auto” for the activated provider’s free default.</small>
             </label>
             <label>
               <span>Escalation</span>
@@ -127,7 +127,6 @@ export function VoiceView({ snapshot, onSetListening, onSave }: VoiceViewProps) 
                 <option value="system">System voice · free</option>
                 <option value="gemini">Gemini speech</option>
                 <option value="openrouter">OpenRouter speech</option>
-                <option value="elevenlabs">ElevenLabs</option>
               </select>
             </label>
             <label>

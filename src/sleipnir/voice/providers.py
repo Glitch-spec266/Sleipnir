@@ -52,6 +52,8 @@ def system_tts_command(
     family = system.lower()
     locale = provider_voice(preset, "locale")
     if family.startswith("linux"):
+        if executable and os.path.basename(executable).startswith("espeak"):
+            return [executable, "-v", locale, "--stdin"]
         return [executable or "spd-say", "-l", locale, "--pipe-mode"]
     if family in {"darwin", "macos"}:
         return [executable or "say", "-f", "-"]

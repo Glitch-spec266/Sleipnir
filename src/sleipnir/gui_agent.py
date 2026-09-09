@@ -80,8 +80,9 @@ async def handle_instruction(
             raise RuntimeError("activate Gemini, OpenRouter, or NVIDIA NIM for ambient replies")
         provider, key = activated
         digest = run_digest(workspace) if (workspace / "plan.json").is_file() else ""
+        effective_model = None if model in {None, "auto", "openrouter/auto"} else model
         reply = await (ambient or AmbientRelay()).respond(
-            clean, provider=provider, api_key=key, model=model, run_digest=digest
+            clean, provider=provider, api_key=key, model=effective_model, run_digest=digest
         )
         result = {
             "status": "complete",

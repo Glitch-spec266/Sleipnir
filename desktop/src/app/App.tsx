@@ -1,5 +1,6 @@
 import { Settings2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 
 import type { SleipnirBridge } from "../bridge";
 import { isTauriRuntime } from "../bridge";
@@ -59,6 +60,27 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
     window.addEventListener("keydown", cancel);
     return () => window.removeEventListener("keydown", cancel);
   }, [pendingRoute]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<string>("voice-instruction", (event) => {
+      const decision = classifyInstruction(event.payload);
+      if (decision.kind === "confirm") {
+        setPendingRoute({ text: event.payload, recommended: decision.recommended, reason: decision.reason });
+      } else {
+        void runAndRefresh(() => bridge.sendMessage(event.payload, "ambient"));
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [bridge, runAndRefresh]);
 
   const sendInstruction = async (text: string, forced?: InstructionRoute) => {
     if (!forced) {

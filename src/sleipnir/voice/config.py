@@ -34,7 +34,7 @@ class VoiceConfig(BaseModel):
         default="CommandOrControl+Shift+Space", min_length=1, max_length=80
     )
     transcription: Literal["local", "gemini"] = "local"
-    response_model: str = Field(default="openrouter/auto", min_length=1, max_length=200)
+    response_model: str = Field(default="auto", min_length=1, max_length=200)
     escalation: Literal["automatic", "confirm"] = "automatic"
     voice_provider: Literal["system", "gemini", "openrouter", "elevenlabs"] = "system"
     voice_id: str = Field(default="system-natural", min_length=1, max_length=100)

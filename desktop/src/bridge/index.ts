@@ -1,9 +1,9 @@
-import type { AppSettings, DashboardSnapshot, ReviewDecision, VoiceSettings } from "../domain/types";
+import type { AgentResponse, AppSettings, DashboardSnapshot, ReviewDecision, SpeechAudio, VoiceSettings } from "../domain/types";
 import type { InstructionRoute } from "../routing/intent";
 
 export interface SleipnirBridge {
   loadDashboard(): Promise<DashboardSnapshot>;
-  sendMessage(text: string, route?: InstructionRoute): Promise<void>;
+  sendMessage(text: string, route?: InstructionRoute): Promise<AgentResponse>;
   startProject(goal: string): Promise<void>;
   review(itemId: string, decision: ReviewDecision): Promise<void>;
   setVoiceSettings(settings: VoiceSettings): Promise<void>;
@@ -11,6 +11,9 @@ export interface SleipnirBridge {
   setAppSettings(settings: AppSettings): Promise<void>;
   selectRunRoot(path: string): Promise<void>;
   showMain(): Promise<void>;
+  transcribeAudio(audio: number[], mimeType: string): Promise<string>;
+  handoffInstruction(text: string): Promise<void>;
+  speak(text: string): Promise<SpeechAudio | null>;
 }
 
 export function isTauriRuntime(): boolean {

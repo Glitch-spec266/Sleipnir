@@ -13,7 +13,7 @@ export function createDemoBridge(): SleipnirBridge {
     },
     async sendMessage(text: string, route = "ambient") {
       const clean = text.trim();
-      if (!clean) return;
+      if (!clean) throw new Error("Instruction cannot be empty");
       snapshot.messages.push({
         id: `m-${snapshot.messages.length + 1}`,
         at: new Date().toISOString(),
@@ -21,13 +21,21 @@ export function createDemoBridge(): SleipnirBridge {
         text: clean,
         route: "conversation",
       });
+      const response = {
+        status: "complete" as const,
+        text: route === "ambient" ? "I kept that on the fast lane." : `The instruction is with the ${route} work lane.`,
+        route: `${route} · approved`,
+        rationale: route === "ambient" ? "Fast conversational lane." : "Operator approved the capable work lane.",
+        sessionId: route === "ambient" ? null : `demo-${route}`,
+      };
       snapshot.messages.push({
         id: `m-${snapshot.messages.length + 1}`,
         at: new Date().toISOString(),
         role: "sleipnir",
-        text: route === "ambient" ? "I kept that on the fast lane." : `The instruction is with the ${route} work lane.`,
-        route: `${route} · approved`,
+        text: response.text,
+        route: response.route,
       });
+      return response;
     },
     async startProject(goal: string) {
       const clean = goal.trim();
@@ -77,5 +85,12 @@ export function createDemoBridge(): SleipnirBridge {
       if (snapshot.run) snapshot.run = { ...snapshot.run, workspace: path.trim() };
     },
     async showMain() {},
+    async transcribeAudio() {
+      return "What is running right now?";
+    },
+    async handoffInstruction() {},
+    async speak() {
+      return null;
+    },
   };
 }

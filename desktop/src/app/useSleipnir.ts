@@ -21,9 +21,10 @@ export function useSleipnir(bridge: SleipnirBridge) {
   }, [refresh]);
 
   const runAndRefresh = useCallback(
-    async (operation: () => Promise<void>) => {
-      await operation();
+    async <T,>(operation: () => Promise<T>) => {
+      const result = await operation();
       await refresh();
+      return result;
     },
     [refresh],
   );

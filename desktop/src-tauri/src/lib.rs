@@ -95,7 +95,7 @@ impl Default for VoiceSettings {
             start_at_login: false,
             push_to_talk_shortcut: "CommandOrControl+Shift+Space".into(),
             transcription: "local".into(),
-            response_model: "openrouter/auto".into(),
+            response_model: "auto".into(),
             escalation: "automatic".into(),
             voice_provider: "system".into(),
             voice_id: "system-natural".into(),
@@ -165,6 +165,8 @@ fn core_command(
         let module = match entrypoint {
             "gui" => "sleipnir.gui",
             "agent" => "sleipnir.gui_agent",
+            "transcribe" => "sleipnir.voice.transcription",
+            "speak" => "sleipnir.voice.synthesis",
             _ => "sleipnir.cli",
         };
         command = command.args(["-m", module]);
@@ -323,6 +325,15 @@ fn set_voice_settings(
     if !(2..=32).contains(&name.chars().count()) {
         return Err("wake name must contain 2 to 32 characters".into());
     }
+    if !matches!(settings.transcription.as_str(), "local" | "gemini") {
+        return Err("unknown transcription mode".into());
+    }
+    if !matches!(
+        settings.voice_provider.as_str(),
+        "system" | "gemini" | "openrouter"
+    ) {
+        return Err("unknown voice provider".into());
+    }
     let mut preferences = state
         .preferences
         .lock()
@@ -366,6 +377,104 @@ fn set_voice_settings(
 fn set_listening(enabled: bool, state: State<'_, DesktopState>) -> Result<(), String> {
     *state.listening.lock().map_err(|_| "voice lock poisoned")? = enabled;
     Ok(())
+}
+
+#[tauri::command]
+async fn transcribe_audio(
+    app: AppHandle,
+    audio: Vec<u8>,
+    mime_type: String,
+    state: State<'_, DesktopState>,
+) -> Result<String, String> {
+    if audio.is_empty() {
+        return Err("recording is empty".into());
+    }
+    if audio.len() > 12 * 1024 * 1024 {
+        return Err("recording exceeds the 12 MiB safety limit".into());
+    }
+    if !mime_type.starts_with("audio/") || mime_type.len() > 100 {
+        return Err("unsupported recording content type".into());
+    }
+    let preferences = state
+        .preferences
+        .lock()
+        .map_err(|_| "settings lock poisoned")?
+        .clone();
+    let arguments = vec![
+        "--mode".into(),
+        preferences.voice.transcription.into(),
+        "--mime-type".into(),
+        mime_type.into(),
+        "--gemini-env".into(),
+        preferences.settings.provider_env.gemini.into(),
+    ];
+    let output = run_core_with_stdin(&app, "transcribe", arguments, &audio).await?;
+    let result: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode local transcription response: {error}"))?;
+    if !output.success || result["status"] == "error" {
+        return Err(result["text"]
+            .as_str()
+            .unwrap_or("transcription failed")
+            .to_owned());
+    }
+    result["text"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "transcription returned no command".into())
+}
+
+#[tauri::command]
+async fn speak_text(
+    app: AppHandle,
+    text: String,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    let clean = text.trim();
+    if clean.is_empty() || clean.len() > 64 * 1024 {
+        return Err("speech text is empty or too large".into());
+    }
+    let preferences = state
+        .preferences
+        .lock()
+        .map_err(|_| "settings lock poisoned")?
+        .clone();
+    if !matches!(
+        preferences.voice.voice_provider.as_str(),
+        "system" | "gemini" | "openrouter"
+    ) {
+        return Err("selected voice provider is not available".into());
+    }
+    let arguments = vec![
+        "--provider".into(),
+        preferences.voice.voice_provider.into(),
+        "--preset".into(),
+        preferences.voice.voice_id.into(),
+        "--openrouter-env".into(),
+        preferences.settings.provider_env.openrouter.into(),
+        "--gemini-env".into(),
+        preferences.settings.provider_env.gemini.into(),
+    ];
+    let output = run_core_with_stdin(&app, "speak", arguments, clean.as_bytes()).await?;
+    let result: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode speech response: {error}"))?;
+    if !output.success || result["status"] == "error" {
+        return Err(result["text"]
+            .as_str()
+            .unwrap_or("speech synthesis failed")
+            .to_owned());
+    }
+    Ok(result["audio"].clone())
+}
+
+#[tauri::command]
+fn handoff_instruction(app: AppHandle, text: String) -> Result<(), String> {
+    let clean = text.trim();
+    if clean.is_empty() || clean.len() > 1_048_576 {
+        return Err("voice instruction is empty or too large".into());
+    }
+    show_main(&app);
+    app.emit_to("main", "voice-instruction", clean)
+        .map_err(|error| format!("handoff voice instruction: {error}"))
 }
 
 #[tauri::command]
@@ -413,9 +522,9 @@ async fn send_message(
     text: String,
     route: Option<String>,
     state: State<'_, DesktopState>,
-) -> Result<(), String> {
+) -> Result<Value, String> {
     if text.trim().is_empty() {
-        return Ok(());
+        return Err("instruction cannot be empty".into());
     }
     let selected = route.unwrap_or_else(|| "ambient".into());
     if !matches!(selected.as_str(), "ambient" | "claude" | "codex") {
@@ -449,6 +558,17 @@ async fn send_message(
         "--nvidia-env".into(),
         preferences.settings.provider_env.nvidia.clone().into(),
     ];
+    if selected == "ambient"
+        && !matches!(
+            preferences.voice.response_model.trim(),
+            "" | "auto" | "openrouter/auto"
+        )
+    {
+        arguments.extend([
+            "--model".into(),
+            preferences.voice.response_model.clone().into(),
+        ]);
+    }
     if let Some(session_id) = state
         .sessions
         .lock()
@@ -478,7 +598,7 @@ async fn send_message(
     let next = messages.len() + 1;
     messages.push(json!({"id": format!("native-{next}"), "at": "now", "role": "operator", "text": text, "route": "conversation"}));
     messages.push(json!({"id": format!("native-{}", next + 1), "at": "now", "role": "sleipnir", "text": result["text"], "route": result["route"]}));
-    Ok(())
+    Ok(result)
 }
 
 #[tauri::command]
@@ -661,6 +781,9 @@ pub fn run() {
             set_listening,
             set_app_settings,
             show_main_window,
+            transcribe_audio,
+            handoff_instruction,
+            speak_text,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Sleipnir desktop");
