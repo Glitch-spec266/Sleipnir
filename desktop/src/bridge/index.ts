@@ -10,6 +10,7 @@ export interface SleipnirBridge {
   setListening(enabled: boolean): Promise<void>;
   setAppSettings(settings: AppSettings): Promise<void>;
   selectRunRoot(path: string): Promise<void>;
+  showMain(): Promise<void>;
 }
 
 export function isTauriRuntime(): boolean {

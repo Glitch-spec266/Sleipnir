@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri_plugin_autostart::ManagerExt as AutoStartExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_shell::process::{Command as ShellCommand, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -91,7 +93,7 @@ impl Default for VoiceSettings {
             wake_name: "Sleipnir".into(),
             local_wake: true,
             start_at_login: false,
-            push_to_talk_shortcut: "Space".into(),
+            push_to_talk_shortcut: "CommandOrControl+Shift+Space".into(),
             transcription: "local".into(),
             response_model: "openrouter/auto".into(),
             escalation: "automatic".into(),
@@ -114,6 +116,7 @@ struct Preferences {
 struct DesktopState {
     preferences: Mutex<Preferences>,
     listening: Mutex<bool>,
+    push_to_talk: Mutex<bool>,
     preferences_path: PathBuf,
     messages: Mutex<Vec<Value>>,
     sessions: Mutex<HashMap<String, String>>,
@@ -267,9 +270,13 @@ async fn load_dashboard(app: AppHandle, state: State<'_, DesktopState>) -> Resul
         .map_err(|_| "settings lock poisoned")?
         .clone();
     let listening = *state.listening.lock().map_err(|_| "voice lock poisoned")?;
+    let push_to_talk = *state
+        .push_to_talk
+        .lock()
+        .map_err(|_| "push-to-talk lock poisoned")?;
     let mut snapshot = core_snapshot(&app, &preferences.run_root).await?;
     snapshot["voice"] = json!({
-        "phase": if listening { "armed" } else { "off" },
+        "phase": if push_to_talk { "hearing" } else if listening { "armed" } else { "off" },
         "heard": "",
         "level": 0.0,
         "privacyLabel": if listening { "Wake phrase stays on this device" } else { "Microphone is off" },
@@ -308,6 +315,7 @@ fn select_run_root(path: String, state: State<'_, DesktopState>) -> Result<(), S
 
 #[tauri::command]
 fn set_voice_settings(
+    app: AppHandle,
     settings: VoiceSettings,
     state: State<'_, DesktopState>,
 ) -> Result<(), String> {
@@ -319,6 +327,37 @@ fn set_voice_settings(
         .preferences
         .lock()
         .map_err(|_| "settings lock poisoned")?;
+    let previous = preferences.voice.clone();
+    if previous.push_to_talk_shortcut != settings.push_to_talk_shortcut {
+        app.global_shortcut()
+            .unregister(previous.push_to_talk_shortcut.as_str())
+            .map_err(|error| format!("release old push-to-talk shortcut: {error}"))?;
+        if let Err(error) = app
+            .global_shortcut()
+            .register(settings.push_to_talk_shortcut.as_str())
+        {
+            let _ = app
+                .global_shortcut()
+                .register(previous.push_to_talk_shortcut.as_str());
+            return Err(format!("register push-to-talk shortcut: {error}"));
+        }
+    }
+    let startup_result = if settings.start_at_login {
+        app.autolaunch().enable()
+    } else {
+        app.autolaunch().disable()
+    };
+    if let Err(error) = startup_result {
+        if previous.push_to_talk_shortcut != settings.push_to_talk_shortcut {
+            let _ = app
+                .global_shortcut()
+                .unregister(settings.push_to_talk_shortcut.as_str());
+            let _ = app
+                .global_shortcut()
+                .register(previous.push_to_talk_shortcut.as_str());
+        }
+        return Err(format!("update start-at-login: {error}"));
+    }
     preferences.voice = settings;
     persist_preferences(&state.preferences_path, &preferences)
 }
@@ -509,20 +548,75 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+fn show_orb(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("orb") {
+        let _ = window.show();
+    }
+}
+
+#[tauri::command]
+fn show_main_window(app: AppHandle) {
+    show_main(&app);
+    if let Some(window) = app.get_webview_window("orb") {
+        let _ = window.hide();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .arg("--background")
+                .build(),
+        )
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    let active = event.state == ShortcutState::Pressed;
+                    if let Some(state) = app.try_state::<DesktopState>() {
+                        if let Ok(mut push_to_talk) = state.push_to_talk.lock() {
+                            *push_to_talk = active;
+                        }
+                    }
+                    if active {
+                        show_orb(app);
+                    }
+                    let _ = app.emit_to("orb", "voice-activity", active);
+                    if !active {
+                        if let Some(window) = app.get_webview_window("orb") {
+                            let _ = window.hide();
+                        }
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let preferences_path = config_dir.join("preferences.json");
+            let preferences = load_preferences(&preferences_path);
+            let shortcut = preferences.voice.push_to_talk_shortcut.clone();
+            let start_at_login = preferences.voice.start_at_login;
             app.manage(DesktopState {
-                preferences: Mutex::new(load_preferences(&preferences_path)),
+                preferences: Mutex::new(preferences),
                 listening: Mutex::new(false),
+                push_to_talk: Mutex::new(false),
                 preferences_path,
                 messages: Mutex::new(Vec::new()),
                 sessions: Mutex::new(HashMap::new()),
             });
+            let _ = app.global_shortcut().register(shortcut.as_str());
+            let _ = if start_at_login {
+                app.autolaunch().enable()
+            } else {
+                app.autolaunch().disable()
+            };
+            if env::args().any(|argument| argument == "--background") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
 
             let show = MenuItem::with_id(app, "show", "Show Sleipnir", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -566,6 +660,7 @@ pub fn run() {
             set_voice_settings,
             set_listening,
             set_app_settings,
+            show_main_window,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Sleipnir desktop");

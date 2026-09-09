@@ -16,5 +16,6 @@ export function createTauriBridge(): SleipnirBridge {
     setListening: (enabled: boolean) => invoke<void>("set_listening", { enabled }),
     setAppSettings: (settings: AppSettings) => invoke<void>("set_app_settings", { settings }),
     selectRunRoot: (path: string) => invoke<void>("select_run_root", { path }),
+    showMain: () => invoke<void>("show_main_window"),
   };
 }

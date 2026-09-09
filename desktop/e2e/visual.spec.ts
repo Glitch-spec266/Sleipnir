@@ -29,3 +29,15 @@ test("advanced mode exposes the operational workspaces", async ({ page }) => {
     await expect(page.getByRole("button", { name: label })).toBeVisible();
   }
 });
+
+test("voice orb stays compact and opens the workbench", async ({ page }) => {
+  await page.setViewportSize({ width: 208, height: 208 });
+  await page.goto("/?surface=orb");
+
+  await expect(page.getByRole("button", { name: "Open Sleipnir" })).toBeVisible();
+  await expect(page.getByText("Hey, Sleipnir")).toBeVisible();
+  expect(await page.evaluate(() => ({
+    width: document.documentElement.scrollWidth,
+    height: document.documentElement.scrollHeight,
+  }))).toEqual({ width: 208, height: 208 });
+});

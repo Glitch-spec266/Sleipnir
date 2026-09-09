@@ -20,6 +20,56 @@ body {
   color: var(--text);
 }
 
+html[data-surface="orb"],
+html[data-surface="orb"] body,
+html[data-surface="orb"] #root {
+  min-width: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.orb-surface {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  place-items: center;
+  overflow: hidden;
+  color: var(--text);
+  background: transparent;
+}
+
+.orb-surface__button {
+  position: relative;
+  width: 196px;
+  height: 196px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklch, var(--signal) 26%, transparent);
+  border-radius: 50%;
+  color: inherit;
+  cursor: pointer;
+  background: color-mix(in oklch, var(--ink) 88%, transparent);
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 24px 60px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(30px) saturate(1.3);
+}
+
+.orb-surface .voice-orb-wrap {
+  width: 194px;
+  height: 194px;
+  transform: scale(0.72);
+}
+
+.orb-surface__wake {
+  position: absolute;
+  right: 0;
+  bottom: 22px;
+  left: 0;
+  color: var(--text-soft);
+  font: 9px/1 var(--font-mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
 button,
 select,
 textarea,

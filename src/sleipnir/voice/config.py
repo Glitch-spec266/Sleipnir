@@ -30,7 +30,9 @@ class VoiceConfig(BaseModel):
     wake_name: str = "Sleipnir"
     local_wake: bool = True
     start_at_login: bool = False
-    push_to_talk_shortcut: str = Field(default="Space", min_length=1, max_length=80)
+    push_to_talk_shortcut: str = Field(
+        default="CommandOrControl+Shift+Space", min_length=1, max_length=80
+    )
     transcription: Literal["local", "gemini"] = "local"
     response_model: str = Field(default="openrouter/auto", min_length=1, max_length=200)
     escalation: Literal["automatic", "confirm"] = "automatic"

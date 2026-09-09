@@ -197,7 +197,7 @@ export function createDemoSnapshot(): DashboardSnapshot {
         wakeName: "Sleipnir",
         localWake: true,
         startAtLogin: false,
-        pushToTalkShortcut: "Space",
+        pushToTalkShortcut: "CommandOrControl+Shift+Space",
         transcription: "local",
         responseModel: "openrouter/auto",
         escalation: "automatic",

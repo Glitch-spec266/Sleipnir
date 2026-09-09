@@ -76,5 +76,6 @@ export function createDemoBridge(): SleipnirBridge {
       if (!path.trim()) throw new Error("Project run directory is required");
       if (snapshot.run) snapshot.run = { ...snapshot.run, workspace: path.trim() };
     },
+    async showMain() {},
   };
 }

@@ -278,7 +278,7 @@ def build_dashboard_snapshot(
                 "wakeName": "Sleipnir",
                 "localWake": True,
                 "startAtLogin": False,
-                "pushToTalkShortcut": "Space",
+                "pushToTalkShortcut": "CommandOrControl+Shift+Space",
                 "transcription": "local",
                 "responseModel": "openrouter/auto",
                 "escalation": "automatic",
