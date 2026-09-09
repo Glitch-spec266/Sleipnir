@@ -1,0 +1,507 @@
+[
+{
+"n": 1,
+"name": "ESP32 DevKit",
+"id": "3256807630806447",
+"variant": [
+"CP2102-30Pin",
+"Micro"
+],
+"qty": 1
+},
+{
+"n": 2,
+"name": "ESP32-C3 SuperMini",
+"id": "3256807018729495",
+"variant": [
+"1pcs"
+],
+"avoid": [
+"Extended"
+],
+"qty": 1
+},
+{
+"n": 3,
+"name": "ESP8266 D1 Mini",
+"id": "2251832645039000",
+"variant": [
+"D1 MINI V3.0"
+],
+"qty": 1
+},
+{
+"n": 4,
+"name": "ESP32-CAM",
+"id": "3256805951215564",
+"variant": [
+"CAM With Downloader"
+],
+"qty": 1
+},
+{
+"n": 5,
+"name": "RC522 RFID kit",
+"id": "3256801503857931",
+"variant": [],
+"qty": 1
+},
+{
+"n": 6,
+"name": "940nm IR LED",
+"id": "3256806225371122",
+"variant": [
+"5mm Emitter"
+],
+"qty": 1
+},
+{
+"n": 7,
+"name": "IR remote + HX1838",
+"id": "3256809197750029",
+"variant": [],
+"qty": 1
+},
+{
+"n": 8,
+"name": "PIR HC-SR501",
+"id": "3256809122355356",
+"variant": [
+"HC-SR501-BLUE",
+"1PCS"
+],
+"qty": 1
+},
+{
+"n": 9,
+"name": "microSD 32GB",
+"id": "3256807349030251",
+"variant": [
+"32 GB"
+],
+"qty": 1
+},
+{
+"n": 10,
+"name": "Breadboard+MB102 combo",
+"id": "3256810301138311",
+"variant": [
+"With White module"
+],
+"qty": 1
+},
+{
+"n": 11,
+"name": "Jumper wires 120pc",
+"id": "3256805177984228",
+"variant": [
+"1set",
+"20CM"
+],
+"qty": 1
+},
+{
+"n": 12,
+"name": "Resistor kit",
+"id": "3256811586219421",
+"variant": [
+"600PCS"
+],
+"qty": 1
+},
+{
+"n": 13,
+"name": "Header pins male",
+"id": "3256808220037580",
+"variant": [
+"Male Black"
+],
+"qty": 1
+},
+{
+"n": 14,
+"name": "Header pins female",
+"id": "3256808220037580",
+"variant": [
+"Female Black"
+],
+"qty": 1
+},
+{
+"n": 15,
+"name": "Micro-USB data cable",
+"id": "3256802964725209",
+"variant": [
+"micro usb",
+"1m"
+],
+"qty": 2
+},
+{
+"n": 16,
+"name": "USB-C data cable",
+"id": "3256802964725209",
+"variant": [
+"type-c",
+"1m"
+],
+"qty": 1
+},
+{
+"n": 17,
+"name": "Logic analyzer",
+"id": "3256808847810567",
+"variant": [
+"Type-C USB"
+],
+"qty": 1
+},
+{
+"n": 18,
+"name": "Multimeter ANENG DM850",
+"id": "3256805035098639",
+"variant": [
+"Red with box"
+],
+"qty": 1
+},
+{
+"n": 19,
+"name": "Electrolytic cap box 500pc",
+"id": "3256808372376119",
+"variant": [],
+"qty": 1
+},
+{
+"n": 20,
+"name": "Ceramic cap box",
+"id": "3256808842645543",
+"variant": [
+"960pcs"
+],
+"qty": 1
+},
+{
+"n": 21,
+"name": "Transistor kit",
+"id": "2251832679927117",
+"variant": [
+"24Values-840pcs"
+],
+"qty": 1
+},
+{
+"n": 22,
+"name": "IRLZ44N x10",
+"id": "3256808529258193",
+"variant": [],
+"qty": 1
+},
+{
+"n": 23,
+"name": "Diode kit",
+"id": "3256805986157967",
+"variant": [
+"350pcs"
+],
+"qty": 1
+},
+{
+"n": 24,
+"name": "OLED 0.96 I2C",
+"id": "3256805954920554",
+"variant": [
+"White",
+"2pcs"
+],
+"qty": 1
+},
+{
+"n": 25,
+"name": "Rotary encoder KY-040",
+"id": "3256808854215994",
+"variant": [
+"1pcs"
+],
+"qty": 1
+},
+{
+"n": 26,
+"name": "4x4 keypad",
+"id": "3256807856059308",
+"variant": [
+"4 x 4 Keyboard"
+],
+"avoid": [
+"3x4"
+],
+"qty": 1
+},
+{
+"n": 27,
+"name": "Relay module",
+"id": "3256806094499129",
+"variant": [
+"2 Channel",
+"5V"
+],
+"qty": 1
+},
+{
+"n": 28,
+"name": "Tactile buttons",
+"id": "3256801442863237",
+"variant": [
+"6x6x5MM DIP",
+"50pieces"
+],
+"qty": 1
+},
+{
+"n": 29,
+"name": "LED assortment",
+"id": "3256806674850323",
+"variant": [
+"100pcs"
+],
+"qty": 1
+},
+{
+"n": 30,
+"name": "MAX9814 mic",
+"id": "2251832474204589",
+"variant": [
+"MAX9814"
+],
+"avoid": [
+"MAX4466"
+],
+"qty": 1
+},
+{
+"n": 31,
+"name": "DS3231 RTC",
+"id": "2251832732525258",
+"variant": [
+"with Battery"
+],
+"qty": 1
+},
+{
+"n": 32,
+"name": "SG90 servo",
+"id": "3256806097043668",
+"variant": [
+"5PCS-180 Degree"
+],
+"avoid": [
+"MG90S"
+],
+"qty": 1
+},
+{
+"n": 33,
+"name": "TP4056",
+"id": "3256809449161888",
+"variant": [
+"5PCS"
+],
+"qty": 1
+},
+{
+"n": 34,
+"name": "USB power meter",
+"id": "3256808523466295",
+"variant": [
+"Black",
+"1Pcs"
+],
+"qty": 1
+},
+{
+"n": 35,
+"name": "LM2596 buck",
+"id": "3256807322371133",
+"variant": [
+"3PCS-LM2596"
+],
+"qty": 1
+},
+{
+"n": 36,
+"name": "9V 1A adapter",
+"id": "3256808909437474",
+"variant": [
+"9V",
+"1A",
+"US"
+],
+"qty": 1
+},
+{
+"n": 37,
+"name": "Passive buzzer module (KY-006 style)",
+"id": "2251832494498783",
+"variant": [],
+"qty": 1
+},
+{
+"n": 38,
+"name": "18650 holder 2-slot w/ leads",
+"id": "3256807295981461",
+"variant": [
+"2"
+],
+"qty": 1
+},
+{
+"n": 39,
+"name": "GPS NEO-6M GY-NEO6MV2",
+"id": "3256805966775594",
+"variant": [
+"NEO-6M"
+],
+"qty": 1
+},
+{
+"n": 40,
+"name": "Reed switch module KY-021",
+"id": "3256807112766193",
+"variant": [
+"1pcs"
+],
+"qty": 1
+},
+{
+"n": 41,
+"name": "MAX9814 mic (replacement listing)",
+"id": "3256805885526362",
+"variant": [
+"MAX9814 1PCS"
+],
+"avoid": [
+"MAX4466"
+],
+"qty": 1
+},
+{
+"n": 42,
+"name": "Micro-USB cable #2 (different seller)",
+"id": "3256808356025149",
+"variant": [
+"1Pcs",
+"1m"
+],
+"qty": 1
+},
+{
+"n": 43,
+"name": "IRLZ44N 5-pack",
+"id": "3256807248167586",
+"variant": [
+"5"
+],
+"qty": 1
+},
+{
+"n": 44,
+"name": "Ceramic cap kit 300pcs",
+"id": "3256808842645543",
+"variant": [
+"300pcs"
+],
+"qty": 1
+},
+{
+"n": 45,
+"name": "Transistor kit 10Values-200pcs",
+"id": "2251832679927117",
+"variant": [
+"10Values-200pcs"
+],
+"qty": 1
+},
+{
+"n": 46,
+"name": "Diode kit 100pcs-box",
+"id": "3256805986157967",
+"variant": [
+"100pcs-box"
+],
+"qty": 1
+},
+{
+"n": 47,
+"name": "GPS NEO-6M (restore)",
+"id": "3256805966775594",
+"variant": [
+"NEO-6M"
+],
+"qty": 1
+},
+{
+"n": 48,
+"name": "IRLZ44N 10pcs (low shipping)",
+"id": "3256811664475301",
+"variant": [
+"IRLZ44N"
+],
+"qty": 1
+},
+{
+"n": 49,
+"name": "DS3231 RTC with battery (free ship)",
+"id": "3256803120274618",
+"variant": [
+"1PCS"
+],
+"qty": 1
+},
+{
+"n": 50,
+"name": "RC522 RFID kit (free ship)",
+"id": "3256806077938328",
+"variant": [
+"1set"
+],
+"qty": 1
+},
+{
+"n": 51,
+"name": "4x4 keypad (free ship)",
+"id": "3256806996180370",
+"variant": [
+"4X4 1pcs"
+],
+"qty": 1
+},
+{
+"n": 52,
+"name": "USB-C data cable 1m (free ship)",
+"id": "3256808384022009",
+"variant": [
+"A-C",
+"1m"
+],
+"qty": 1
+},
+{
+"n": 53,
+"name": "Micro-USB cable 2-pack 1m (free ship)",
+"id": "3256808356025149",
+"variant": [
+"2Pcs",
+"1m"
+],
+"qty": 1
+},
+{
+"n": 54,
+"name": "ESP32 DevKit CP2102 30P Micro (free ship)",
+"id": "3256806873143007",
+"variant": [
+"30P CP2102 Micro"
+],
+"qty": 1
+}
+]
