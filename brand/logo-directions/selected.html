@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ArcaFlame selected logo verification</title>
+<style>
+  :root { --field:#eaf7ff; --paper:#f8fcff; --ink:#170c28; --muted:#645773; --line:#cbdfea; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--field); color:var(--ink); font-family:Inter,ui-sans-serif,system-ui,sans-serif; }
+  main { width:min(1180px,calc(100% - 40px)); margin:0 auto; padding:42px 0 64px; }
+  header { margin-bottom:24px; }
+  .eyebrow { color:#7130c5; font:700 12px/1 ui-monospace,monospace; letter-spacing:.18em; }
+  h1 { margin:10px 0 5px; font-size:clamp(30px,5vw,58px); letter-spacing:-.055em; }
+  p { color:var(--muted); margin:0; line-height:1.5; }
+  .layout { display:grid; grid-template-columns:minmax(0,2fr) minmax(260px,1fr); gap:18px; }
+  .panel { background:var(--paper); border:1px solid var(--line); border-radius:22px; overflow:hidden; }
+  .hero img { display:block; width:min(100%,680px); margin:auto; }
+  .checks { padding:22px; display:grid; align-content:start; gap:18px; }
+  .check { overflow:hidden; border:1px solid var(--line); border-radius:14px; background:#fff; }
+  .check img { display:block; width:100%; }
+  .check div { padding:12px 14px 14px; border-top:1px solid var(--line); }
+  .check strong { display:block; font-size:14px; }
+  .check span { color:var(--muted); font-size:12px; }
+  @media(max-width:760px){ main{width:min(100% - 24px,600px);padding-top:24px}.layout{grid-template-columns:1fr}.checks{grid-template-columns:1fr 1fr;padding:14px}.check div{min-height:72px} }
+</style>
+<main>
+  <header><div class="eyebrow">ARCAFLAME / BOW TRANSFER / V6</div><h1>Trace fidelity. Clean current.</h1><p>The original hooked terminals and near-arrow fragments are retained, while a narrower dark sheath keeps violet visible through every meaningful bow segment.</p></header>
+  <section class="layout">
+    <div class="panel hero"><img src="06-bow-lockup-brand.svg" alt="Repaired ArcaFlame brand logo"></div>
+    <div class="panel checks">
+      <div class="check"><img src="04-bow-trace.svg" alt="Original bow trace"><div><strong>Original trace</strong><span>terminal and inner-detail reference</span></div></div>
+      <div class="check"><img src="06-bow-lockup-brand.svg" alt="Repaired branded transfer"><div><strong>Branded transfer</strong><span>connected endpoints · 12px sheath</span></div></div>
+    </div>
+  </section>
+</main>
+</html>
