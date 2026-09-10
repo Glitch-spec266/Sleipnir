@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from sleipnir.capabilities import audit
 from sleipnir.capabilities import computer
 from sleipnir.capabilities.browser import Browser
 from sleipnir.console import capability_brief
+from sleipnir.voice.routing import is_smalltalk, needs_reasoning, needs_screen
 from sleipnir.voice.providers import VoiceProviderError
 from sleipnir.voice.relay import WorkRelay
 
@@ -90,6 +92,53 @@ _PROMISE_PHRASES = (
 # "let me know" is the one common phrase that reads as a promise but is really
 # a hand-back to the operator.
 _PROMISE_EXCEPTIONS = ("let me know",)
+
+
+class LocalCapabilityExceeded(VoiceProviderError):
+    """The local model cannot finish this task, so it must be delegated.
+
+    Distinct from a provider fault: the call succeeded and the model simply was
+    not good enough. Retrying it locally buys nothing.
+    """
+
+
+REASON_SYSTEM = (
+    "You are JARVIS, the operator's assistant, speaking aloud. Work the problem "
+    "carefully, then state only the final answer in one short sentence with its "
+    "units. Do not read your working aloud."
+)
+
+# MEASURED: reasoning consumed the whole token budget on the physics question
+# and left nothing for the answer, which reached the operator as silence.
+REASON_TOKENS = 2048
+# MEASURED: "17 times 24 plus 139" made both 4B and 9B deliberate for 121 s and
+# 131 s and still answer nothing, while a retry at a larger ceiling only bought
+# a longer wait. A model that loops does not need more budget -- it needs a
+# different model. The deadline turns that into a prompt, bounded escalation.
+REASON_DEADLINE_SECONDS = 25.0
+
+CHAT_SYSTEM = (
+    "You are JARVIS, the operator's assistant, speaking aloud. This is small "
+    "talk, not a task. Reply in one short friendly sentence. Do not think out "
+    "loud, do not explain yourself, and do not mention the screen."
+)
+
+
+_THINK_BLOCK = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
+_THINK_OPEN = re.compile(r"<think\b[^>]*>.*\Z", re.IGNORECASE | re.DOTALL)
+
+
+def strip_thinking(text: str) -> str:
+    """Remove a model's visible reasoning before anything is spoken.
+
+    ``think: false`` is a request, not a guarantee: a qwen3-style model can
+    still emit a literal ``<think>`` block inside the message content. An
+    unterminated block is dropped to the end of the string -- the reasoning was
+    cut off mid-thought, so there is no answer after it to keep.
+    """
+    without = _THINK_BLOCK.sub(" ", text)
+    without = _THINK_OPEN.sub(" ", without)
+    return " ".join(without.split())
 
 
 def _promises_action(text: str) -> bool:
@@ -294,9 +343,18 @@ class LocalDesktopAgent:
         run_tool = self.tool_runner or toolbox.execute  # type: ignore[union-attr]
         performed: list[str] = []
         nudged = False
+        if is_smalltalk(clean):
+            return await self._chat(clean, model=model)
+        if needs_reasoning(clean):
+            return await self._reason(clean, model=model)
+        opening: dict[str, Any] = (
+            await self._visual_message(clean)
+            if needs_screen(clean)
+            else {"role": "user", "content": clean}
+        )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": LOCAL_AGENT_SYSTEM},
-            await self._visual_message(clean),
+            opening,
         ]
         try:
             async with httpx.AsyncClient(transport=self.transport, timeout=180) as client:
@@ -338,7 +396,7 @@ class LocalDesktopAgent:
                     messages.append(assistant)
                     calls = message.get("tool_calls") or []
                     if not calls:
-                        text = str(message.get("content", "")).strip()
+                        text = strip_thinking(str(message.get("content", "")))
                         if not performed and not nudged and _promises_action(text):
                             nudged = True
                             messages.append({"role": "user", "content": ACTION_NUDGE})
@@ -388,6 +446,89 @@ class LocalDesktopAgent:
             )
         raise VoiceProviderError(f"local agent exceeded its {MAX_AGENT_STEPS}-step safety limit")
 
+    async def _single_turn(
+        self, content: str, *, model: str, system: str, think: bool, num_predict: int
+    ) -> tuple[str, str]:
+        """One Ollama call. Returns ``(content, thinking)``, both stripped."""
+        async with httpx.AsyncClient(transport=self.transport, timeout=300) as client:
+            response = await client.post(
+                "http://127.0.0.1:11434/api/chat",
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": content},
+                    ],
+                    "stream": False,
+                    "think": think,
+                    "keep_alive": "15m",
+                    "options": {"temperature": 0.2 if think else 0.4, "num_predict": num_predict},
+                },
+            )
+        if response.status_code != 200:
+            detail = response.text.strip().replace("\n", " ")[:480]
+            raise VoiceProviderError(
+                f"Ollama local agent returned HTTP {response.status_code}"
+                f"{f': {detail}' if detail else ''}"
+            )
+        try:
+            message = response.json()["message"]
+        except (KeyError, TypeError, ValueError) as error:
+            raise VoiceProviderError("Ollama local agent returned no message") from error
+        return (
+            strip_thinking(str(message.get("content", ""))),
+            str(message.get("thinking", "")).strip(),
+        )
+
+    async def _reason(self, content: str, *, model: str) -> LocalAgentReply:
+        """Answer with a scratchpad, and never hand back the scratchpad.
+
+        Ollama reports reasoning in its own ``thinking`` field, so empty content
+        beside non-empty thinking says the model deliberated without converging.
+        That is a capability limit, not a transient fault: it is raised as
+        :class:`LocalCapabilityExceeded` so the caller delegates instead of
+        paying for a longer version of the same failure.
+        """
+        try:
+            async with asyncio.timeout(REASON_DEADLINE_SECONDS):
+                text, thinking = await self._single_turn(
+                    content,
+                    model=model,
+                    system=REASON_SYSTEM,
+                    think=True,
+                    num_predict=REASON_TOKENS,
+                )
+        except TimeoutError as error:
+            raise LocalCapabilityExceeded(
+                f"the local model did not converge on this within {REASON_DEADLINE_SECONDS:.0f} seconds"
+            ) from error
+        if not text:
+            raise LocalCapabilityExceeded(
+                "the local model deliberated without reaching an answer"
+                if thinking
+                else "the local model returned no answer"
+            )
+        return LocalAgentReply(text=text, model=model, steps=1)
+
+    async def _chat(self, content: str, *, model: str) -> LocalAgentReply:
+        """Answer a greeting in exactly one call: no tools, no frame, no loop.
+
+        The twelve-step agent loop is the wrong shape for "what's up" -- it
+        pays a screenshot and a vision encode before it can even decline to use
+        a tool, which is what made a greeting take twenty seconds.
+        """
+        text, _ = await self._single_turn(
+            content, model=model, system=CHAT_SYSTEM, think=False, num_predict=96
+        )
+        if not text:
+            # MEASURED: qwen3-vl answers nothing at all with thinking disabled,
+            # so every greeting fell through to the placeholder. A greeting is
+            # short enough that a bounded scratchpad is still fast.
+            text, _ = await self._single_turn(
+                content, model=model, system=CHAT_SYSTEM, think=True, num_predict=256
+            )
+        return LocalAgentReply(text=text or "I'm here.", model=model, steps=1)
+
     async def _visual_message(self, content: str) -> dict[str, Any]:
         frame = await self.observer.capture()
         return {
@@ -398,6 +539,6 @@ class LocalDesktopAgent:
 
 
 __all__ = [
-    "LOCAL_AGENT_SYSTEM", "LocalAgentReply", "LocalDesktopAgent", "LocalToolbox",
-    "MAX_AGENT_STEPS", "ScreenObserver", "TOOLS",
+    "CHAT_SYSTEM", "LOCAL_AGENT_SYSTEM", "LocalCapabilityExceeded", "REASON_SYSTEM", "LocalAgentReply", "LocalDesktopAgent", "LocalToolbox",
+    "MAX_AGENT_STEPS", "ScreenObserver", "TOOLS", "strip_thinking",
 ]

@@ -12,10 +12,26 @@ from sleipnir.voice.config import VoiceConfig
 from sleipnir.voice.providers import GeminiSpeech, OpenRouterSpeech, system_tts_command
 from sleipnir.chat import ChatEvent
 from sleipnir.voice.relay import AmbientRelay, WorkRelay
-from sleipnir.voice.routing import RouteMode, choose_ambient_provider, route_utterance
+from sleipnir.voice.routing import (
+    RouteMode,
+    choose_ambient_provider,
+    is_smalltalk,
+    needs_reasoning,
+    needs_screen,
+    route_utterance,
+)
 from sleipnir.voice.runtime import VoiceRuntime
-from sleipnir.voice.listener import VoiceSegmenter, WakeCommandDetector
-from sleipnir.voice.local_agent import LocalDesktopAgent
+from sleipnir.voice.listener import (
+    ARM_TIMEOUT_SECONDS,
+    ListenerGate,
+    VoiceSegmenter,
+    WakeCommandDetector,
+)
+from sleipnir.voice.local_agent import (
+    LocalCapabilityExceeded,
+    LocalDesktopAgent,
+    strip_thinking,
+)
 from sleipnir.voice.transcription import GeminiTranscriber, MAX_AUDIO_BYTES, resolve_whisper_model
 from sleipnir.voice.synthesis import browser_audio
 from sleipnir.voice.providers import AudioPayload
@@ -590,3 +606,225 @@ def test_a_clipping_microphone_is_reported_not_transcribed():
     assert clipping_fraction(saturated) == 1.0
     assert is_clipping(saturated) is True
     assert is_clipping(speech) is False
+
+
+def test_one_sentence_split_into_two_segments_does_not_start_two_turns():
+    """A >0.8s pause splits a sentence, and both halves reached the host.
+
+    Nothing downstream deduplicates, so the operator heard two agents answer
+    the same instruction at once.
+    """
+    detector = WakeCommandDetector(VoiceConfig(wake_name="JARVIS"))
+
+    assert detector.feed("Hey JARVIS what is on my screen", now=0.0) == "what is on my screen"
+    assert detector.feed("what is on my screen", now=0.4) is None
+    # The same words much later are a genuine second request, not an echo.
+    assert detector.feed("Hey JARVIS what is on my screen", now=60.0) == "what is on my screen"
+
+
+def test_a_bare_wake_word_disarms_instead_of_capturing_the_next_utterance_forever():
+    """``feed`` used to return None without completing the runtime.
+
+    The phase stayed ``hearing`` indefinitely, so any later speech -- a remark
+    to somebody else in the room -- was emitted verbatim as a command.
+    """
+    detector = WakeCommandDetector(VoiceConfig(wake_name="JARVIS"))
+
+    assert detector.feed("Hey JARVIS", now=0.0) is None
+    assert detector.runtime.phase == "hearing"
+    assert detector.feed("open the browser", now=2.0) == "open the browser"
+
+    assert detector.feed("Hey JARVIS", now=10.0) is None
+    assert detector.feed("no I was talking to you", now=10.0 + ARM_TIMEOUT_SECONDS + 0.1) is None
+    assert detector.runtime.phase == "armed"
+
+
+def test_the_host_can_mute_the_listener_so_sleipnir_never_hears_its_own_voice():
+    gate = ListenerGate()
+
+    assert gate.muted is False
+    assert gate.apply('{"type": "mute"}') is True
+    assert gate.muted is True
+    assert gate.apply('{"type": "unmute"}') is True
+    assert gate.muted is False
+    # A malformed or unknown control line must never take the listener down.
+    assert gate.apply("not json at all") is False
+    assert gate.apply('{"type": "detonate"}') is False
+    assert gate.muted is False
+
+
+def test_muting_discards_the_partial_utterance_instead_of_resuming_mid_word():
+    segmenter = VoiceSegmenter(
+        frame_seconds=0.1,
+        minimum_rms=200,
+        silence_seconds=0.3,
+        minimum_seconds=0.2,
+        pre_roll_seconds=0.1,
+    )
+    quiet = (0).to_bytes(2, "little", signed=True) * 1600
+    voice = (2000).to_bytes(2, "little", signed=True) * 1600
+
+    assert segmenter.feed(voice) is None
+    assert segmenter.feed(voice) is None
+    segmenter.reset()
+
+    # Only silence remains buffered, so the resumed stream cannot emit the
+    # half-utterance that was in flight when speech began.
+    assert segmenter.feed(quiet) is None
+    assert segmenter.feed(quiet) is None
+    assert segmenter.feed(quiet) is None
+
+
+def test_the_classifier_separates_smalltalk_from_screen_questions():
+    assert is_smalltalk("what's up") is True
+    assert is_smalltalk("Hey there") is True
+    assert is_smalltalk("thanks") is True
+    assert is_smalltalk("how are you doing") is True
+    assert is_smalltalk("what is on my screen right now") is False
+    assert is_smalltalk("derive the escape velocity of Earth") is False
+
+    assert needs_screen("what is on my screen right now") is True
+    assert needs_screen("read the question in this window") is True
+    assert needs_screen("what am I looking at") is True
+    assert needs_screen("what's up") is False
+    assert needs_screen("what is the capital of France") is False
+
+
+def test_reasoning_never_reaches_the_operator_s_speakers():
+    """`think: false` is a request, not a guarantee.
+
+    A qwen3-style model can still emit a literal <think> block inside the
+    message content, and nothing stripped it -- so twenty seconds of the model
+    deliberating about how to answer "what's up" was spoken aloud verbatim.
+    """
+    assert strip_thinking("<think>They said hi. I should greet them.</think>Morning.") == "Morning."
+    assert strip_thinking("<think>unterminated reasoning that never closes") == ""
+    assert strip_thinking("  plain answer  ") == "plain answer"
+    assert strip_thinking("<think>a</think>one<think>b</think>two") == "one two"
+
+
+def test_smalltalk_answers_in_one_call_with_no_tools_and_no_screenshot(tmp_path):
+    requests: list[dict] = []
+
+    class Observer:
+        calls = 0
+
+        async def capture(self) -> bytes:
+            Observer.calls += 1
+            return b"frame"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "All good, thanks."}})
+
+    agent = LocalDesktopAgent(
+        transport=httpx.MockTransport(handler),
+        observer=Observer(),
+        tool_runner=lambda name, arguments: {"status": "unexpected"},
+    )
+    reply = asyncio.run(agent.respond("what's up", workspace=tmp_path, model="jarvis", permission_mode="ask"))
+
+    assert reply.text == "All good, thanks."
+    assert len(requests) == 1
+    assert "tools" not in requests[0]
+    assert Observer.calls == 0
+    assert all("images" not in message for message in requests[0]["messages"])
+
+
+def test_a_question_that_is_not_about_the_screen_does_not_pay_for_a_frame(tmp_path):
+    class Observer:
+        calls = 0
+
+        async def capture(self) -> bytes:
+            Observer.calls += 1
+            return b"frame"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "Paris."}})
+
+    agent = LocalDesktopAgent(
+        transport=httpx.MockTransport(handler),
+        observer=Observer(),
+        tool_runner=lambda name, arguments: {"status": "unexpected"},
+    )
+    reply = asyncio.run(agent.respond("what is the capital of France", workspace=tmp_path, model="jarvis", permission_mode="ask"))
+
+    assert reply.text == "Paris."
+    assert Observer.calls == 0
+
+
+def test_multi_step_arithmetic_is_routed_to_the_reasoning_lane():
+    """MEASURED: with ``think: false`` every candidate model got 17*24+139 wrong.
+
+    jarvis answered 425, qwen3.5:9b answered 445; the correct 547 came back
+    only once the model was allowed a scratchpad. Denying reasoning is what
+    made the assistant bad at maths, so the classifier has to spot the shape.
+    """
+    assert needs_reasoning("what is 17 times 24 plus 139") is True
+    assert needs_reasoning("how high does a ball thrown at 20 metres per second go") is True
+    assert needs_reasoning("derive the escape velocity of Earth") is True
+    assert needs_reasoning("calculate the compound interest on 5000 at 4 percent") is True
+    assert needs_reasoning("what's up") is False
+    assert needs_reasoning("what is on my screen") is False
+
+
+def test_a_local_model_that_deliberates_without_converging_asks_to_be_replaced(tmp_path):
+    """MEASURED: "17 times 24 plus 139" made the 4B deliberate for 121 s and the
+    9B for 131 s, both answering nothing, and a retry at a larger token ceiling
+    only bought a longer wait. Budget was never the problem, so exhaustion is
+    reported as a capability limit the caller must delegate -- not retried.
+    """
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"message": {"role": "assistant", "content": "", "thinking": "round and round"}},
+        )
+
+    agent = LocalDesktopAgent(
+        transport=httpx.MockTransport(handler),
+        observer=None,
+        tool_runner=lambda name, arguments: {"status": "unexpected"},
+    )
+    with pytest.raises(LocalCapabilityExceeded):
+        asyncio.run(
+            agent.respond(
+                "what is 17 times 24 plus 139",
+                workspace=tmp_path,
+                model="jarvis",
+                permission_mode="ask",
+            )
+        )
+
+    # Exactly one attempt: a looping model is not owed a second, longer one.
+    assert len(calls) == 1
+    assert calls[0]["think"] is True
+
+
+def test_a_model_that_stays_silent_without_thinking_still_answers_a_greeting(tmp_path):
+    """MEASURED: qwen3-vl returns empty content whenever thinking is disabled.
+
+    Every greeting fell through to the placeholder, so the operator got
+    "I'm here." no matter what they said.
+    """
+    thinks: list[bool] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        thinks.append(body["think"])
+        content = "Morning." if body["think"] else ""
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": content}})
+
+    agent = LocalDesktopAgent(
+        transport=httpx.MockTransport(handler),
+        observer=None,
+        tool_runner=lambda name, arguments: {"status": "unexpected"},
+    )
+    reply = asyncio.run(
+        agent.respond("hey there", workspace=tmp_path, model="jarvis", permission_mode="ask")
+    )
+
+    assert reply.text == "Morning."
+    assert thinks == [False, True]
