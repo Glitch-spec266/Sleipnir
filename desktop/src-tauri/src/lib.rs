@@ -345,6 +345,16 @@ fn start_voice_listener(app: &AppHandle, state: &DesktopState) -> Result<(), Str
                                     let _ = listener_app.emit_to("main", "voice-instruction", text);
                                 }
                             }
+                            // A warning is how the listener says it heard
+                            // something it could not use -- a clipping mic, a
+                            // failed transcription. Dropping it leaves the
+                            // operator with a machine that appears deaf and
+                            // says nothing about why.
+                            Some("warning") => {
+                                if let Some(text) = payload["text"].as_str() {
+                                    append_message(&listener_app, "sleipnir", text.to_owned(), "voice-warning");
+                                }
+                            }
                             Some("error") => {
                                 let detail = payload["text"]
                                     .as_str()

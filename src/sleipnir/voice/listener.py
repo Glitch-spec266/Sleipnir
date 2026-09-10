@@ -12,6 +12,7 @@ import asyncio
 import io
 import json
 import math
+import os
 import re
 import shutil
 import signal
@@ -28,6 +29,26 @@ from sleipnir.voice.transcription import LocalWhisperTranscriber
 _RATE = 16_000
 _CHANNELS = 1
 _SAMPLE_WIDTH = 2
+
+
+def _emit(payload: dict[str, str]) -> None:
+    """Write one event to the host, and mirror it when diagnostics are on.
+
+    The mirror carries exactly what the host is told and nothing more: a
+    pre-wake transcript never becomes an event, so it can never become a log
+    line either.
+    """
+    line = json.dumps(payload)
+    print(line, flush=True)
+    destination = os.environ.get("SLEIPNIR_VOICE_LOG")
+    if not destination:
+        return
+    try:
+        with open(destination, "a", encoding="utf-8") as handle:
+            handle.write(f"{line}\n")
+    except OSError:
+        # Diagnostics must never take the listener down.
+        pass
 
 
 def _wake_span(transcript: str, wake_name: str) -> tuple[int, int] | None:
@@ -81,6 +102,32 @@ def _rms(pcm: bytes) -> float:
 
 def _has_voice(pcm: bytes, *, minimum_rms: int = 220) -> bool:
     return _rms(pcm) >= minimum_rms
+
+
+CLIPPING_THRESHOLD = 32_000
+MAX_CLIPPED_FRACTION = 0.02
+
+
+def clipping_fraction(pcm: bytes) -> float:
+    """Share of samples pinned at the top of the 16-bit range."""
+    samples = array("h")
+    samples.frombytes(pcm[: len(pcm) - len(pcm) % 2])
+    if sys.byteorder != "little":
+        samples.byteswap()
+    if not samples:
+        return 0.0
+    return sum(1 for sample in samples if abs(sample) >= CLIPPING_THRESHOLD) / len(samples)
+
+
+def is_clipping(pcm: bytes) -> bool:
+    """True when the input is saturated rather than loud.
+
+    An input volume far above the device's base volume amplifies into the rails,
+    and a saturated waveform transcribes to nothing at all.  Whisper reports
+    that as an empty command, which is indistinguishable from silence -- so the
+    condition is detected here, where it can be named.
+    """
+    return clipping_fraction(pcm) > MAX_CLIPPED_FRACTION
 
 
 @dataclass(slots=True)
@@ -174,7 +221,7 @@ async def listen_forever(
         stderr=asyncio.subprocess.PIPE,
     )
     assert process.stdout is not None
-    print(json.dumps({"type": "ready"}), flush=True)
+    _emit({"type": "ready"})
     # Pulse/PipeWire may deliver a buffered burst faster than the consumer gets
     # scheduled. A two-frame queue discarded the entire spoken phrase and kept
     # only its trailing silence. This holds two maximum utterances while still
@@ -201,14 +248,17 @@ async def listen_forever(
             pcm = segmenter.feed(frame)
             if pcm is None:
                 continue
+            if is_clipping(pcm):
+                _emit({"type": "warning", "text": "microphone input is clipping; lower the input volume"})
+                continue
             try:
                 transcript = await model.transcribe(_wav_bytes(pcm), mime_type="audio/wav")
             except Exception as error:  # noqa: BLE001 - keep the listener alive
-                print(json.dumps({"type": "warning", "text": str(error)[:240]}), flush=True)
+                _emit({"type": "warning", "text": str(error)[:240]})
                 continue
             command = detector.feed(transcript)
             if command:
-                print(json.dumps({"type": "command", "text": command}), flush=True)
+                _emit({"type": "command", "text": command})
     finally:
         capture_task.cancel()
         if process.returncode is None:
@@ -230,7 +280,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if not 0.02 <= args.chunk_seconds <= 0.5:
-        print(json.dumps({"type": "error", "text": "audio frame must be 0.02 to 0.5 seconds"}))
+        _emit({"type": "error", "text": "audio frame must be 0.02 to 0.5 seconds"})
         return 2
     try:
         asyncio.run(
@@ -243,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 0
     except Exception as error:  # noqa: BLE001 - native boundary returns a clean envelope
-        print(json.dumps({"type": "error", "text": str(error)}), flush=True)
+        _emit({"type": "error", "text": str(error)})
         return 2
     return 0
 

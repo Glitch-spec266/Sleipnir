@@ -573,3 +573,20 @@ def test_a_plain_answer_is_never_nudged(tmp_path):
         ).respond("what is photosynthesis", model="jarvis", workspace=tmp_path, permission_mode="ask")
     )
     assert reply.steps == 1
+
+
+def test_a_clipping_microphone_is_reported_not_transcribed():
+    """A mic at +60 dB over its base volume saturates, and Whisper returns "".
+
+    Measured on this machine: input volume 100% against a 10% base gave a solid
+    10 s of RMS 26,010 with the peak pinned at 32,768, and every segment
+    transcribed to nothing.  The failure is silent and looks exactly like a
+    machine that cannot hear, so the segment is reported rather than sent.
+    """
+    from sleipnir.voice.listener import clipping_fraction, is_clipping
+
+    saturated = b"".join((32767).to_bytes(2, "little", signed=True) for _ in range(1600))
+    speech = b"".join((3000).to_bytes(2, "little", signed=True) for _ in range(1600))
+    assert clipping_fraction(saturated) == 1.0
+    assert is_clipping(saturated) is True
+    assert is_clipping(speech) is False
