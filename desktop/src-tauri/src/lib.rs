@@ -1090,18 +1090,31 @@ mod tests {
     }
 
     #[test]
-    fn a_session_id_is_not_a_prompt_and_history_content_stays_out() {
+    fn preferences_carry_session_handles_and_no_conversation_content() {
+        // Structural, not a substring scan: `settings.transcription` is a
+        // legitimate field naming the STT engine, and a naive search for
+        // "transcript" matches it.  What must be pinned is the shape — only
+        // these four keys, so a field carrying conversation content cannot be
+        // added to ordinary preferences without this failing.
         let mut preferences = Preferences::default();
         preferences
             .sessions
             .insert("codex".into(), "session-xyz".into());
 
-        let encoded = serde_json::to_string(&preferences).unwrap().to_lowercase();
+        let encoded = serde_json::to_value(&preferences).unwrap();
+        let mut keys: Vec<&str> = encoded
+            .as_object()
+            .expect("preferences serialise to an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
 
-        // Session ids are handles; conversation text must never ride along.
-        assert!(encoded.contains("session-xyz"));
-        assert!(!encoded.contains("history"));
-        assert!(!encoded.contains("message"));
-        assert!(!encoded.contains("transcript"));
+        assert_eq!(keys, ["runRoot", "sessions", "settings", "voice"]);
+
+        // A session id is a handle to a provider conversation, never its text.
+        let sessions = encoded["sessions"].as_object().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions["codex"], json!("session-xyz"));
     }
 }

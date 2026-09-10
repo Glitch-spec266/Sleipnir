@@ -14,6 +14,7 @@ build/
 /desktop/src-tauri/target/
 /desktop/src-tauri/icons/android/
 /desktop/src-tauri/icons/ios/
+/desktop/src-tauri/gen/schemas/
 /desktop/src-tauri/binaries/*
 !/desktop/src-tauri/binaries/.gitkeep
 /desktop/sidecar-build/
