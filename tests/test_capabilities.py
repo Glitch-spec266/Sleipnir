@@ -1173,3 +1173,71 @@ def test_ios_run_gives_the_child_a_pollable_stdin(tmp_path, monkeypatch):
     monkeypatch.setattr(ios.audit, "DEFAULT_LOG", tmp_path / "audit.jsonl")
     ios.run("build", root=tmp_path, executable="/usr/bin/true", run=fake_run)
     assert seen.get("stdin") is not None, "stdin must not be inherited from a tool subprocess"
+
+
+def test_grim_captures_only_the_focused_output(monkeypatch, tmp_path):
+    """Two monitors composite into one 3840x1080 frame without `-o`.
+
+    Measured on this machine: the model then reads each screen at 640 px wide
+    after the 1280 px downscale, which is illegible.  The operator's attention
+    is on the focused output, so that is the screen to capture.
+    """
+    from sleipnir.capabilities.computer import _linux
+
+    monkeypatch.setattr(_linux.shutil, "which", lambda name: "/usr/bin/grim" if name == "grim" else None)
+    monkeypatch.setattr(_linux, "_focused_output", lambda: "HDMI-A-3")
+    spawned: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):
+        spawned.append(argv)
+        (tmp_path / "shot.png").write_bytes(b"png")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(_linux.subprocess, "run", fake_run)
+    assert _linux.screenshot(tmp_path / "shot.png") == "grim"
+    assert spawned[0][:3] == ["grim", "-o", "HDMI-A-3"]
+
+
+def test_grim_captures_everything_when_no_output_is_focused(monkeypatch, tmp_path):
+    """A single-monitor or non-Hyprland session must still be captured."""
+    from sleipnir.capabilities.computer import _linux
+
+    monkeypatch.setattr(_linux.shutil, "which", lambda name: "/usr/bin/grim" if name == "grim" else None)
+    monkeypatch.setattr(_linux, "_focused_output", lambda: None)
+    spawned: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):
+        spawned.append(argv)
+        (tmp_path / "shot.png").write_bytes(b"png")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(_linux.subprocess, "run", fake_run)
+    _linux.screenshot(tmp_path / "shot.png")
+    assert spawned[0] == ["grim", str(tmp_path / "shot.png")]
+
+
+def test_focused_output_is_read_from_the_compositor(monkeypatch):
+    from sleipnir.capabilities.computer import _linux
+
+    monkeypatch.setattr(_linux.shutil, "which", lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None)
+    monkeypatch.setattr(
+        _linux.subprocess,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess(
+            [], 0, json.dumps([{"name": "eDP-1", "focused": False}, {"name": "HDMI-A-3", "focused": True}]), ""
+        ),
+    )
+    assert _linux._focused_output() == "HDMI-A-3"
+
+
+def test_focused_output_survives_a_broken_compositor_reply(monkeypatch):
+    """A capture must never fail because the window manager answered oddly."""
+    from sleipnir.capabilities.computer import _linux
+
+    monkeypatch.setattr(_linux.shutil, "which", lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None)
+    monkeypatch.setattr(
+        _linux.subprocess,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess([], 0, "not json", ""),
+    )
+    assert _linux._focused_output() is None

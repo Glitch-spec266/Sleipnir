@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import shutil
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -67,6 +69,69 @@ def system_tts_command(
     raise VoiceProviderError(f"system speech is not supported on {system}")
 
 
+_PIPER_INSTALL = Path(".local") / "opt" / "piper" / "piper" / "piper"
+_PIPER_VOICES = "piper-voices"
+_PIPER_DEFAULT_RATE = 22_050
+
+
+@dataclass(frozen=True, slots=True)
+class PiperVoice:
+    """A local neural voice: the binary, one model, and the model's rate."""
+
+    binary: Path
+    model: Path
+    sample_rate: int
+
+
+def piper_setup(environment: dict[str, str] | None = None) -> PiperVoice | None:
+    """Locate a local Piper install by path, never through an exported name.
+
+    The binary is deliberately not resolved on ``PATH``: Arch's ``extra/piper``
+    is an unrelated gaming-mouse configurator, and running it would fail in a
+    way that reads like a broken voice model.  Discovery is by conventional
+    path for the same reason the Whisper model is -- a desktop autostart
+    process reads no shell profile.
+    """
+    env = os.environ if environment is None else environment
+    home = Path(env.get("HOME", "~")).expanduser()
+    override = env.get("SLEIPNIR_PIPER_BIN")
+    binary = Path(override) if override else home / _PIPER_INSTALL
+    if not binary.is_file():
+        return None
+    voice_override = env.get("SLEIPNIR_PIPER_VOICE")
+    if voice_override:
+        candidates = [Path(voice_override)]
+    else:
+        data_home = Path(env.get("XDG_DATA_HOME", home / ".local" / "share"))
+        candidates = sorted((data_home / _PIPER_VOICES).glob("*.onnx"))
+    model = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if model is None:
+        return None
+    sample_rate = _PIPER_DEFAULT_RATE
+    try:
+        config = json.loads(Path(f"{model}.json").read_text(encoding="utf-8"))
+        sample_rate = int(config["audio"]["sample_rate"])
+    except (OSError, ValueError, KeyError, TypeError):
+        # A missing or malformed sidecar is not fatal; every shipped voice so
+        # far renders at the default rate.
+        pass
+    return PiperVoice(binary=binary, model=model, sample_rate=sample_rate)
+
+
+def piper_commands(voice: PiperVoice, *, player: str = "paplay") -> tuple[list[str], list[str]]:
+    """Return the synthesiser and player argv; text goes over stdin."""
+    return (
+        [str(voice.binary), "--model", str(voice.model), "--output_raw"],
+        [
+            player,
+            "--raw",
+            "--format=s16le",
+            f"--rate={voice.sample_rate}",
+            "--channels=1",
+        ],
+    )
+
+
 class SystemSpeech:
     """The native speech engine, and the one way to silence it again.
 
@@ -78,10 +143,58 @@ class SystemSpeech:
 
     def __init__(self) -> None:
         self._process: asyncio.subprocess.Process | None = None
+        self._synthesiser: asyncio.subprocess.Process | None = None
         self._executable: str | None = None
+
+    async def _speak_piper(self, text: str, voice: PiperVoice) -> None:
+        """Render with Piper and play the raw stream, as two joined processes.
+
+        The pipe is built from real file descriptors rather than asyncio
+        streams so the audio never passes through this process: a StreamReader
+        cannot be handed to another child as stdin.
+        """
+        synthesise, play = piper_commands(voice)
+        read_fd, write_fd = os.pipe()
+        try:
+            synthesiser = await asyncio.create_subprocess_exec(
+                *synthesise,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=write_fd,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        finally:
+            os.close(write_fd)
+        try:
+            player = await asyncio.create_subprocess_exec(
+                *play,
+                stdin=read_fd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        finally:
+            os.close(read_fd)
+        self._process = player
+        self._synthesiser = synthesiser
+        self._executable = str(voice.binary)
+        try:
+            _, stderr = await synthesiser.communicate(text.encode("utf-8"))
+            await player.wait()
+        finally:
+            self._process = None
+            self._synthesiser = None
+        # A negative return code is the operator interrupting, not a failure.
+        if synthesiser.returncode and synthesiser.returncode > 0:
+            raise VoiceProviderError(
+                f"piper failed: {stderr.decode('utf-8', 'replace')[:240]}"
+            )
 
     async def speak(self, text: str, *, preset: str = "system-natural") -> None:
         family = "windows" if sys.platform == "win32" else ("darwin" if sys.platform == "darwin" else "linux")
+        if family == "linux":
+            voice = piper_setup()
+            if voice is not None and shutil.which("paplay"):
+                await self._speak_piper(text, voice)
+                return
         candidates = ["spd-say", "espeak-ng", "espeak"] if family == "linux" else (["powershell"] if family == "windows" else ["say"])
         executable = next((candidate for candidate in candidates if shutil.which(candidate)), None)
         if executable is None:
@@ -124,13 +237,18 @@ class SystemSpeech:
             # nothing, and it makes `speak` raise VoiceProviderError on a
             # returncode of -9 for what was an ordinary operator interruption.
             return canceller.returncode == 0
-        # espeak and `say` render in the process itself, so killing it is the
-        # cancel.
-        process = self._process
-        if process is None or process.returncode is not None:
-            return False
-        process.kill()
-        return True
+        # espeak, `say` and the Piper pipeline all render in the processes
+        # themselves, so killing them is the cancel.  Piper is two halves and
+        # both must go: killing only the player leaves the synthesiser writing
+        # into a closed pipe, and killing only the synthesiser leaves buffered
+        # audio playing over the operator.
+        stopped = False
+        for process in (self._process, self._synthesiser):
+            if process is None or process.returncode is not None:
+                continue
+            process.kill()
+            stopped = True
+        return stopped
 
 
 class OpenRouterSpeech:

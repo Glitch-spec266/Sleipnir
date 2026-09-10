@@ -6,6 +6,7 @@ import base64
 import asyncio
 import json
 
+import pytest
 import httpx
 from sleipnir.voice.config import VoiceConfig
 from sleipnir.voice.providers import GeminiSpeech, OpenRouterSpeech, system_tts_command
@@ -336,3 +337,239 @@ def test_stop_cancels_the_daemon_without_killing_the_client(monkeypatch):
     assert spawned == [("/usr/bin/spd-say", "--cancel")]
     # An interruption is not a failure, so the client is left to exit cleanly.
     assert client.killed is False
+
+
+def _piper_tree(root):
+    """Build a fake piper install: binary at the conventional path, one voice."""
+    binary = root / ".local" / "opt" / "piper" / "piper" / "piper"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    voices = root / ".local" / "share" / "piper-voices"
+    voices.mkdir(parents=True)
+    model = voices / "en_GB-alan-medium.onnx"
+    model.write_bytes(b"onnx")
+    (voices / "en_GB-alan-medium.onnx.json").write_text(
+        json.dumps({"audio": {"sample_rate": 22050}})
+    )
+    return binary, model
+
+
+def test_piper_is_discovered_under_the_conventional_paths(tmp_path):
+    """A desktop autostart process reads no shell profile, so discovery is by path."""
+    from sleipnir.voice.providers import piper_setup
+
+    binary, model = _piper_tree(tmp_path)
+    setup = piper_setup({"HOME": str(tmp_path)})
+    assert setup is not None
+    assert setup.binary == binary
+    assert setup.model == model
+    assert setup.sample_rate == 22050
+
+
+def test_piper_is_absent_without_a_voice_model(tmp_path):
+    """The binary alone cannot speak, and a half-install must not win the race."""
+    from sleipnir.voice.providers import piper_setup
+
+    _piper_tree(tmp_path)
+    (tmp_path / ".local" / "share" / "piper-voices" / "en_GB-alan-medium.onnx").unlink()
+    assert piper_setup({"HOME": str(tmp_path)}) is None
+
+
+def test_piper_is_never_taken_from_path(tmp_path, monkeypatch):
+    """Arch ships an unrelated `piper` (a gaming-mouse tool) in `extra/`.
+
+    Resolving the name on PATH would run that binary and fail confusingly, so
+    the setup is only ever the conventional install directory or an explicit
+    override.
+    """
+    from sleipnir.voice import providers
+
+    monkeypatch.setattr(providers.shutil, "which", lambda _name: "/usr/bin/piper")
+    assert providers.piper_setup({"HOME": str(tmp_path)}) is None
+
+
+def test_piper_commands_carry_the_model_sample_rate(tmp_path):
+    from sleipnir.voice.providers import piper_commands, piper_setup
+
+    _piper_tree(tmp_path)
+    setup = piper_setup({"HOME": str(tmp_path)})
+    assert setup is not None
+    synthesise, play = piper_commands(setup)
+    assert synthesise[1:] == ["--model", str(setup.model), "--output_raw"]
+    # A wrong rate here does not fail loudly; it plays the voice at the wrong
+    # pitch, which reads as a broken model rather than a broken argument.
+    assert play == ["paplay", "--raw", "--format=s16le", "--rate=22050", "--channels=1"]
+
+
+def test_stop_kills_both_halves_of_the_piper_pipeline():
+    """Piper renders in-process and paplay holds the audio, so both must die.
+
+    Cancelling only the player leaves the synthesiser writing into a closed
+    pipe, and cancelling only the synthesiser leaves already-buffered audio
+    playing over the operator.
+    """
+    from sleipnir.voice.providers import SystemSpeech
+
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = None
+            self.killed = False
+
+        def kill(self):
+            self.killed = True
+
+    speech = SystemSpeech()
+    player, synthesiser = FakeProcess(), FakeProcess()
+    speech._process = player
+    speech._synthesiser = synthesiser
+    speech._executable = "/home/operator/.local/opt/piper/piper/piper"
+
+    assert asyncio.run(speech.stop()) is True
+    assert player.killed is True
+    assert synthesiser.killed is True
+
+
+def test_local_agent_always_confirms_even_when_the_model_says_nothing(tmp_path):
+    """A silent success reads to the operator as a machine that ignored them."""
+    from sleipnir.voice.local_agent import LocalDesktopAgent
+
+    class Observer:
+        async def capture(self):
+            return b"png-frame"
+
+    async def run_tool(name, arguments):
+        return "typed into focused window"
+
+    replies = [
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "computer_type", "arguments": {"text": "hi"}}}]},
+        {"role": "assistant", "content": "   "},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"message": replies.pop(0)})
+
+    reply = asyncio.run(
+        LocalDesktopAgent(
+            transport=httpx.MockTransport(handler), observer=Observer(), tool_runner=run_tool
+        ).respond("type hi", model="jarvis", workspace=tmp_path, permission_mode="always")
+    )
+    assert reply.text
+    assert "computer_type" in reply.text
+
+
+def test_local_agent_writes_a_document_into_the_output_directory(tmp_path):
+    from sleipnir.voice.local_agent import LocalToolbox
+
+    toolbox = LocalToolbox(
+        workspace=tmp_path, permission_mode="ask", original_prompt="make me a deck",
+        output_root=tmp_path / "out",
+    )
+    result = json.loads(
+        asyncio.run(toolbox.execute("write_file", {"path": "deck.html", "content": "<h1>Deck</h1>"}))
+    )
+    assert result["status"] == "written"
+    assert (tmp_path / "out" / "deck.html").read_text() == "<h1>Deck</h1>"
+
+
+def test_local_agent_cannot_write_outside_the_output_directory(tmp_path):
+    """The path comes from model output, so containment is not optional."""
+    from sleipnir.voice.local_agent import LocalToolbox
+
+    toolbox = LocalToolbox(
+        workspace=tmp_path, permission_mode="always", original_prompt="",
+        output_root=tmp_path / "out",
+    )
+    with pytest.raises(ValueError):
+        asyncio.run(toolbox.execute("write_file", {"path": "../../.ssh/authorized_keys", "content": "key"}))
+
+
+def test_local_agent_will_not_silently_overwrite_without_approval(tmp_path):
+    from sleipnir.voice.local_agent import LocalToolbox
+
+    root = tmp_path / "out"
+    root.mkdir()
+    (root / "notes.md").write_text("the operator's work")
+    toolbox = LocalToolbox(
+        workspace=tmp_path, permission_mode="ask", original_prompt="", output_root=root
+    )
+    result = json.loads(
+        asyncio.run(toolbox.execute("write_file", {"path": "notes.md", "content": "replaced"}))
+    )
+    assert result["status"] == "approval_required"
+    assert (root / "notes.md").read_text() == "the operator's work"
+
+
+def test_delegation_is_not_the_default_advice():
+    """The local model is asked to solve the problem, not to hand it off."""
+    from sleipnir.voice.local_agent import LOCAL_AGENT_SYSTEM
+
+    assert "Prefer delegate_work" not in LOCAL_AGENT_SYSTEM
+    assert "delegate_work" in LOCAL_AGENT_SYSTEM
+    assert "yourself" in LOCAL_AGENT_SYSTEM
+
+
+def test_a_promise_to_act_is_pushed_back_once(tmp_path):
+    """Small models answer "I'll write that file" and then stop.
+
+    Measured live on qwen3.5:4b: the first turn described the deliverable and
+    emitted no tool call, so nothing was produced.  One deterministic nudge
+    turns the promise into the action; it is sent at most once so a chatty
+    model cannot loop.
+    """
+    from sleipnir.voice.local_agent import LocalDesktopAgent
+
+    class Observer:
+        async def capture(self):
+            return b"png-frame"
+
+    performed = []
+
+    async def run_tool(name, arguments):
+        performed.append(name)
+        return json.dumps({"status": "written", "path": "/home/operator/Sleipnir/deck.html"})
+
+    bodies = []
+    replies = [
+        {"role": "assistant", "content": "I'll create that presentation for you now."},
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "write_file", "arguments": {"path": "deck.html", "content": "<h1>x</h1>"}}}]},
+        {"role": "assistant", "content": "Saved to ~/Sleipnir/deck.html."},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": replies.pop(0)})
+
+    reply = asyncio.run(
+        LocalDesktopAgent(
+            transport=httpx.MockTransport(handler), observer=Observer(), tool_runner=run_tool
+        ).respond("make me a deck", model="jarvis", workspace=tmp_path, permission_mode="always")
+    )
+
+    assert performed == ["write_file"]
+    assert reply.text == "Saved to ~/Sleipnir/deck.html."
+    nudges = [
+        message
+        for message in bodies[-1]["messages"]
+        if message.get("role") == "user" and "without describing" in str(message.get("content", ""))
+    ]
+    assert len(nudges) == 1
+
+
+def test_a_plain_answer_is_never_nudged(tmp_path):
+    """A question that needs no tool must be answered in one turn."""
+    from sleipnir.voice.local_agent import LocalDesktopAgent
+
+    class Observer:
+        async def capture(self):
+            return b"png-frame"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "Photosynthesis converts light into sugar."}})
+
+    reply = asyncio.run(
+        LocalDesktopAgent(
+            transport=httpx.MockTransport(handler), observer=Observer(), tool_runner=lambda *_a: None
+        ).respond("what is photosynthesis", model="jarvis", workspace=tmp_path, permission_mode="ask")
+    )
+    assert reply.steps == 1

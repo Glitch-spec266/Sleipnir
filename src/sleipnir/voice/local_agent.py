@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from sleipnir.capabilities import audit
 from sleipnir.capabilities import computer
 from sleipnir.capabilities.browser import Browser
 from sleipnir.console import capability_brief
@@ -37,8 +38,22 @@ truthful. You receive the freshest desktop frame at the start of the turn and
 after actions that can change the display. Use browser DOM tools when a web page
 can be understood reliably from structure; use observe_screen for native apps,
 visual layouts, pictures, or when the display may have changed. Never claim an
-action succeeded until a tool result or a fresh frame verifies it. Prefer
-delegate_work for repository changes or difficult multi-step problem solving.
+action succeeded until a tool result or a fresh frame verifies it.
+
+Solve the operator's problem yourself. Reasoning, planning, explanations,
+research, maths, writing, and documents are your work, not someone else's: think
+it through and answer. Use write_file only when the operator asked for a
+document or deliverable -- a self-contained HTML presentation, an essay, notes,
+a plan -- and then say where you put it. A spoken question is answered by
+speaking, not by writing a file. Only call delegate_work when the operator names Claude or Codex, or
+when the task needs changes to a source repository.
+
+The desktop frame is background context. Do not describe it, and do not call
+observe_screen, unless the operator's request is about what is on the screen.
+
+Always end your turn by speaking one short sentence to the operator confirming
+what you did or found, even when the task needed no answer.
+
 Do not request, reveal, or type credentials; credential entry stays behind
 Sleipnir's protected operator prompt. Stop when the task is complete or when a
 tool says operator approval is required."""
@@ -55,8 +70,37 @@ TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "computer_type", "description": "Type non-secret text into the focused window.", "parameters": {"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "computer_key", "description": "Press a key chord such as ctrl+l or enter.", "parameters": {"type": "object", "required": ["combo"], "properties": {"combo": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "computer_scroll", "description": "Scroll the focused window; negative moves down.", "parameters": {"type": "object", "required": ["amount"], "properties": {"amount": {"type": "integer"}}}}},
-    {"type": "function", "function": {"name": "delegate_work", "description": "Ask Claude or Codex to solve a difficult task using Sleipnir's full audited capabilities.", "parameters": {"type": "object", "required": ["provider", "instruction"], "properties": {"provider": {"type": "string", "enum": ["claude", "codex"]}, "instruction": {"type": "string"}}}}},
+    {"type": "function", "function": {"name": "write_file", "description": "Write a document you have composed (HTML presentation, essay, notes, plan) into the operator's Sleipnir output folder and return its path.", "parameters": {"type": "object", "required": ["path", "content"], "properties": {"path": {"type": "string", "description": "File name, e.g. photosynthesis-deck.html"}, "content": {"type": "string"}}}}},
+    {"type": "function", "function": {"name": "open_file", "description": "Show a file you wrote to the operator in Sleipnir's browser.", "parameters": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}}}},
+    {"type": "function", "function": {"name": "delegate_work", "description": "Ask Claude or Codex to solve a difficult task using Sleipnir's full audited capabilities. Only when the operator names them, or for source repository changes.", "parameters": {"type": "object", "required": ["provider", "instruction"], "properties": {"provider": {"type": "string", "enum": ["claude", "codex"]}, "instruction": {"type": "string"}}}}},
 ]
+
+ACTION_NUDGE = (
+    "Do that now by calling the tool, without describing it first. "
+    "Then confirm in one sentence."
+)
+
+# A small model's way of failing: it narrates the action instead of emitting the
+# call.  Measured live on qwen3.5:4b, twice, with two different openings -- so
+# the phrase is matched anywhere in the reply, not just at the start.
+_PROMISE_PHRASES = (
+    "i'll ", "i will ", "let me ", "i'm going to", "i am going to",
+    "i can create", "i can write", "going to create", "here's what i'll",
+)
+# "let me know" is the one common phrase that reads as a promise but is really
+# a hand-back to the operator.
+_PROMISE_EXCEPTIONS = ("let me know",)
+
+
+def _promises_action(text: str) -> bool:
+    body = text.casefold()
+    for exception in _PROMISE_EXCEPTIONS:
+        body = body.replace(exception, "")
+    return any(phrase in body for phrase in _PROMISE_PHRASES)
+
+
+MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
+DEFAULT_OUTPUT_ROOT = Path.home() / "Sleipnir"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,14 +141,39 @@ class ScreenObserver:
 
 
 class LocalToolbox:
-    def __init__(self, *, workspace: Path, permission_mode: str, original_prompt: str) -> None:
+    def __init__(
+        self,
+        *,
+        workspace: Path,
+        permission_mode: str,
+        original_prompt: str,
+        output_root: Path | None = None,
+    ) -> None:
         if permission_mode not in {"ask", "always"}:
             raise ValueError(f"unknown permission mode {permission_mode!r}")
         self.workspace = workspace
         self.permission_mode = permission_mode
         self.original_prompt = original_prompt.casefold()
+        self.output_root = (output_root or DEFAULT_OUTPUT_ROOT).expanduser()
         self.browser: Browser | None = None
         self.work = WorkRelay()
+
+    def _resolved_output(self, raw: str) -> Path:
+        """Resolve a model-supplied file name inside the output folder.
+
+        The name is untrusted model output, so containment is checked after
+        resolution rather than by inspecting the string: `..` segments, an
+        absolute path and a symlinked parent all fail the same way.
+        """
+        name = str(raw).strip()
+        if not name:
+            raise ValueError("path is required")
+        self.output_root.mkdir(parents=True, exist_ok=True)
+        root = self.output_root.resolve()
+        destination = (root / name).resolve()
+        if destination != root and root not in destination.parents:
+            raise ValueError("documents may only be written inside the Sleipnir output folder")
+        return destination
 
     def _approval(self, action: str) -> str | None:
         if self.permission_mode == "always":
@@ -157,6 +226,24 @@ class LocalToolbox:
         if name == "computer_scroll":
             await asyncio.to_thread(computer.scroll, int(arguments["amount"]))
             return "scrolled focused window"
+        if name == "write_file":
+            destination = self._resolved_output(arguments.get("path", ""))
+            content = str(arguments.get("content", ""))
+            if len(content.encode("utf-8")) > MAX_DOCUMENT_BYTES:
+                raise ValueError("document exceeds the 2 MiB local write limit")
+            # Creating a new file is ordinary work; replacing the operator's
+            # existing one is a mutation, and mutations wait for `always`.
+            if destination.exists() and self.permission_mode != "always":
+                return json.dumps({"status": "approval_required", "action": f"overwrite {destination.name}"})
+            destination.write_text(content, encoding="utf-8")
+            audit.record("local.write_file", {"path": str(destination), "chars": len(content)})
+            return json.dumps({"status": "written", "path": str(destination)})
+        if name == "open_file":
+            destination = self._resolved_output(arguments.get("path", ""))
+            if not destination.is_file():
+                raise ValueError(f"{destination.name} has not been written yet")
+            await (await self._web()).goto(destination.as_uri())
+            return json.dumps({"status": "opened", "path": str(destination)})
         if name == "delegate_work":
             provider = str(arguments["provider"]).casefold()
             if self.permission_mode != "always" and provider not in self.original_prompt:
@@ -205,6 +292,8 @@ class LocalDesktopAgent:
             workspace=workspace, permission_mode=permission_mode, original_prompt=clean
         )
         run_tool = self.tool_runner or toolbox.execute  # type: ignore[union-attr]
+        performed: list[str] = []
+        nudged = False
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": LOCAL_AGENT_SYSTEM},
             await self._visual_message(clean),
@@ -225,7 +314,10 @@ class LocalDesktopAgent:
                             # trace we can actually verify.
                             "think": False,
                             "keep_alive": "15m",
-                            "options": {"temperature": 0.2, "num_predict": 512},
+                            # A document-producing tool call carries the whole document in its
+                            # arguments.  A 512- or 1024-token cap truncates that mid-JSON,
+                            # which arrives as an empty message rather than as an error.
+                            "options": {"temperature": 0.2, "num_predict": 4096},
                         },
                     )
                     if response.status_code != 200:
@@ -247,8 +339,17 @@ class LocalDesktopAgent:
                     calls = message.get("tool_calls") or []
                     if not calls:
                         text = str(message.get("content", "")).strip()
+                        if not performed and not nudged and _promises_action(text):
+                            nudged = True
+                            messages.append({"role": "user", "content": ACTION_NUDGE})
+                            continue
                         if not text:
-                            raise VoiceProviderError("Ollama local agent returned an empty reply")
+                            # The operator is owed an answer even when the model
+                            # goes quiet: silence after a spoken instruction is
+                            # indistinguishable from not having heard them.
+                            if not performed:
+                                raise VoiceProviderError("Ollama local agent returned an empty reply")
+                            text = f"Done. I ran {', '.join(dict.fromkeys(performed))}."
                         return LocalAgentReply(text=text, model=model, steps=step)
                     refresh = False
                     for call in calls:
@@ -261,6 +362,7 @@ class LocalDesktopAgent:
                             result = await run_tool(name, arguments)
                         except Exception as error:  # noqa: BLE001 - error becomes bounded tool evidence
                             result = json.dumps({"status": "error", "detail": str(error)[:480]})
+                        performed.append(name)
                         messages.append({"role": "tool", "tool_name": name, "content": result[:MAX_TOOL_RESULT_CHARS]})
                         refresh = refresh or name in {
                             "observe_screen", "browser_open", "browser_click", "browser_click_text", "browser_fill",
@@ -276,6 +378,14 @@ class LocalDesktopAgent:
         finally:
             if toolbox is not None:
                 await toolbox.close()
+        # The step limit is a budget, not a failure to report: an operator who
+        # spoke an instruction is told what happened rather than hearing an error.
+        if performed:
+            return LocalAgentReply(
+                text=f"I stopped at my {MAX_AGENT_STEPS}-step limit after {', '.join(dict.fromkeys(performed))}.",
+                model=model,
+                steps=MAX_AGENT_STEPS,
+            )
         raise VoiceProviderError(f"local agent exceeded its {MAX_AGENT_STEPS}-step safety limit")
 
     async def _visual_message(self, content: str) -> dict[str, Any]:

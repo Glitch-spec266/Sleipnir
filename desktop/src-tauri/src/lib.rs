@@ -96,7 +96,9 @@ impl Default for VoiceSettings {
         Self {
             wake_name: "Sleipnir".into(),
             local_wake: true,
-            listening_enabled: false,
+            // Ambient listening is the product: a wake word that is off until
+            // the operator finds a toggle is a wake word that does not exist.
+            listening_enabled: true,
             start_at_login: false,
             push_to_talk_shortcut: "CommandOrControl+Shift+Space".into(),
             transcription: "local".into(),

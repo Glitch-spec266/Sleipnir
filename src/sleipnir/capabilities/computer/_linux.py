@@ -15,6 +15,7 @@ module only performs the raw injection, never records that it did.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -204,6 +205,36 @@ def scroll(amount: int) -> None:
     _ydotool("mousemove", "--wheel", "-x", "0", "-y", str(amount))
 
 
+def _focused_output() -> str | None:
+    """Return the name of the monitor the operator is working on, if known.
+
+    Without this, ``grim`` composites every output into one frame -- measured
+    at 3840x1080 across two 1080p screens here.  Downscaled for a model that
+    reads at 1280 px, each screen lands at 640 px wide and nothing on it is
+    legible.  A failure to ask the compositor is never fatal: the caller falls
+    back to capturing everything.
+    """
+    if shutil.which("hyprctl") is None:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ["hyprctl", "monitors", "-j"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        monitors = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if not isinstance(monitors, list):
+        return None
+    for monitor in monitors:
+        if isinstance(monitor, dict) and monitor.get("focused") and monitor.get("name"):
+            return str(monitor["name"])
+    return None
+
+
 def screenshot(destination: Path) -> str:
     """Capture to ``destination``, returning the tool that did it.
 
@@ -212,9 +243,10 @@ def screenshot(destination: Path) -> str:
     the tool that actually ran, not the one a second probe would pick.
     """
     tool = _screenshot_tool()
+    focused = _focused_output() if tool == "grim" else None
     argv = {
         "spectacle": ["spectacle", "-b", "-n", "-f", "-o", str(destination)],
-        "grim": ["grim", str(destination)],
+        "grim": ["grim", "-o", focused, str(destination)] if focused else ["grim", str(destination)],
         "gnome-screenshot": ["gnome-screenshot", "-f", str(destination)],
         "import": ["import", "-window", "root", str(destination)],
     }.get(tool or "")

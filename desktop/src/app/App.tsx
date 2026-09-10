@@ -67,9 +67,10 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
     let unlisten: (() => void) | undefined;
     void listen<string>("voice-instruction", (event) => {
       const decision = classifyInstruction(event.payload);
-      if (decision.kind === "confirm") {
-        setPendingRoute({ text: event.payload, recommended: decision.recommended, reason: decision.reason });
-      } else {
+      // A spoken instruction is answered by the local agent unless the operator
+      // named a work provider. A confirmation modal is invisible when the window
+      // is closed to the tray, which reads as Sleipnir having ignored them.
+      {
         const route = decision.kind === "direct" ? decision.recommended : "ambient";
         void runAndRefresh(async () => {
           try {

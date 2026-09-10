@@ -59,7 +59,7 @@ export function OrbApp() {
       const bytes = Array.from(new Uint8Array(await audio.arrayBuffer()));
       const transcript = await bridge.transcribeAudio(bytes, audio.type);
       const decision = classifyInstruction(transcript);
-      if (decision.kind === "confirm") {
+      if (decision.kind === "direct") {
         setPhase("approval");
         setMessage("Approval needed in Sleipnir");
         await bridge.handoffInstruction(transcript);
