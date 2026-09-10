@@ -119,12 +119,10 @@ class SystemSpeech:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await canceller.wait()
-            # A --pipe-mode client holds its connection open and keeps feeding
-            # the daemon, so cancelling alone measured ~2.4 s of latency against
-            # ~0.17 s once the client had exited.  Kill it too.
-            process = self._process
-            if process is not None and process.returncode is None:
-                process.kill()
+            # Do NOT also kill the client.  Measured on an isolated sink, the
+            # cancel alone stops the audio in 0.13 s -- killing the client adds
+            # nothing, and it makes `speak` raise VoiceProviderError on a
+            # returncode of -9 for what was an ordinary operator interruption.
             return canceller.returncode == 0
         # espeak and `say` render in the process itself, so killing it is the
         # cancel.

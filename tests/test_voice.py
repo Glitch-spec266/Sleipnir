@@ -186,13 +186,14 @@ def test_stop_does_nothing_before_anything_has_been_spoken():
     assert asyncio.run(SystemSpeech().stop()) is False
 
 
-def test_stop_cancels_the_daemon_and_kills_the_pipe_mode_client(monkeypatch):
-    """speech-dispatcher renders in a daemon, so both halves are required.
+def test_stop_cancels_the_daemon_without_killing_the_client(monkeypatch):
+    """speech-dispatcher renders in a daemon, so the cancel is the whole fix.
 
-    Cancelling alone measured ~2.4 s of latency because a --pipe-mode client
-    holds its connection open and keeps feeding; killing the client as well
-    brought it to 0.13 s.  A regression to either half is a regression to an
-    interruption the operator can hear running on.
+    Killing the `spd-say` client silences nothing on its own -- it queues and
+    exits in ~0.19 s for a four-second sentence.  Measured on an isolated null
+    sink, `--cancel` alone stops the audio 0.13 s later, and killing the client
+    as well changes nothing except to make `speak` raise on returncode -9 for
+    what was an ordinary interruption.
     """
     from sleipnir.voice.providers import SystemSpeech
 
@@ -224,4 +225,5 @@ def test_stop_cancels_the_daemon_and_kills_the_pipe_mode_client(monkeypatch):
 
     assert asyncio.run(speech.stop()) is True
     assert spawned == [("/usr/bin/spd-say", "--cancel")]
-    assert client.killed is True
+    # An interruption is not a failure, so the client is left to exit cleanly.
+    assert client.killed is False

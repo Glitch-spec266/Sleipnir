@@ -51,7 +51,7 @@ underlying model decisively outperform Claude Cowork across quality, accepted
 cost, credits, speed, efficiency, adaptability, background non-interference,
 and output quality. This is a measured release gate rather than a current
 performance claim. See the
-[`Post-GUI Intelligence Program`](docs/INTELLIGENCE_ROADMAP.md) for the
+[`Quality and Efficiency Roadmap`](docs/ROADMAP.md) for the
 comparison controls, initial targets, restrictions, and required architecture
 in [the tracked design](DESIGN.md#phase-22--intelligence-amplification-and-design-competency).
 
