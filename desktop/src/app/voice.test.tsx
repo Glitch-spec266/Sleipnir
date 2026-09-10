@@ -25,11 +25,15 @@ describe("voice workspace", () => {
 
     fireEvent.change(screen.getByLabelText("Wake name"), { target: { value: "Friday" } });
     fireEvent.change(screen.getByLabelText("Voice preset"), { target: { value: "british-calm" } });
+    fireEvent.change(screen.getByLabelText("Ambient provider"), { target: { value: "ollama" } });
+    fireEvent.change(screen.getByLabelText("Ambient response model"), { target: { value: "qwen3.5:4b" } });
     fireEvent.click(screen.getByRole("button", { name: "Save voice settings" }));
 
     await waitFor(async () => {
       expect((await bridge.loadDashboard()).voice.settings).toMatchObject({
         wakeName: "Friday",
+        ambientProvider: "ollama",
+        responseModel: "qwen3.5:4b",
         voiceId: "british-calm",
       });
     });

@@ -1100,6 +1100,36 @@ and packages the unsigned application on Linux, Windows, and macOS, but signing,
 updates, and real-hardware voice/desktop-control smoke tests remain release
 gates.
 
+### Local multimodal operator lane
+
+An Ollama-backed turn enters a bounded operator-agent loop rather than
+text-only ambient chat. The initial request includes an ephemeral audited
+desktop frame. Any action that can change visual state triggers a replacement
+frame; earlier frames are removed instead of accumulated. The model therefore
+reasons from the newest screen state without leaving a screenshot collection or
+growing context as a video history.
+
+The loop prefers browser structure over pixels. `Browser.state()` returns a
+bounded title, URL, text excerpt, and interactive-element inventory;
+`click_text()` gives small models an exact-label action rather than forcing them
+to invent CSS from pixels. Native operations remain in the public `computer`
+capability, preserving its validation and append-only audit. Tool errors return
+as bounded evidence and success still requires a tool result or fresh frame.
+
+This is an operator lane, never a worker lane. The persisted `ask` posture
+blocks browser mutations and physical pointer/keyboard operations with an
+`approval_required` result; `always` enables them. Under `ask`, delegation also
+requires the operator's instruction to name Claude or Codex. No credential tool
+is exposed to the local model.
+
+Wake capture uses local energy VAD with pre-roll, trailing-silence closure, and
+a bounded queue before Whisper. Fixed multi-second chunks were rejected after a
+live run showed quiet chunks producing empty transcripts. A later silent-device
+run found a two-frame queue could drop a buffered phrase and retain only its
+silence; the capture task now yields cooperatively into a bounded larger queue.
+GUI autostart discovers conventional non-secret Whisper model paths because an
+interactive shell export is not present in a desktop login process.
+
 ### Visual and accessibility gates
 
 The renderer is checked at full desktop and native orb sizes with Playwright.

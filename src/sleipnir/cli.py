@@ -1190,6 +1190,10 @@ async def cmd_computer(args: argparse.Namespace) -> int:
     try:
         if action == "screenshot":
             print(computer.screenshot(rest[0] if rest else "screen.png"))
+        elif action == "record":
+            destination = rest[0] if rest else "screen-recording.mp4"
+            duration = float(rest[1]) if len(rest) > 1 else 10.0
+            print(computer.record_screen(destination, duration_s=duration))
         elif action == "type":
             computer.type_text(" ".join(rest))
         elif action == "key":
@@ -1622,7 +1626,7 @@ def build_parser() -> argparse.ArgumentParser:
     computer_parser = subparsers.add_parser("computer", help="control keyboard, mouse and screen")
     computer_parser.add_argument(
         "action",
-        choices=["screenshot", "type", "key", "copy", "paste", "click", "move", "scroll"],
+        choices=["screenshot", "record", "type", "key", "copy", "paste", "click", "move", "scroll"],
     )
     computer_parser.add_argument("args", nargs="*")
     computer_parser.set_defaults(func=cmd_computer)

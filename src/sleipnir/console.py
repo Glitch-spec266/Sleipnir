@@ -60,6 +60,7 @@ You are running inside Sleipnir, a harness that extends you with host control.
 These are real shell commands available to you via {shell}:
 
   {exe} computer screenshot <path>     capture the screen to a PNG you can read
+  {exe} computer record <path> [secs]  record the screen for a bounded duration
   {exe} computer type <text>           type into the focused window
   {exe} computer key <combo>           press a chord, e.g. ctrl+shift+t
   {exe} computer copy                  press ctrl+shift+c; preserves text/image MIME

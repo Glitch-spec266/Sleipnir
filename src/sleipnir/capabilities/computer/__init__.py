@@ -163,6 +163,24 @@ def screenshot(path: str | Path = "screen.png") -> Path:
     return destination
 
 
+def record_screen(
+    path: str | Path = "screen-recording.mp4", *, duration_s: float = 10.0
+) -> Path:
+    """Record the desktop for a bounded duration and audit the capture."""
+    if not 1 <= duration_s <= 3600:
+        raise CapabilityError("screen recording duration must be between 1 and 3600 seconds")
+    destination = Path(path).expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tool = _impl.record_screen(destination, duration_s=duration_s)
+    if not destination.is_file():
+        raise CapabilityError("screen recorder produced no output")
+    audit.record(
+        "desktop.screen_record",
+        {"path": str(destination), "tool": tool, "duration_s": duration_s},
+    )
+    return destination
+
+
 def run(
     command: str, *, cwd: str | Path | None = None, timeout_s: float = 300.0
 ) -> subprocess.CompletedProcess[str]:
@@ -219,6 +237,7 @@ __all__ = [
     "probe",
     "run",
     "screenshot",
+    "record_screen",
     "scroll",
     "type_text",
 ]

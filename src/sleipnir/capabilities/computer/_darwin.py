@@ -355,6 +355,22 @@ def screenshot(destination: Path) -> str:
     return "screencapture"
 
 
+def record_screen(destination: Path, *, duration_s: float) -> str:
+    tool = _screenshot_tool()
+    if tool is None:  # pragma: no cover - part of macOS
+        raise CapabilityError("screencapture is missing from this macOS install")
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [tool, "-v", "-V", str(duration_s), str(destination)],
+        capture_output=True,
+        text=True,
+        timeout=duration_s + 30,
+        check=False,
+    )
+    if result.returncode != 0 or not destination.is_file():
+        raise CapabilityError(f"screencapture video failed: {result.stderr.strip()[:200]}")
+    return "screencapture"
+
+
 def _screenshot_tool() -> str | None:
     return shutil.which("screencapture")
 
@@ -424,6 +440,7 @@ __all__ = [
     "probe",
     "screen_size",
     "screenshot",
+    "record_screen",
     "scroll",
     "type_text",
 ]

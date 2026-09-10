@@ -75,6 +75,7 @@ export function createDemoBridge(): SleipnirBridge {
         phase: enabled ? "armed" : "off",
         heard: "",
         privacyLabel: enabled ? "Wake phrase stays on this device" : "Microphone is off",
+        settings: { ...snapshot.voice.settings, listeningEnabled: enabled },
       };
     },
     async setAppSettings(settings: AppSettings) {

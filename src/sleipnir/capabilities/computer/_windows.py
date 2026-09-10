@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -376,6 +378,37 @@ def screenshot(destination: Path) -> str:
     return "gdi"
 
 
+def record_screen(destination: Path, *, duration_s: float) -> str:
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        raise CapabilityError("screen recording needs ffmpeg on Windows")
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [
+            executable,
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-f",
+            "gdigrab",
+            "-framerate",
+            "30",
+            "-t",
+            str(duration_s),
+            "-i",
+            "desktop",
+            "-y",
+            str(destination),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=duration_s + 30,
+        check=False,
+    )
+    if result.returncode != 0 or not destination.is_file():
+        raise CapabilityError(f"ffmpeg screen recording failed: {result.stderr.strip()[:200]}")
+    return "ffmpeg"
+
+
 # ---------------------------------------------------------------------------
 # Probe
 # ---------------------------------------------------------------------------
@@ -443,6 +476,7 @@ __all__ = [
     "move_mouse",
     "probe",
     "screenshot",
+    "record_screen",
     "scroll",
     "type_text",
     "virtual_screen",

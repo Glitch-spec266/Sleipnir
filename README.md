@@ -96,9 +96,9 @@ src/sleipnir/capabilities/computer/
                              in one place
 src/sleipnir/gui.py          artifact-safe desktop dashboard projection
 src/sleipnir/gui_agent.py    desktop ambient/Codex/Claude routing boundary
-src/sleipnir/voice/          wake, transcription, speech, and relay adapters
+src/sleipnir/voice/          wake/VAD, speech, Ollama vision/tools, and relays
 desktop/                     React/Vite renderer and Tauri 2 native host
-tests/                       712 passing tests, including the executable form of the
+tests/                       720 passing tests, including the executable form of the
                              manifest size bound
 ```
 
@@ -140,6 +140,38 @@ npm run test:e2e
 Linux that includes WebKitGTK 4.1. Release CI builds unsigned AppImage, DEB,
 RPM, MSI/NSIS, DMG and app-bundle artifacts; production signing and updater
 keys are intentionally not claimed until release credentials exist.
+
+### Local JARVIS lane
+
+The desktop can use an operator-installed Ollama model as a local multimodal
+assistant. The tested Linux configuration is `qwen3.5:4b` under the alias
+`jarvis`, with a 16K context and 512-token response cap. Sleipnir supplies one
+ephemeral current-screen frame, keeps only the newest frame after an action,
+and removes the temporary capture immediately. Browser work prefers bounded DOM
+state and visible-text actions; native-app work uses audited pointer, keyboard,
+scroll, and screen observation. Hard work can be delegated to the installed
+Claude Code or Codex CLI.
+
+Continuous wake listening applies local energy-based voice segmentation before
+Whisper, so a quiet room does not spawn repeated transcription jobs. Set
+`SLEIPNIR_WHISPER_MODEL` for a custom location. Desktop autostart also discovers
+`ggml-small.en.bin` or `ggml-base.en.bin` under
+`$XDG_DATA_HOME/whisper-models/` (normally
+`~/.local/share/whisper-models/`). Pre-wake transcripts stay inside the
+listener; only text after “Hey, <wake name>” is emitted to the app.
+
+The desktop permission posture still applies. `ask` allows observation and
+safe navigation but returns `approval_required` before clicking, filling, or
+typing; `always` enables those audited actions. Credentials remain outside the
+local model and use Sleipnir's protected credential prompt.
+
+On current Arch/CachyOS, Tauri's cached `linuxdeploy` contains an older `strip`
+that cannot parse modern `.relr.dyn` ELF sections. Build AppImage with:
+
+```sh
+cd desktop
+NO_STRIP=true npm run tauri build -- --bundles appimage
+```
 
 ## Install
 

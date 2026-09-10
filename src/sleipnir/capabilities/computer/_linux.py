@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -225,6 +226,34 @@ def screenshot(destination: Path) -> str:
     return tool
 
 
+def record_screen(destination: Path, *, duration_s: float) -> str:
+    tool = shutil.which("wf-recorder")
+    if tool is None:
+        raise CapabilityError("screen recording needs wf-recorder on Linux")
+    process = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+        [tool, "-y", "-f", str(destination)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        process.wait(timeout=duration_s)
+    except subprocess.TimeoutExpired:
+        process.send_signal(signal.SIGINT)
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired as error:
+            process.kill()
+            process.wait()
+            raise CapabilityError("wf-recorder did not stop cleanly") from error
+    detail = process.stderr.read().strip()[:200] if process.stderr else ""
+    if process.returncode not in {0, -signal.SIGINT} or not destination.is_file():
+        raise CapabilityError(f"wf-recorder failed{f': {detail}' if detail else ''}")
+    return "wf-recorder"
+
+
 __all__ = [
     "BUTTON_CODES",
     "KEYCODES",
@@ -240,6 +269,7 @@ __all__ = [
     "paste",
     "probe",
     "screenshot",
+    "record_screen",
     "scroll",
     "type_text",
 ]

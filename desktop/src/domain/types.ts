@@ -134,9 +134,11 @@ export interface ConversationMessage {
 export interface VoiceSettings {
   wakeName: string;
   localWake: boolean;
+  listeningEnabled: boolean;
   startAtLogin: boolean;
   pushToTalkShortcut: string;
   transcription: "local" | "gemini";
+  ambientProvider: "auto" | "ollama" | "gemini" | "openrouter" | "nvidia-nim";
   responseModel: string;
   escalation: "automatic" | "confirm";
   voiceProvider: "system" | "gemini" | "openrouter";
@@ -181,7 +183,7 @@ export interface DashboardSnapshot {
   messages: ConversationMessage[];
   voice: VoiceStatus;
   settings: AppSettings;
-  providers: Record<"openrouter" | "gemini" | "nvidia", boolean>;
+  providers: Record<"ollama" | "openrouter" | "gemini" | "nvidia", boolean>;
 }
 
 export type ReviewDecision = "approve" | "request_changes" | "reject";

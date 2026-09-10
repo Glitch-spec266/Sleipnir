@@ -196,9 +196,11 @@ export function createDemoSnapshot(): DashboardSnapshot {
       settings: {
         wakeName: "Sleipnir",
         localWake: true,
+        listeningEnabled: true,
         startAtLogin: false,
         pushToTalkShortcut: "CommandOrControl+Shift+Space",
         transcription: "local",
+        ambientProvider: "auto",
         responseModel: "auto",
         escalation: "automatic",
         voiceProvider: "system",
@@ -225,6 +227,6 @@ export function createDemoSnapshot(): DashboardSnapshot {
         nvidia: "NVIDIA_API_KEY",
       },
     },
-    providers: { openrouter: true, gemini: true, nvidia: false },
+    providers: { ollama: false, openrouter: true, gemini: true, nvidia: false },
   };
 }

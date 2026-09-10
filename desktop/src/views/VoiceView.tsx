@@ -96,9 +96,19 @@ export function VoiceView({ snapshot, onSetListening, onSave }: VoiceViewProps) 
               </select>
             </label>
             <label>
+              <span>Ambient provider</span>
+              <select aria-label="Ambient provider" value={draft.ambientProvider} onChange={(event) => patch("ambientProvider", event.target.value as VoiceSettings["ambientProvider"])}>
+                <option value="auto">Automatic · activated cloud</option>
+                <option value="ollama">Ollama · local</option>
+                <option value="gemini">Gemini</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="nvidia-nim">NVIDIA NIM</option>
+              </select>
+            </label>
+            <label>
               <span>Ambient response model</span>
               <input aria-label="Ambient response model" value={draft.responseModel} onChange={(event) => patch("responseModel", event.target.value)} />
-              <small>Use “auto” for the activated provider’s free default.</small>
+              <small>For local JARVIS, choose Ollama and name an installed model.</small>
             </label>
             <label>
               <span>Escalation</span>

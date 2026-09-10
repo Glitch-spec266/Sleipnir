@@ -284,11 +284,16 @@ class Browser:
         return page
 
     async def click(self, selector: str) -> None:
-        await self.page.click(selector)
+        await self.page.click(selector, timeout=5_000)
         audit.record("browser.click", {"selector": selector})
 
+    async def click_text(self, text: str) -> None:
+        """Click the first exact visible label without asking a model for CSS."""
+        await self.page.get_by_text(text, exact=True).first.click(timeout=5_000)
+        audit.record("browser.click_text", {"text_length": len(text)})
+
     async def fill(self, selector: str, value: str) -> None:
-        await self.page.fill(selector, value)
+        await self.page.fill(selector, value, timeout=5_000)
         audit.record("browser.fill", {"selector": selector, "chars": len(value)})
 
     async def fill_secret(self, selector: str, secret: Secret) -> None:
@@ -306,6 +311,26 @@ class Browser:
 
     async def text(self, selector: str = "body") -> str:
         return await self.page.inner_text(selector)
+
+    async def state(self) -> dict[str, Any]:
+        """Return a bounded, model-friendly description of the current page."""
+        page = self.page
+        elements = await page.locator("a, button, input, textarea, select").evaluate_all(
+            """nodes => nodes.slice(0, 80).map((node, index) => ({
+              index,
+              tag: node.tagName.toLowerCase(),
+              text: (node.innerText || node.value || node.getAttribute('aria-label') || '').trim().slice(0, 160),
+              id: node.id || '',
+              href: node.getAttribute('href') || '',
+              type: node.getAttribute('type') || ''
+            }))"""
+        )
+        return {
+            "url": page.url,
+            "title": await page.title(),
+            "text": (await page.inner_text("body"))[:4_000],
+            "interactive": elements,
+        }
 
     async def screenshot(self, path: str | Path) -> Path:
         destination = Path(path).expanduser().resolve()

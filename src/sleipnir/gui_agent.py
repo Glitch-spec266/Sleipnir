@@ -12,17 +12,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sleipnir.console import run_digest
+from sleipnir.console import capability_brief, run_digest
 from sleipnir.gui_history import EncryptedHistory
 from sleipnir.voice.relay import AmbientRelay, WorkRelay
+from sleipnir.voice.local_agent import LocalDesktopAgent
 from sleipnir.voice.routing import RouteMode, choose_ambient_provider, route_utterance
 
 MAX_INSTRUCTION_BYTES = 1_048_576
 
 
 def _activated_provider(
-    environment: Mapping[str, str], variable_names: Mapping[str, str]
+    environment: Mapping[str, str], variable_names: Mapping[str, str], preferred: str = "auto"
 ) -> tuple[str, str] | None:
+    if preferred == "ollama":
+        return "ollama", ""
     conventional = {
         provider: environment.get(variable_names[provider], "")
         for provider in ("gemini", "openrouter", "nvidia-nim")
@@ -34,6 +37,9 @@ def _activated_provider(
             "NVIDIA_API_KEY": conventional["nvidia-nim"],
         }
     )
+    if preferred != "auto":
+        key = conventional.get(preferred, "")
+        return (preferred, key) if key else None
     return (provider, conventional[provider]) if provider else None
 
 
@@ -48,6 +54,8 @@ async def handle_instruction(
     environment: Mapping[str, str] | None = None,
     variable_names: Mapping[str, str] | None = None,
     ambient: AmbientRelay | None = None,
+    ambient_provider: str = "auto",
+    local_agent: LocalDesktopAgent | None = None,
     work: WorkRelay | None = None,
     history: EncryptedHistory | None = None,
 ) -> dict[str, Any]:
@@ -83,25 +91,44 @@ async def handle_instruction(
         )
 
     if selected == "ambient":
-        activated = _activated_provider(environment, variable_names)
+        activated = _activated_provider(environment, variable_names, ambient_provider)
         if activated is None:
-            raise RuntimeError("activate Gemini, OpenRouter, or NVIDIA NIM for ambient replies")
+            raise RuntimeError("the selected ambient provider is not available")
         provider, key = activated
         digest = run_digest(workspace) if (workspace / "plan.json").is_file() else ""
         effective_model = None if model in {None, "auto", "openrouter/auto"} else model
-        reply = await (ambient or AmbientRelay()).respond(
-            clean, provider=provider, api_key=key, model=effective_model, run_digest=digest
-        )
-        result = {
-            "status": "complete",
-            "text": reply.text,
-            "route": f"{reply.provider}/{reply.model}",
-            "rationale": decision.reason,
-            "sessionId": None,
-        }
+        if provider == "ollama" and ambient is None:
+            reply = await (local_agent or LocalDesktopAgent()).respond(
+                clean,
+                model=effective_model or "jarvis",
+                workspace=workspace,
+                permission_mode=permission_mode,
+            )
+            result = {
+                "status": "complete",
+                "text": reply.text,
+                "route": f"ollama/{reply.model}",
+                "rationale": f"{decision.reason} Local vision/tool loop: {reply.steps} step(s).",
+                "sessionId": None,
+            }
+        else:
+            reply = await (ambient or AmbientRelay()).respond(
+                clean, provider=provider, api_key=key, model=effective_model, run_digest=digest
+            )
+            result = {
+                "status": "complete",
+                "text": reply.text,
+                "route": f"{reply.provider}/{reply.model}",
+                "rationale": decision.reason,
+                "sessionId": None,
+            }
     elif selected in {"claude", "codex"}:
+        # A desktop work turn is an operator-lane conversation, not a confined
+        # worker dispatch. Give the provider the same audited host-capability
+        # contract as the terminal console on the first turn of a session.
+        work_prompt = clean if session_id else f"{capability_brief()}\n\n{clean}"
         reply = await (work or WorkRelay()).send(
-            clean,
+            work_prompt,
             provider=selected,
             workspace=workspace,
             permission_mode=permission_mode,
@@ -135,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--route", choices=["ambient", "claude", "codex"])
     parser.add_argument("--permission-mode", choices=["ask", "always"], default="ask")
     parser.add_argument("--model")
+    parser.add_argument(
+        "--ambient-provider",
+        choices=["auto", "ollama", "gemini", "openrouter", "nvidia-nim"],
+        default="auto",
+    )
     parser.add_argument("--session-id")
     parser.add_argument("--history", type=Path)
     parser.add_argument("--history-key", type=Path)
@@ -164,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
                 route=args.route,
                 permission_mode=args.permission_mode,
                 model=args.model,
+                ambient_provider=args.ambient_provider,
                 session_id=args.session_id,
                 variable_names={
                     "openrouter": args.openrouter_env,

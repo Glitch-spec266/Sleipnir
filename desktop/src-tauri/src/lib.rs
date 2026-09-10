@@ -8,9 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_autostart::ManagerExt as AutoStartExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::process::{Command as ShellCommand, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -21,13 +22,16 @@ struct CoreOutput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 #[serde(rename_all = "camelCase")]
 struct VoiceSettings {
     wake_name: String,
     local_wake: bool,
+    listening_enabled: bool,
     start_at_login: bool,
     push_to_talk_shortcut: String,
     transcription: String,
+    ambient_provider: String,
     response_model: String,
     escalation: String,
     voice_provider: String,
@@ -92,9 +96,11 @@ impl Default for VoiceSettings {
         Self {
             wake_name: "Sleipnir".into(),
             local_wake: true,
+            listening_enabled: false,
             start_at_login: false,
             push_to_talk_shortcut: "CommandOrControl+Shift+Space".into(),
             transcription: "local".into(),
+            ambient_provider: "auto".into(),
             response_model: "auto".into(),
             escalation: "automatic".into(),
             voice_provider: "system".into(),
@@ -134,6 +140,7 @@ struct DesktopState {
     messages: Mutex<Vec<Value>>,
     project_starting: Mutex<bool>,
     history_loaded: Mutex<bool>,
+    voice_listener: Mutex<Option<CommandChild>>,
 }
 
 fn initial_run_root() -> PathBuf {
@@ -186,6 +193,24 @@ fn python_executable() -> String {
     env::var("SLEIPNIR_PYTHON").unwrap_or_else(|_| "python3".into())
 }
 
+fn command_available(name: &str) -> bool {
+    env::var_os("PATH").is_some_and(|paths| {
+        env::split_paths(&paths).any(|directory| {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return true;
+            }
+            cfg!(windows)
+                && env::var_os("PATHEXT").is_some_and(|extensions| {
+                    extensions
+                        .to_string_lossy()
+                        .split(';')
+                        .any(|extension| directory.join(format!("{name}{extension}")).is_file())
+                })
+        })
+    })
+}
+
 fn core_command(
     app: &AppHandle,
     entrypoint: &str,
@@ -198,6 +223,7 @@ fn core_command(
             "agent" => "sleipnir.gui_agent",
             "transcribe" => "sleipnir.voice.transcription",
             "speak" => "sleipnir.voice.synthesis",
+            "listen" => "sleipnir.voice.listener",
             "project" => "sleipnir.gui_project",
             "history" => "sleipnir.gui_history",
             _ => "sleipnir.cli",
@@ -272,6 +298,73 @@ async fn run_core_with_stdin(
         stdout,
         stderr,
     })
+}
+
+fn stop_voice_listener(state: &DesktopState) {
+    if let Ok(mut listener) = state.voice_listener.lock() {
+        if let Some(child) = listener.take() {
+            let _ = child.kill();
+        }
+    }
+}
+
+fn start_voice_listener(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
+    stop_voice_listener(state);
+    let preferences = state
+        .preferences
+        .lock()
+        .map_err(|_| "settings lock poisoned")?
+        .clone();
+    if !preferences.voice.listening_enabled || !preferences.voice.local_wake {
+        return Ok(());
+    }
+    let arguments = vec!["--wake-name".into(), preferences.voice.wake_name.into()];
+    let (mut receiver, child) = core_command(app, "listen", arguments)?
+        .spawn()
+        .map_err(|error| format!("start local wake listener: {error}"))?;
+    *state
+        .voice_listener
+        .lock()
+        .map_err(|_| "voice listener lock poisoned")? = Some(child);
+
+    let listener_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = receiver.recv().await {
+            match event {
+                CommandEvent::Stdout(line) => {
+                    if let Ok(payload) = serde_json::from_slice::<Value>(&line) {
+                        match payload["type"].as_str() {
+                            Some("ready") => {
+                                let _ = listener_app.emit_to("orb", "voice-phase", "armed");
+                            }
+                            Some("command") => {
+                                if let Some(text) = payload["text"].as_str() {
+                                    let _ = listener_app.emit_to("orb", "voice-phase", "thinking");
+                                    let _ = listener_app.emit_to("main", "voice-instruction", text);
+                                }
+                            }
+                            Some("error") => {
+                                let detail = payload["text"]
+                                    .as_str()
+                                    .unwrap_or("local wake listener stopped")
+                                    .to_owned();
+                                append_message(&listener_app, "sleipnir", detail, "voice-error");
+                                let _ = listener_app.emit_to("orb", "voice-phase", "error");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                CommandEvent::Error(error) => {
+                    append_message(&listener_app, "sleipnir", error, "voice-error");
+                    let _ = listener_app.emit_to("orb", "voice-phase", "error");
+                }
+                CommandEvent::Terminated(_) => break,
+                _ => {}
+            }
+        }
+    });
+    Ok(())
 }
 
 async fn core_snapshot(app: &AppHandle, run_root: &Path) -> Result<Value, String> {
@@ -367,6 +460,7 @@ async fn load_dashboard(app: AppHandle, state: State<'_, DesktopState>) -> Resul
         .map_err(|error| format!("encode desktop settings: {error}"))?;
     let activated = |name: &str| env::var_os(name).is_some_and(|value| !value.is_empty());
     snapshot["providers"] = json!({
+        "ollama": command_available("ollama"),
         "openrouter": activated(&preferences.settings.provider_env.openrouter),
         "gemini": activated(&preferences.settings.provider_env.gemini),
         "nvidia": activated(&preferences.settings.provider_env.nvidia),
@@ -428,11 +522,18 @@ fn set_voice_settings(
         return Err("unknown transcription mode".into());
     }
     if !matches!(
+        settings.ambient_provider.as_str(),
+        "auto" | "ollama" | "gemini" | "openrouter" | "nvidia-nim"
+    ) {
+        return Err("unknown ambient provider".into());
+    }
+    if !matches!(
         settings.voice_provider.as_str(),
         "system" | "gemini" | "openrouter"
     ) {
         return Err("unknown voice provider".into());
     }
+    let should_listen = settings.local_wake && settings.listening_enabled;
     let mut preferences = state
         .preferences
         .lock()
@@ -469,13 +570,33 @@ fn set_voice_settings(
         return Err(format!("update start-at-login: {error}"));
     }
     preferences.voice = settings;
-    persist_preferences(&state.preferences_path, &preferences)
+    persist_preferences(&state.preferences_path, &preferences)?;
+    drop(preferences);
+    *state.listening.lock().map_err(|_| "voice lock poisoned")? = should_listen;
+    start_voice_listener(&app, &state)
 }
 
 #[tauri::command]
-fn set_listening(enabled: bool, state: State<'_, DesktopState>) -> Result<(), String> {
+fn set_listening(
+    app: AppHandle,
+    enabled: bool,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
     *state.listening.lock().map_err(|_| "voice lock poisoned")? = enabled;
-    Ok(())
+    let mut preferences = state
+        .preferences
+        .lock()
+        .map_err(|_| "settings lock poisoned")?;
+    preferences.voice.listening_enabled = enabled;
+    persist_preferences(&state.preferences_path, &preferences)?;
+    drop(preferences);
+    if enabled {
+        start_voice_listener(&app, &state)?;
+    } else {
+        stop_voice_listener(&state);
+    }
+    app.emit_to("orb", "listening-changed", enabled)
+        .map_err(|error| format!("update voice listener: {error}"))
 }
 
 #[tauri::command]
@@ -681,6 +802,8 @@ async fn send_message(
         preferences.settings.provider_env.gemini.clone().into(),
         "--nvidia-env".into(),
         preferences.settings.provider_env.nvidia.clone().into(),
+        "--ambient-provider".into(),
+        preferences.voice.ambient_provider.clone().into(),
     ];
     if selected == "ambient"
         && !matches!(
@@ -946,7 +1069,7 @@ fn show_main_window(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
@@ -960,6 +1083,16 @@ pub fn run() {
                     if let Some(state) = app.try_state::<DesktopState>() {
                         if let Ok(mut push_to_talk) = state.push_to_talk.lock() {
                             *push_to_talk = active;
+                        }
+                        if active {
+                            stop_voice_listener(&state);
+                        } else if state
+                            .listening
+                            .lock()
+                            .map(|listening| *listening)
+                            .unwrap_or(false)
+                        {
+                            let _ = start_voice_listener(app, &state);
                         }
                     }
                     if active {
@@ -980,14 +1113,16 @@ pub fn run() {
             let preferences = load_preferences(&preferences_path);
             let shortcut = preferences.voice.push_to_talk_shortcut.clone();
             let start_at_login = preferences.voice.start_at_login;
+            let listening_enabled = preferences.voice.listening_enabled;
             app.manage(DesktopState {
                 preferences: Mutex::new(preferences),
-                listening: Mutex::new(false),
+                listening: Mutex::new(listening_enabled),
                 push_to_talk: Mutex::new(false),
                 preferences_path,
                 messages: Mutex::new(Vec::new()),
                 project_starting: Mutex::new(false),
                 history_loaded: Mutex::new(false),
+                voice_listener: Mutex::new(None),
             });
             let _ = app.global_shortcut().register(shortcut.as_str());
             let _ = if start_at_login {
@@ -995,6 +1130,12 @@ pub fn run() {
             } else {
                 app.autolaunch().disable()
             };
+            if listening_enabled {
+                let state = app.state::<DesktopState>();
+                if let Err(error) = start_voice_listener(app.handle(), &state) {
+                    append_message(app.handle(), "sleipnir", error, "voice-error");
+                }
+            }
             if env::args().any(|argument| argument == "--background") {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
@@ -1049,8 +1190,15 @@ pub fn run() {
             speak_text,
             clear_history,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Sleipnir desktop");
+        .build(tauri::generate_context!())
+        .expect("failed to build Sleipnir desktop");
+    app.run(|app, event| {
+        if let RunEvent::Exit = event {
+            if let Some(state) = app.try_state::<DesktopState>() {
+                stop_voice_listener(&state);
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1075,7 +1223,10 @@ mod tests {
         let encoded = serde_json::to_string(&preferences).unwrap();
         let decoded: Preferences = serde_json::from_str(&encoded).unwrap();
 
-        assert_eq!(decoded.sessions.get("claude").map(String::as_str), Some("session-abc"));
+        assert_eq!(
+            decoded.sessions.get("claude").map(String::as_str),
+            Some("session-abc")
+        );
     }
 
     #[test]

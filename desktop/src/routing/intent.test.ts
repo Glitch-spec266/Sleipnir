@@ -10,4 +10,15 @@ describe("desktop instruction routing", () => {
       recommended: "claude",
     });
   });
+
+  it("treats an explicitly named work provider as voice approval", () => {
+    expect(classifyInstruction("Ask Claude what is wrong on my screen")).toMatchObject({
+      kind: "direct",
+      recommended: "claude",
+    });
+    expect(classifyInstruction("Use Codex to take a screenshot")).toMatchObject({
+      kind: "direct",
+      recommended: "codex",
+    });
+  });
 });

@@ -50,6 +50,13 @@ The GUI must remain a client of the same run-owning core as the CLI. The
 intelligence program must improve both surfaces simultaneously; no quality
 feature may exist only as GUI state.
 
+Current Phase 21 baseline (2026-09-09): the local desktop lane has
+Ollama/Qwen multimodal observation, bounded browser/desktop tool use, local
+wake/VAD/Whisper capture, system speech, and explicit Claude/Codex delegation.
+This closes a product-access gap; it does not satisfy the Phase 22 demolition
+gate. The 4B local model is a fast operator/router whose difficult work should
+use the measured skill, worker, judge, and repair architecture below.
+
 ## The demolition gate
 
 Outperforming the baseline is an engineering gate, not an adjective. A qualifying

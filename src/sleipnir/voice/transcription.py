@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
@@ -17,6 +18,30 @@ import httpx
 from sleipnir.voice.providers import VoiceProviderError
 
 MAX_AUDIO_BYTES = 12 * 1024 * 1024
+
+
+def resolve_whisper_model(
+    environment: Mapping[str, str] | None = None,
+    *,
+    home: Path | None = None,
+) -> Path | None:
+    """Find an explicitly configured or conventionally installed model.
+
+    GUI autostart does not read an interactive shell's ``.zshrc``, so relying
+    only on ``SLEIPNIR_WHISPER_MODEL`` makes a verified terminal wake loop fail
+    after login. Model paths are not credentials and may be discovered safely.
+    """
+    environment = os.environ if environment is None else environment
+    if configured := environment.get("SLEIPNIR_WHISPER_MODEL"):
+        path = Path(configured).expanduser()
+        return path if path.is_file() else None
+    home = Path.home() if home is None else home
+    data_home = Path(environment.get("XDG_DATA_HOME", home / ".local" / "share"))
+    for name in ("ggml-small.en.bin", "ggml-base.en.bin", "ggml-small.bin", "ggml-base.bin"):
+        candidate = data_home / "whisper-models" / name
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _audio_suffix(mime_type: str) -> str:
@@ -108,9 +133,7 @@ class LocalWhisperTranscriber:
         if len(audio) > MAX_AUDIO_BYTES:
             raise VoiceProviderError("recording exceeds the 12 MiB safety limit")
         executable = self.executable or shutil.which("whisper-cli") or shutil.which("whisper-cpp")
-        model = self.model or (
-            Path(value) if (value := os.environ.get("SLEIPNIR_WHISPER_MODEL")) else None
-        )
+        model = self.model or resolve_whisper_model()
         if executable is None or model is None or not model.is_file():
             raise VoiceProviderError(
                 "local transcription needs whisper-cli and SLEIPNIR_WHISPER_MODEL"
@@ -207,4 +230,10 @@ if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
 
 
-__all__ = ["GeminiTranscriber", "LocalWhisperTranscriber", "MAX_AUDIO_BYTES", "main"]
+__all__ = [
+    "GeminiTranscriber",
+    "LocalWhisperTranscriber",
+    "MAX_AUDIO_BYTES",
+    "main",
+    "resolve_whisper_model",
+]

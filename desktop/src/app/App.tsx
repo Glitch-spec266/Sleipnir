@@ -1,6 +1,6 @@
 import { Settings2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 
 import type { SleipnirBridge } from "../bridge";
 import { isTauriRuntime } from "../bridge";
@@ -70,7 +70,16 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
       if (decision.kind === "confirm") {
         setPendingRoute({ text: event.payload, recommended: decision.recommended, reason: decision.reason });
       } else {
-        void runAndRefresh(() => bridge.sendMessage(event.payload, "ambient"));
+        const route = decision.kind === "direct" ? decision.recommended : "ambient";
+        void runAndRefresh(async () => {
+          try {
+            const response = await bridge.sendMessage(event.payload, route);
+            await emit("voice-phase", "speaking");
+            await bridge.speak(response.text);
+          } finally {
+            await emit("voice-phase", "armed");
+          }
+        });
       }
     }).then((stop) => {
       if (disposed) stop();
@@ -103,6 +112,7 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
         setPendingRoute({ text, recommended: decision.recommended, reason: decision.reason });
         return;
       }
+      if (decision.kind === "direct") forced = decision.recommended;
     }
     await runAndRefresh(() => bridge.sendMessage(text, forced ?? "ambient"));
   };

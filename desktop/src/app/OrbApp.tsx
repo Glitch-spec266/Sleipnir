@@ -96,7 +96,7 @@ export function OrbApp() {
     });
     if (!isTauriRuntime()) return;
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    const stops: Array<() => void> = [];
     void listen<boolean>("voice-activity", (event) => {
       activeRef.current = event.payload;
       setPhase(event.payload ? "hearing" : "armed");
@@ -104,11 +104,27 @@ export function OrbApp() {
       else void finishCapture();
     }).then((stop) => {
       if (disposed) stop();
-      else unlisten = stop;
+      else stops.push(stop);
+    });
+    void listen<boolean>("listening-changed", (event) => {
+      setPhase(event.payload ? "armed" : "off");
+      setMessage(event.payload ? `Waiting for “Hey, ${wakeName}”` : "Microphone is off");
+    }).then((stop) => {
+      if (disposed) stop();
+      else stops.push(stop);
+    });
+    void listen<VoicePhase>("voice-phase", (event) => {
+      setPhase(event.payload);
+      if (event.payload === "armed") setMessage(`Waiting for “Hey, ${wakeName}”`);
+      if (event.payload === "thinking") setMessage("Thinking locally…");
+      if (event.payload === "error") setMessage("Local wake listener needs attention");
+    }).then((stop) => {
+      if (disposed) stop();
+      else stops.push(stop);
     });
     return () => {
       disposed = true;
-      unlisten?.();
+      stops.forEach((stop) => stop());
     };
   }, []);
 

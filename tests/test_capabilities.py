@@ -74,6 +74,11 @@ class _Recorder:
         self.calls.append(("screenshot", destination))
         return "fake"
 
+    def record_screen(self, destination, *, duration_s: float) -> str:
+        destination.write_bytes(b"video")
+        self.calls.append(("record_screen", destination, duration_s))
+        return "fake-recorder"
+
 
 @pytest.fixture
 def fake_backend(monkeypatch):
@@ -147,6 +152,7 @@ def test_every_public_action_is_audited(audit_log, fake_backend, tmp_path):
     computer.click("right")
     computer.scroll(-2)
     computer.screenshot(tmp_path / "shot.png")
+    computer.record_screen(tmp_path / "recording.mp4", duration_s=3)
     recorded = [entry["action"] for entry in _entries(audit_log)]
     assert recorded == [
         "desktop.type",
@@ -155,6 +161,7 @@ def test_every_public_action_is_audited(audit_log, fake_backend, tmp_path):
         "desktop.click",
         "desktop.scroll",
         "desktop.screenshot",
+        "desktop.screen_record",
     ]
 
 
@@ -201,6 +208,20 @@ def test_screenshot_returns_the_resolved_path_and_makes_its_parent(
     destination = computer.screenshot(tmp_path / "nested" / "shot.png")
     assert destination.exists()
     assert _entries(audit_log)[0]["detail"]["tool"] == "fake"
+
+
+def test_screen_recording_is_bounded_and_audited(audit_log, fake_backend, tmp_path):
+    destination = computer.record_screen(tmp_path / "capture.mp4", duration_s=2.5)
+
+    assert destination.read_bytes() == b"video"
+    assert fake_backend.calls == [("record_screen", destination, 2.5)]
+    assert _entries(audit_log)[0]["detail"] == {
+        "path": str(destination),
+        "tool": "fake-recorder",
+        "duration_s": 2.5,
+    }
+    with pytest.raises(computer.CapabilityError, match="between 1 and 3600"):
+        computer.record_screen(tmp_path / "too-long.mp4", duration_s=3601)
 
 
 # --- the ydotool backend -------------------------------------------------

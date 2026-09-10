@@ -13,7 +13,9 @@ from sleipnir.chat import ChatEvent
 from sleipnir.voice.relay import AmbientRelay, WorkRelay
 from sleipnir.voice.routing import RouteMode, choose_ambient_provider, route_utterance
 from sleipnir.voice.runtime import VoiceRuntime
-from sleipnir.voice.transcription import GeminiTranscriber, MAX_AUDIO_BYTES
+from sleipnir.voice.listener import VoiceSegmenter, WakeCommandDetector
+from sleipnir.voice.local_agent import LocalDesktopAgent
+from sleipnir.voice.transcription import GeminiTranscriber, MAX_AUDIO_BYTES, resolve_whisper_model
 from sleipnir.voice.synthesis import browser_audio
 from sleipnir.voice.providers import AudioPayload
 
@@ -43,6 +45,78 @@ def test_free_ambient_provider_is_preferred_when_gemini_is_activated():
     assert choose_ambient_provider({"OPENROUTER_API_KEY": "set"}) == "openrouter"
     assert choose_ambient_provider({}) is None
 
+
+def test_wake_listener_releases_only_the_command_after_the_local_phrase():
+    detector = WakeCommandDetector(VoiceConfig(wake_name="JARVIS"))
+
+    assert detector.feed("A private conversation before activation") is None
+    assert detector.feed("Hey, JARVIS, what is on my screen?") == "what is on my screen"
+    assert detector.runtime.phase == "armed"
+    assert detector.feed("Hey JARVIS") is None
+    assert detector.runtime.phase == "hearing"
+    assert detector.feed("ask Claude to diagnose the current error") == (
+        "ask Claude to diagnose the current error"
+    )
+    assert detector.runtime.phase == "armed"
+
+
+def test_listener_segments_speech_and_never_transcribes_quiet_chunks():
+    segmenter = VoiceSegmenter(
+        frame_seconds=0.1,
+        minimum_rms=200,
+        silence_seconds=0.3,
+        minimum_seconds=0.2,
+        pre_roll_seconds=0.1,
+    )
+    quiet = (0).to_bytes(2, "little", signed=True) * 1600
+    voice = (2000).to_bytes(2, "little", signed=True) * 1600
+
+    assert all(segmenter.feed(quiet) is None for _ in range(20))
+    assert segmenter.feed(voice) is None
+    assert segmenter.feed(voice) is None
+    assert segmenter.feed(quiet) is None
+    assert segmenter.feed(quiet) is None
+    utterance = segmenter.feed(quiet)
+
+    assert utterance is not None
+    assert voice in utterance
+
+
+def test_local_agent_sends_live_vision_and_continues_after_a_tool_call(tmp_path):
+    requests = []
+
+    class Observer:
+        calls = 0
+
+        async def capture(self):
+            self.calls += 1
+            return b"png-frame"
+
+    async def run_tool(name, arguments):
+        assert name == "computer_scroll"
+        assert arguments == {"amount": -3}
+        return "scrolled focused window"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            return httpx.Response(200, json={"message": {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "computer_scroll", "arguments": {"amount": -3}}}]}})
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "The requested section is visible now."}})
+
+    reply = asyncio.run(
+        LocalDesktopAgent(
+            transport=httpx.MockTransport(handler),
+            observer=Observer(),
+            tool_runner=run_tool,
+        ).respond("Find the error on screen", model="jarvis", workspace=tmp_path, permission_mode="always")
+    )
+
+    assert reply.text == "The requested section is visible now."
+    assert reply.steps == 2
+    assert requests[0]["messages"][1]["images"]
+    assert any(message.get("role") == "tool" for message in requests[1]["messages"])
+    assert sum(1 for message in requests[1]["messages"] if message.get("images")) == 1
 
 def test_openrouter_speech_uses_key_in_header_not_payload():
     captured = {}
@@ -119,6 +193,14 @@ def test_transcription_rejects_oversized_audio_before_network():
         raise AssertionError("oversized recording was accepted")
 
 
+def test_local_whisper_model_is_discovered_for_desktop_autostart(tmp_path):
+    model = tmp_path / ".local" / "share" / "whisper-models" / "ggml-base.en.bin"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"model")
+
+    assert resolve_whisper_model({}, home=tmp_path) == model
+
+
 def test_raw_gemini_speech_is_wrapped_as_browser_playable_wav():
     payload = browser_audio(AudioPayload(b"\x00\x00\x01\x00", "audio/L16;rate=24000", "gemini"))
 
@@ -153,6 +235,33 @@ def test_ambient_relay_supports_gemini_openrouter_and_nvidia_without_key_payload
     assert [gemini.text, openrouter.text, nvidia.text] == ["Gemini reply", "OpenAI-shaped reply", "OpenAI-shaped reply"]
     for request in requests:
         assert not any(secret.encode() in request.content for secret in ("g-secret", "o-secret", "n-secret"))
+
+
+def test_ambient_relay_supports_local_ollama_without_an_api_key():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["authorization"] = request.headers.get("authorization")
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Local answer"}}]})
+
+    relay = AmbientRelay(transport=httpx.MockTransport(handler))
+    reply = asyncio.run(
+        relay.respond(
+            "Explain inertia.",
+            provider="ollama",
+            api_key="",
+            model="qwen3.5:4b",
+        )
+    )
+
+    assert reply.text == "Local answer"
+    assert reply.provider == "ollama"
+    assert captured["url"] == "http://127.0.0.1:11434/v1/chat/completions"
+    assert captured["authorization"] is None
+    assert captured["body"]["model"] == "qwen3.5:4b"
+    assert captured["body"]["reasoning_effort"] == "none"
 
 
 def test_work_relay_maps_operator_policy_and_reuses_provider_session(tmp_path):

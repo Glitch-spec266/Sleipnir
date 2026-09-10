@@ -62,6 +62,14 @@ class AmbientRelay:
                 provider="nvidia-nim",
                 url="https://integrate.api.nvidia.com/v1/chat/completions",
             )
+        if provider == "ollama":
+            return await self._openai_shape(
+                user,
+                "",
+                model or "qwen3.5:4b",
+                provider="ollama",
+                url="http://127.0.0.1:11434/v1/chat/completions",
+            )
         raise VoiceProviderError(f"unknown ambient provider {provider!r}")
 
     async def _gemini(self, prompt: str, key: str, model: str) -> AmbientReply:
@@ -92,10 +100,11 @@ class AmbientRelay:
         provider: str,
         url: str,
     ) -> AmbientReply:
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
         async with httpx.AsyncClient(transport=self.transport, timeout=60) as client:
             response = await client.post(
                 url,
-                headers={"Authorization": f"Bearer {key}"},
+                headers=headers,
                 json={
                     "model": model,
                     "messages": [
@@ -104,6 +113,7 @@ class AmbientRelay:
                     ],
                     "max_tokens": 320,
                     "temperature": 0.2,
+                    **({"reasoning_effort": "none"} if provider == "ollama" else {}),
                 },
             )
         if response.status_code != 200:
