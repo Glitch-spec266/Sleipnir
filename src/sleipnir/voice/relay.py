@@ -122,6 +122,11 @@ class WorkReply:
     session_id: str
 
 
+#: Operator-facing posture -> provider sandbox posture.  Data, not branches, so
+#: an unknown mode has nowhere to land.
+_POSTURES = {"ask": "acceptEdits", "always": "bypassPermissions"}
+
+
 class WorkRelay:
     """Persistent Claude/Codex work sessions behind the desktop boundary."""
 
@@ -149,7 +154,14 @@ class WorkRelay:
         clean = prompt.strip()
         if not clean:
             raise ValueError("work prompt cannot be empty")
-        posture = "bypassPermissions" if permission_mode == "always" else "acceptEdits"
+        try:
+            posture = _POSTURES[permission_mode]
+        except KeyError:
+            # Never fall through to a default posture.  The old two-branch test
+            # sent every unrecognised value down the permissive arm, so a future
+            # stricter mode would have loosened the sandbox instead of tightening
+            # it.  Refusing is the only direction that cannot surprise.
+            raise ValueError(f"unknown permission mode {permission_mode!r}") from None
         if provider not in self.sessions:
             session = chat.ChatSession(provider, **({"session_id": session_id} if session_id else {}))
             session.opened = session_id is not None
