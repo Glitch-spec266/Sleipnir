@@ -98,7 +98,7 @@ src/sleipnir/gui.py          artifact-safe desktop dashboard projection
 src/sleipnir/gui_agent.py    desktop ambient/Codex/Claude routing boundary
 src/sleipnir/voice/          wake, transcription, speech, and relay adapters
 desktop/                     React/Vite renderer and Tauri 2 native host
-tests/                       710 passing tests, including the executable form of the
+tests/                       712 passing tests, including the executable form of the
                              manifest size bound
 ```
 
