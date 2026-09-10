@@ -144,6 +144,12 @@ struct DesktopState {
     history_loaded: Mutex<bool>,
     voice_listener: Mutex<Option<CommandChild>>,
     turn_in_flight: Mutex<bool>,
+    /// The action the previous turn stopped on, awaiting one spoken "yes".
+    ///
+    /// Answering a form takes a dozen consequential actions, so asking per
+    /// action made the task unreachable rather than merely guarded. The grant
+    /// covers the next turn only, and never covers credentials.
+    pending_approval: Mutex<Option<String>>,
 }
 
 /// Holds the microphone shut and the turn slot claimed for one exchange.
@@ -838,6 +844,35 @@ async fn send_message(
         return Err("instruction cannot be empty".into());
     }
     let _turn = TurnGuard::claim(&app).ok_or("Sleipnir is still working on the previous request")?;
+    // A pending approval turns the operator's next word into a decision about
+    // the task Sleipnir stopped on, rather than a fresh instruction.
+    let awaiting = state
+        .pending_approval
+        .lock()
+        .map_err(|_| "approval lock poisoned")?
+        .clone();
+    let mut task_grant = false;
+    let mut text = text;
+    if let Some(action) = awaiting {
+        *state
+            .pending_approval
+            .lock()
+            .map_err(|_| "approval lock poisoned")? = None;
+        match approval_answer(&text) {
+            Some(true) => {
+                task_grant = true;
+                text = action;
+            }
+            Some(false) => {
+                return Ok(json!({
+                    "status": "complete",
+                    "text": "Understood, I have left it alone.",
+                    "route": "ambient",
+                }));
+            }
+            None => {}
+        }
+    }
     let selected = route.unwrap_or_else(|| "ambient".into());
     if !matches!(selected.as_str(), "ambient" | "claude" | "codex") {
         return Err("unknown instruction route".into());
@@ -872,6 +907,9 @@ async fn send_message(
         "--ambient-provider".into(),
         preferences.voice.ambient_provider.clone().into(),
     ];
+    if task_grant {
+        arguments.push("--task-grant".into());
+    }
     if selected == "ambient"
         && !matches!(
             preferences.voice.response_model.trim(),
@@ -895,6 +933,15 @@ async fn send_message(
             .unwrap_or("local agent failed")
             .to_owned());
     }
+    if let Some(pending) = result["approval"].as_str() {
+        // Remember the instruction, not the tool name: re-issuing has to ask
+        // for the same task again, with the grant attached.
+        *state
+            .pending_approval
+            .lock()
+            .map_err(|_| "approval lock poisoned")? = Some(text.clone());
+        let _ = pending;
+    }
     if let Some(session_id) = result["sessionId"].as_str() {
         let mut persisted = state
             .preferences
@@ -910,6 +957,23 @@ async fn send_message(
     messages.push(json!({"id": format!("native-{next}"), "at": "now", "role": "operator", "text": text, "route": "conversation"}));
     messages.push(json!({"id": format!("native-{}", next + 1), "at": "now", "role": "sleipnir", "text": result["text"], "route": result["route"]}));
     Ok(result)
+}
+
+/// Classify a spoken reply to an approval question.
+///
+/// Anything that is neither a yes nor a no is a new instruction, not a silent
+/// refusal: guessing either way would be worse than asking again.
+fn approval_answer(text: &str) -> Option<bool> {
+    let clean = text.trim().trim_matches(|c: char| c.is_ascii_punctuation()).to_lowercase();
+    const YES: [&str; 10] = ["yes", "yeah", "yep", "yup", "sure", "ok", "okay", "go ahead", "do it", "please do"];
+    const NO: [&str; 8] = ["no", "nope", "nah", "stop", "cancel", "don't", "do not", "never mind"];
+    if YES.contains(&clean.as_str()) {
+        return Some(true);
+    }
+    if NO.contains(&clean.as_str()) {
+        return Some(false);
+    }
+    None
 }
 
 fn append_message(app: &AppHandle, role: &str, text: String, route: &str) {
@@ -1191,6 +1255,7 @@ pub fn run() {
                 history_loaded: Mutex::new(false),
                 voice_listener: Mutex::new(None),
                 turn_in_flight: Mutex::new(false),
+                pending_approval: Mutex::new(None),
             });
             let _ = app.global_shortcut().register(shortcut.as_str());
             let _ = if start_at_login {
@@ -1272,6 +1337,21 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_unambiguous_answer_decides_a_pending_approval() {
+        for yes in ["yes", "Yes.", "go ahead", "DO IT!", "sure"] {
+            assert_eq!(approval_answer(yes), Some(true), "{yes}");
+        }
+        for no in ["no", "Nope", "cancel", "never mind", "stop."] {
+            assert_eq!(approval_answer(no), Some(false), "{no}");
+        }
+        // Anything else is a fresh instruction. Reading it as consent would
+        // act without permission; reading it as refusal would drop the work.
+        for other in ["what is on my screen", "yes but only the first one", ""] {
+            assert_eq!(approval_answer(other), None, "{other}");
+        }
+    }
 
     #[test]
     fn defaults_keep_wake_local_and_secrets_out_of_preferences() {

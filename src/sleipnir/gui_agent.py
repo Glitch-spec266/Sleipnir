@@ -49,6 +49,7 @@ async def handle_instruction(
     workspace: Path,
     route: str | None = None,
     permission_mode: str = "ask",
+    task_grant: bool = False,
     model: str | None = None,
     session_id: str | None = None,
     environment: Mapping[str, str] | None = None,
@@ -103,6 +104,7 @@ async def handle_instruction(
                 model=effective_model or "jarvis",
                 workspace=workspace,
                 permission_mode=permission_mode,
+                task_grant=task_grant,
             )
             result = {
                 "status": "complete",
@@ -110,6 +112,9 @@ async def handle_instruction(
                 "route": f"ollama/{reply.model}",
                 "rationale": f"{decision.reason} Local vision/tool loop: {reply.steps} step(s).",
                 "sessionId": None,
+                # Names the action the turn stopped on so the console can ask
+                # the operator once for the task and re-issue with the grant.
+                "approval": reply.approval,
             }
         else:
             reply = await (ambient or AmbientRelay()).respond(
@@ -173,6 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--openrouter-env", default="OPENROUTER_API_KEY")
     parser.add_argument("--gemini-env", default="GEMINI_API_KEY")
     parser.add_argument("--nvidia-env", default="NVIDIA_API_KEY")
+    # One spoken "yes" covers the task the previous turn stopped on.
+    parser.add_argument("--task-grant", action="store_true")
     return parser
 
 
@@ -195,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
                 workspace=args.workspace,
                 route=args.route,
                 permission_mode=args.permission_mode,
+                task_grant=args.task_grant,
                 model=args.model,
                 ambient_provider=args.ambient_provider,
                 session_id=args.session_id,

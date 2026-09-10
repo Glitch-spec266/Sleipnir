@@ -64,7 +64,10 @@ what you did or found, even when the task needed no answer.
 
 Do not request, reveal, or type credentials; credential entry stays behind
 Sleipnir's protected operator prompt. Stop when the task is complete or when a
-tool says operator approval is required."""
+tool says operator approval is required. When a tool answers
+approval_required, stop immediately and say in one sentence what you intend to
+do and why, so the operator can approve the whole task at once. Do not retry
+the same action, and do not carry on as if it had succeeded."""
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -165,6 +168,9 @@ class LocalAgentReply:
     text: str
     model: str
     steps: int
+    # The consequential action this turn stopped on, so the console can ask the
+    # operator once for the whole task rather than once per click.
+    approval: str | None = None
 
 
 # A whole screen has to fit a model's image budget; a region the operator asked
@@ -227,6 +233,7 @@ class LocalToolbox:
         permission_mode: str,
         original_prompt: str,
         output_root: Path | None = None,
+        task_grant: bool = False,
     ) -> None:
         if permission_mode not in {"ask", "always"}:
             raise ValueError(f"unknown permission mode {permission_mode!r}")
@@ -239,6 +246,11 @@ class LocalToolbox:
         # Set by observe_region and consumed by the next frame refresh, so a
         # close-up replaces the wide frame rather than adding a second image.
         self.pending_region: tuple[int, int, int, int] | None = None
+        # One spoken "yes" covers this turn's task. Answering a five-question
+        # form takes a dozen consequential actions, and refusing each one made
+        # the task unreachable rather than merely guarded.
+        self.task_grant = task_grant
+        self.blocked: list[str] = []
 
     def _resolved_output(self, raw: str) -> Path:
         """Resolve a model-supplied file name inside the output folder.
@@ -258,8 +270,14 @@ class LocalToolbox:
         return destination
 
     def _approval(self, action: str) -> str | None:
-        if self.permission_mode == "always":
+        """Refuse a consequential action unless this task is already approved.
+
+        The grant is scoped to one turn and never covers credentials: those
+        stay behind Sleipnir's protected operator prompt regardless.
+        """
+        if self.permission_mode == "always" or self.task_grant:
             return None
+        self.blocked.append(action)
         return json.dumps({"status": "approval_required", "action": action})
 
     async def _web(self) -> Browser:
@@ -379,13 +397,17 @@ class LocalDesktopAgent:
         model: str,
         workspace: Path,
         permission_mode: str,
+        task_grant: bool = False,
     ) -> LocalAgentReply:
         clean = prompt.strip()
         if not clean:
             raise ValueError("local agent prompt cannot be empty")
         workspace = workspace.resolve()
         toolbox = None if self.tool_runner else LocalToolbox(
-            workspace=workspace, permission_mode=permission_mode, original_prompt=clean
+            workspace=workspace,
+            permission_mode=permission_mode,
+            original_prompt=clean,
+            task_grant=task_grant,
         )
         run_tool = self.tool_runner or toolbox.execute  # type: ignore[union-attr]
         performed: list[str] = []
@@ -455,7 +477,12 @@ class LocalDesktopAgent:
                             if not performed:
                                 raise VoiceProviderError("Ollama local agent returned an empty reply")
                             text = f"Done. I ran {', '.join(dict.fromkeys(performed))}."
-                        return LocalAgentReply(text=text, model=model, steps=step)
+                        return LocalAgentReply(
+                            text=text,
+                            model=model,
+                            steps=step,
+                            approval=toolbox.blocked[0] if toolbox and toolbox.blocked else None,
+                        )
                     refresh = False
                     for call in calls:
                         function = call.get("function", {})

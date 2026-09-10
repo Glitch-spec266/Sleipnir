@@ -880,3 +880,62 @@ def test_a_region_must_have_a_positive_size():
 
     with pytest.raises(ValueError, match="region"):
         asyncio.run(module.ScreenObserver().capture(region=(0, 0, 0, 100)))
+
+
+def test_a_blocked_action_asks_once_for_the_whole_task_not_once_per_click(tmp_path):
+    """In `ask` mode every click returned approval_required and did nothing.
+
+    Answering a five-question form needs a dozen consequential actions, so
+    per-action refusal made the task unreachable by construction rather than
+    merely guarded.
+    """
+    from sleipnir.voice.local_agent import LocalToolbox
+
+    toolbox = LocalToolbox(
+        workspace=tmp_path, permission_mode="ask", original_prompt="fill in the form"
+    )
+    blocked = asyncio.run(toolbox.execute("computer_click", {"x": 1, "y": 2}))
+    assert json.loads(blocked)["status"] == "approval_required"
+    assert toolbox.blocked == ["computer_click"]
+
+    granted = LocalToolbox(
+        workspace=tmp_path,
+        permission_mode="ask",
+        original_prompt="fill in the form",
+        task_grant=True,
+    )
+    # The grant covers the task, so the gate stops answering for every action.
+    assert granted._approval("computer_click") is None
+    # It never reaches credentials: those stay behind the operator prompt.
+    assert granted.permission_mode == "ask"
+
+
+def test_the_reply_carries_what_it_needs_permission_for(tmp_path):
+    """The operator has to be told what they are approving, in one sentence."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if len(body["messages"]) <= 2:
+            return httpx.Response(200, json={"message": {
+                "role": "assistant",
+                "tool_calls": [{"function": {"name": "computer_click", "arguments": {"x": 1, "y": 2}}}],
+            }})
+        return httpx.Response(200, json={"message": {
+            "role": "assistant", "content": "I need to click the answer to continue."
+        }})
+
+    class Observer:
+        async def capture(self, *, region=None) -> bytes:
+            return b"frame"
+
+    agent = LocalDesktopAgent(transport=httpx.MockTransport(handler), observer=Observer())
+    reply = asyncio.run(
+        agent.respond(
+            "answer the question on my screen",
+            workspace=tmp_path,
+            model="jarvis",
+            permission_mode="ask",
+        )
+    )
+
+    assert reply.approval == "computer_click"
+    assert reply.text
