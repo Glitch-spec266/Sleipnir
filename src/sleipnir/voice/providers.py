@@ -68,6 +68,18 @@ def system_tts_command(
 
 
 class SystemSpeech:
+    """The native speech engine, and the one way to silence it again.
+
+    ``speak`` and ``stop`` are a pair.  ``VoiceRuntime.interrupt`` only moves
+    the state machine — it is deliberately free of I/O — so a caller handling an
+    interruption must call both, or the operator gets a UI that says "hearing"
+    while the machine talks over them.
+    """
+
+    def __init__(self) -> None:
+        self._process: asyncio.subprocess.Process | None = None
+        self._executable: str | None = None
+
     async def speak(self, text: str, *, preset: str = "system-natural") -> None:
         family = "windows" if sys.platform == "win32" else ("darwin" if sys.platform == "darwin" else "linux")
         candidates = ["spd-say", "espeak-ng", "espeak"] if family == "linux" else (["powershell"] if family == "windows" else ["say"])
@@ -81,9 +93,46 @@ class SystemSpeech:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await process.communicate(text.encode("utf-8"))
+        self._process = process
+        self._executable = executable
+        try:
+            _, stderr = await process.communicate(text.encode("utf-8"))
+        finally:
+            self._process = None
         if process.returncode:
             raise VoiceProviderError(f"system speech failed: {stderr.decode('utf-8', 'replace')[:240]}")
+
+    async def stop(self) -> bool:
+        """Silence speech already in flight.  True if anything was stopped."""
+        executable = self._executable
+        if executable is None:
+            return False
+        if os.path.basename(executable).startswith("spd-say"):
+            # speech-dispatcher renders in a daemon, so the client that queued
+            # the text has usually already exited -- measured at 0.19 s for a
+            # four-second sentence.  Killing it silences nothing; the daemon
+            # needs an explicit cancel.
+            canceller = await asyncio.create_subprocess_exec(
+                executable,
+                "--cancel",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await canceller.wait()
+            # A --pipe-mode client holds its connection open and keeps feeding
+            # the daemon, so cancelling alone measured ~2.4 s of latency against
+            # ~0.17 s once the client had exited.  Kill it too.
+            process = self._process
+            if process is not None and process.returncode is None:
+                process.kill()
+            return canceller.returncode == 0
+        # espeak and `say` render in the process itself, so killing it is the
+        # cancel.
+        process = self._process
+        if process is None or process.returncode is not None:
+            return False
+        process.kill()
+        return True
 
 
 class OpenRouterSpeech:

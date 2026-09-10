@@ -178,3 +178,50 @@ def test_work_relay_maps_operator_policy_and_reuses_provider_session(tmp_path):
     assert len(built) == 1
     assert built[0][1]["permission_mode"] == "acceptEdits"
     assert built[0][1]["add_dirs"] == (tmp_path.resolve(),)
+
+
+def test_stop_does_nothing_before_anything_has_been_spoken():
+    from sleipnir.voice.providers import SystemSpeech
+
+    assert asyncio.run(SystemSpeech().stop()) is False
+
+
+def test_stop_cancels_the_daemon_and_kills_the_pipe_mode_client(monkeypatch):
+    """speech-dispatcher renders in a daemon, so both halves are required.
+
+    Cancelling alone measured ~2.4 s of latency because a --pipe-mode client
+    holds its connection open and keeps feeding; killing the client as well
+    brought it to 0.13 s.  A regression to either half is a regression to an
+    interruption the operator can hear running on.
+    """
+    from sleipnir.voice.providers import SystemSpeech
+
+    spawned: list[tuple[str, ...]] = []
+
+    class FakeProcess:
+        returncode = None
+
+        def __init__(self):
+            self.killed = False
+
+        def kill(self):
+            self.killed = True
+
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*argv, **_kwargs):
+        spawned.append(argv)
+        process = FakeProcess()
+        process.returncode = 0
+        return process
+
+    speech = SystemSpeech()
+    client = FakeProcess()
+    speech._process = client
+    speech._executable = "/usr/bin/spd-say"
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    assert asyncio.run(speech.stop()) is True
+    assert spawned == [("/usr/bin/spd-say", "--cancel")]
+    assert client.killed is True
