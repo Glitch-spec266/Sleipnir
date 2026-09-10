@@ -16,7 +16,9 @@ import os
 import re
 import shutil
 import signal
+import stat
 import sys
+import time
 import wave
 from array import array
 from collections import deque
@@ -60,34 +62,96 @@ def _wake_span(transcript: str, wake_name: str) -> tuple[int, int] | None:
     return match.span() if match else None
 
 
+ARM_TIMEOUT_SECONDS = 8.0
+REPEAT_WINDOW_SECONDS = 6.0
+
+
 @dataclass(slots=True)
 class WakeCommandDetector:
-    """Privacy-preserving transcript gate around :class:`VoiceRuntime`."""
+    """Privacy-preserving transcript gate around :class:`VoiceRuntime`.
+
+    Time arrives as an explicit argument rather than from a hidden clock, for
+    the same reason terminal chrome takes a frame number: it is what makes the
+    cooldown and the arming timeout testable without sleeping.
+    """
 
     config: VoiceConfig
+    arm_timeout_seconds: float = ARM_TIMEOUT_SECONDS
+    repeat_window_seconds: float = REPEAT_WINDOW_SECONDS
     runtime: VoiceRuntime = field(init=False)
+    _armed_at: float = field(default=0.0, init=False)
+    _last_command: str = field(default="", init=False)
+    _last_command_at: float = field(default=0.0, init=False)
 
     def __post_init__(self) -> None:
         self.runtime = VoiceRuntime(self.config)
 
-    def feed(self, transcript: str) -> str | None:
+    def _release(self, command: str, now: float) -> str | None:
+        """Emit a command unless it repeats the previous one immediately.
+
+        The segmenter ends an utterance on 0.8 s of silence, so one spoken
+        sentence with a pause in it arrives as two transcripts. Both used to
+        reach the host, which started two turns and spoke both replies at once.
+        """
+        if command == self._last_command and now - self._last_command_at < self.repeat_window_seconds:
+            return None
+        self._last_command = command
+        self._last_command_at = now
+        return command
+
+    def feed(self, transcript: str, *, now: float = 0.0) -> str | None:
         clean = transcript.strip().strip(" .,!?:;-\t\n")
         if not clean:
             return None
         if self.runtime.phase == "hearing":
-            self.runtime.submit_utterance(clean, remote=False)
-            command = self.runtime.heard
+            if now - self._armed_at <= self.arm_timeout_seconds:
+                self.runtime.submit_utterance(clean, remote=False)
+                command = self.runtime.heard
+                self.runtime.complete()
+                return self._release(command, now)
+            # Nobody followed the wake phrase in time. Disarm rather than
+            # treating an unrelated remark as an instruction.
             self.runtime.complete()
-            return command
         span = _wake_span(clean, self.config.wake_name)
         if span is None or not self.runtime.feed_local_transcript(clean):
             return None
         command = clean[span[1] :].strip(" .,!?:;-\t\n")
         if not command:
+            self._armed_at = now
             return None
         self.runtime.submit_utterance(command, remote=False)
         self.runtime.complete()
-        return command
+        return self._release(command, now)
+
+
+@dataclass(slots=True)
+class ListenerGate:
+    """Host-controlled mute.
+
+    Piper renders through the speakers while ``parecord`` is still capturing,
+    so without this Sleipnir wakes itself on its own reply. The host also holds
+    the gate shut for the whole of a turn, which is what stops a second wake
+    phrase from starting a second concurrent agent.
+    """
+
+    muted: bool = False
+
+    def apply(self, line: str) -> bool:
+        """Apply one control line; return whether it was understood."""
+        try:
+            payload = json.loads(line)
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        kind = payload.get("type")
+        if kind == "mute":
+            self.muted = True
+            return True
+        if kind == "unmute":
+            self.muted = False
+            return True
+        return False
 
 
 def _rms(pcm: bytes) -> float:
@@ -156,6 +220,16 @@ class VoiceSegmenter:
             maxlen=max(1, round(self.pre_roll_seconds / self.frame_seconds))
         )
 
+    def reset(self) -> None:
+        """Discard whatever is buffered, without emitting it.
+
+        Used when the host mutes the listener mid-utterance: resuming must not
+        splice speech from before the mute onto speech from after it.
+        """
+        self._frames = []
+        self._silent_frames = 0
+        self._pre_roll.clear()
+
     def feed(self, pcm: bytes) -> bytes | None:
         voiced = _has_voice(pcm, minimum_rms=self.minimum_rms)
         if not self._frames:
@@ -203,6 +277,7 @@ async def listen_forever(
         raise RuntimeError("continuous local listening needs parecord")
     model = LocalWhisperTranscriber()
     detector = WakeCommandDetector(config)
+    gate = ListenerGate()
     chunk_bytes = int(_RATE * _CHANNELS * _SAMPLE_WIDTH * chunk_seconds)
     segmenter = VoiceSegmenter(frame_seconds=chunk_seconds)
     recorder_args = [recorder]
@@ -239,12 +314,44 @@ async def listen_forever(
         except asyncio.IncompleteReadError:
             await queue.put(None)
 
+    async def control() -> None:
+        """Apply host mute/unmute lines arriving on stdin.
+
+        The host holds the gate shut for the whole of a turn and while it is
+        speaking, so the microphone cannot start a second turn or hear Piper.
+        """
+        reader = asyncio.StreamReader()
+        try:
+            await asyncio.get_running_loop().connect_read_pipe(
+                lambda: asyncio.StreamReaderProtocol(reader), sys.stdin
+            )
+        except (OSError, ValueError):
+            return  # No usable stdin: the listener simply never mutes.
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            gate.apply(line.decode("utf-8", "replace").strip())
+        # EOF on a pipe means the host that spawned us is gone. Exiting here is
+        # what stops an orphaned listener from holding the microphone and
+        # racing the next app launch for the same wake word.
+        try:
+            parented = stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode)
+        except OSError:
+            parented = False
+        if parented:
+            await queue.put(None)
+
     capture_task = asyncio.create_task(capture())
+    control_task = asyncio.create_task(control())
     try:
         while True:
             frame = await queue.get()
             if frame is None:
                 break
+            if gate.muted:
+                segmenter.reset()
+                continue
             pcm = segmenter.feed(frame)
             if pcm is None:
                 continue
@@ -256,11 +363,15 @@ async def listen_forever(
             except Exception as error:  # noqa: BLE001 - keep the listener alive
                 _emit({"type": "warning", "text": str(error)[:240]})
                 continue
-            command = detector.feed(transcript)
+            if gate.muted:
+                # The turn started while this utterance was being transcribed.
+                continue
+            command = detector.feed(transcript, now=time.monotonic())
             if command:
                 _emit({"type": "command", "text": command})
     finally:
         capture_task.cancel()
+        control_task.cancel()
         if process.returncode is None:
             process.terminate()
             await process.wait()

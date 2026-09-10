@@ -143,6 +143,60 @@ struct DesktopState {
     project_starting: Mutex<bool>,
     history_loaded: Mutex<bool>,
     voice_listener: Mutex<Option<CommandChild>>,
+    turn_in_flight: Mutex<bool>,
+}
+
+/// Holds the microphone shut and the turn slot claimed for one exchange.
+///
+/// Both the wake listener and the push-to-talk orb reach `send_message`, and
+/// neither knew about the other: a second wake phrase -- including Sleipnir
+/// hearing its own reply -- started a second agent, and both spoke at once.
+/// Releasing on `Drop` is what makes an early error return safe.
+struct TurnGuard {
+    app: AppHandle,
+}
+
+impl TurnGuard {
+    fn claim(app: &AppHandle) -> Option<Self> {
+        let state = app.try_state::<DesktopState>()?;
+        {
+            let mut busy = state.turn_in_flight.lock().ok()?;
+            if *busy {
+                return None;
+            }
+            *busy = true;
+        }
+        set_listener_muted(&state, true);
+        Some(Self { app: app.clone() })
+    }
+}
+
+impl Drop for TurnGuard {
+    fn drop(&mut self) {
+        if let Some(state) = self.app.try_state::<DesktopState>() {
+            set_listener_muted(&state, false);
+            if let Ok(mut busy) = state.turn_in_flight.lock() {
+                *busy = false;
+            }
+        }
+    }
+}
+
+/// Tell the wake listener to stop consuming audio, or to resume.
+///
+/// Piper renders through the speakers while `parecord` is still capturing, so
+/// without this Sleipnir wakes itself on its own reply.
+fn set_listener_muted(state: &DesktopState, muted: bool) {
+    let line: &[u8] = if muted {
+        b"{\"type\":\"mute\"}\n"
+    } else {
+        b"{\"type\":\"unmute\"}\n"
+    };
+    if let Ok(mut listener) = state.voice_listener.lock() {
+        if let Some(child) = listener.as_mut() {
+            let _ = child.write(line);
+        }
+    }
 }
 
 fn initial_run_root() -> PathBuf {
@@ -783,6 +837,7 @@ async fn send_message(
     if text.trim().is_empty() {
         return Err("instruction cannot be empty".into());
     }
+    let _turn = TurnGuard::claim(&app).ok_or("Sleipnir is still working on the previous request")?;
     let selected = route.unwrap_or_else(|| "ambient".into());
     if !matches!(selected.as_str(), "ambient" | "claude" | "codex") {
         return Err("unknown instruction route".into());
@@ -1135,6 +1190,7 @@ pub fn run() {
                 project_starting: Mutex::new(false),
                 history_loaded: Mutex::new(false),
                 voice_listener: Mutex::new(None),
+                turn_in_flight: Mutex::new(false),
             });
             let _ = app.global_shortcut().register(shortcut.as_str());
             let _ = if start_at_login {
