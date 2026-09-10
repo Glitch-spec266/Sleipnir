@@ -42,6 +42,12 @@ can be understood reliably from structure; use observe_screen for native apps,
 visual layouts, pictures, or when the display may have changed. Never claim an
 action succeeded until a tool result or a fresh frame verifies it.
 
+If text in a frame is too small to read with certainty, call observe_region on
+the rectangle around it and read the close-up. Never guess at small text: say
+you cannot read it rather than inventing what it says. Form controls appear in
+the browser page state with their role and their checked flag, so read that
+state to see which option is selected rather than judging it from a picture.
+
 Solve the operator's problem yourself. Reasoning, planning, explanations,
 research, maths, writing, and documents are your work, not someone else's: think
 it through and answer. Use write_file only when the operator asked for a
@@ -63,6 +69,8 @@ tool says operator approval is required."""
 
 TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "observe_screen", "description": "Attach the newest full-desktop frame so you can read text, images, and UI state.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "observe_region", "description": "Attach a close-up of one rectangle of the screen at full fidelity. Use this when text is too small to read in the full frame; the last frame's own coordinates tell you where to look.", "parameters": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}}, "required": ["x", "y", "width", "height"]}}},
+    {"type": "function", "function": {"name": "browser_scroll", "description": "Scroll the browser page; negative moves down. Returns the page state that follows.", "parameters": {"type": "object", "properties": {"amount": {"type": "integer"}}, "required": ["amount"]}}},
     {"type": "function", "function": {"name": "browser_open", "description": "Open a URL in Sleipnir's persistent visible browser.", "parameters": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "browser_text", "description": "Read bounded visible text from the current browser page.", "parameters": {"type": "object", "properties": {"selector": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "browser_click", "description": "Click a CSS selector in the current browser page.", "parameters": {"type": "object", "required": ["selector"], "properties": {"selector": {"type": "string"}}}}},
@@ -159,25 +167,47 @@ class LocalAgentReply:
     steps: int
 
 
+# A whole screen has to fit a model's image budget; a region the operator asked
+# about is small enough to keep more of its pixels and less compression.
+FRAME_PIXELS = 1280
+CLOSE_LOOK_PIXELS = 1600
+
+
 class ScreenObserver:
     """Capture one audited frame without leaving screenshot files behind."""
 
-    async def capture(self) -> bytes:
+    async def capture(self, *, region: tuple[int, int, int, int] | None = None) -> bytes:
+        """Capture the screen, or one region of it at full fidelity.
+
+        A 1920x1080 screen downscaled to fit 1280 px leaves small text a guess,
+        and a model asked to read it will guess confidently. Cropping before
+        the downscale is what lets a form question keep its own pixels.
+        """
+        if region is not None:
+            left, top, width, height = region
+            if width <= 0 or height <= 0:
+                raise ValueError("a screen region must have a positive width and height")
         with tempfile.TemporaryDirectory(prefix="sleipnir-observe-") as root:
             path = Path(root) / "desktop.png"
             await asyncio.to_thread(computer.screenshot, path)
             frame = path
             if converter := shutil.which("magick") or shutil.which("convert"):
                 reduced = Path(root) / "desktop.jpg"
-                process = await asyncio.create_subprocess_exec(
-                    converter,
-                    str(path),
+                argv = [converter, str(path)]
+                if region is not None:
+                    left, top, width, height = region
+                    argv += ["-crop", f"{width}x{height}+{left}+{top}", "+repage"]
+                argv += [
                     "-resize",
-                    "1280x1280>",
+                    f"{CLOSE_LOOK_PIXELS if region else FRAME_PIXELS}x"
+                    f"{CLOSE_LOOK_PIXELS if region else FRAME_PIXELS}>",
                     "-strip",
                     "-quality",
-                    "72",
+                    "90" if region else "72",
                     str(reduced),
+                ]
+                process = await asyncio.create_subprocess_exec(
+                    *argv,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
@@ -206,6 +236,9 @@ class LocalToolbox:
         self.output_root = (output_root or DEFAULT_OUTPUT_ROOT).expanduser()
         self.browser: Browser | None = None
         self.work = WorkRelay()
+        # Set by observe_region and consumed by the next frame refresh, so a
+        # close-up replaces the wide frame rather than adding a second image.
+        self.pending_region: tuple[int, int, int, int] | None = None
 
     def _resolved_output(self, raw: str) -> Path:
         """Resolve a model-supplied file name inside the output folder.
@@ -237,6 +270,14 @@ class LocalToolbox:
     async def execute(self, name: str, arguments: dict[str, Any]) -> str:
         if name == "observe_screen":
             return "A fresh desktop frame is attached in the next message."
+        if name == "observe_region":
+            self.pending_region = (
+                int(arguments["x"]),
+                int(arguments["y"]),
+                int(arguments["width"]),
+                int(arguments["height"]),
+            )
+            return "A close-up of that region is attached in the next message."
         if name == "browser_open":
             raw = str(arguments.get("url", "")).strip()
             if not raw:
@@ -249,18 +290,24 @@ class LocalToolbox:
                 text = await (await self._web()).text(str(arguments["selector"]))
                 return text[:MAX_TOOL_RESULT_CHARS]
             return json.dumps(await (await self._web()).state())[:MAX_TOOL_RESULT_CHARS]
-        if name in {"browser_click", "browser_click_text", "browser_fill", "computer_click", "computer_type", "computer_key", "computer_scroll"}:
+        if name in {"browser_click", "browser_click_text", "browser_fill", "browser_scroll", "computer_click", "computer_type", "computer_key", "computer_scroll"}:
             if blocked := self._approval(name):
                 return blocked
         if name == "browser_click":
             await (await self._web()).click(str(arguments["selector"]))
-            return "clicked browser element"
+            # Returning the literal "clicked browser element" left the model
+            # blind until the next frame, so it had to guess what its own click
+            # had done.
+            return json.dumps(await (await self._web()).state())[:MAX_TOOL_RESULT_CHARS]
         if name == "browser_click_text":
             await (await self._web()).click_text(str(arguments["text"]))
             return json.dumps(await (await self._web()).state())[:MAX_TOOL_RESULT_CHARS]
         if name == "browser_fill":
             await (await self._web()).fill(str(arguments["selector"]), str(arguments["text"]))
-            return "filled browser field"
+            return json.dumps(await (await self._web()).state())[:MAX_TOOL_RESULT_CHARS]
+        if name == "browser_scroll":
+            await (await self._web()).scroll(int(arguments["amount"]))
+            return json.dumps(await (await self._web()).state())[:MAX_TOOL_RESULT_CHARS]
         if name == "computer_click":
             await asyncio.to_thread(computer.move_mouse, int(arguments["x"]), int(arguments["y"]))
             await asyncio.to_thread(computer.click, str(arguments.get("button", "left")))
@@ -423,7 +470,8 @@ class LocalDesktopAgent:
                         performed.append(name)
                         messages.append({"role": "tool", "tool_name": name, "content": result[:MAX_TOOL_RESULT_CHARS]})
                         refresh = refresh or name in {
-                            "observe_screen", "browser_open", "browser_click", "browser_click_text", "browser_fill",
+                            "observe_screen", "observe_region", "browser_open", "browser_click",
+                            "browser_click_text", "browser_fill", "browser_scroll",
                             "computer_click", "computer_type", "computer_key", "computer_scroll",
                         }
                     if refresh:
@@ -432,7 +480,17 @@ class LocalDesktopAgent:
                         # after one action and contradicts the live-observer contract.
                         for prior in messages:
                             prior.pop("images", None)
-                        messages.append(await self._visual_message("Fresh desktop state after the tool result."))
+                        region = getattr(toolbox, "pending_region", None)
+                        if toolbox is not None:
+                            toolbox.pending_region = None
+                        messages.append(
+                            await self._visual_message(
+                                "A close-up of the region you asked for."
+                                if region
+                                else "Fresh desktop state after the tool result.",
+                                region=region,
+                            )
+                        )
         finally:
             if toolbox is not None:
                 await toolbox.close()
@@ -529,8 +587,10 @@ class LocalDesktopAgent:
             )
         return LocalAgentReply(text=text or "I'm here.", model=model, steps=1)
 
-    async def _visual_message(self, content: str) -> dict[str, Any]:
-        frame = await self.observer.capture()
+    async def _visual_message(
+        self, content: str, *, region: tuple[int, int, int, int] | None = None
+    ) -> dict[str, Any]:
+        frame = await self.observer.capture(region=region) if region else await self.observer.capture()
         return {
             "role": "user",
             "content": content,

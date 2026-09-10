@@ -1241,3 +1241,108 @@ def test_focused_output_survives_a_broken_compositor_reply(monkeypatch):
         lambda *_a, **_k: subprocess.CompletedProcess([], 0, "not json", ""),
     )
     assert _linux._focused_output() is None
+
+
+class _FakeLocator:
+    def __init__(self, nodes, recorder=None, *, matches=1):
+        self._nodes = nodes
+        self._recorder = recorder
+        self._matches = matches
+        self.clicked = None
+
+    async def evaluate_all(self, script, *args):
+        return self._nodes
+
+    async def count(self):
+        return self._matches
+
+    async def click(self, timeout=None):
+        if self._recorder is not None:
+            self._recorder.append(self)
+
+    @property
+    def first(self):
+        self.picked = "first"
+        return self
+
+    @property
+    def last(self):
+        self.picked = "last"
+        return self
+
+
+class _FakePage:
+    def __init__(self, *, nodes=None, body="", matches=1):
+        self.url = "https://forms.example/quiz"
+        self.selector = None
+        self._nodes = nodes or []
+        self._body = body
+        self._matches = matches
+        self.clicks = []
+        self.text_queries = []
+
+    def locator(self, selector):
+        self.selector = selector
+        return _FakeLocator(self._nodes)
+
+    def get_by_text(self, text, exact=True):
+        self.text_queries.append((text, exact))
+        return _FakeLocator([], self.clicks, matches=self._matches)
+
+    async def title(self):
+        return "Quiz"
+
+    async def inner_text(self, selector):
+        return self._body
+
+
+def _browser_with(page):
+    instance = browser.Browser()
+    object.__setattr__(instance, "_page_override", page)
+    type(instance).page = property(lambda self: page)
+    return instance
+
+
+def test_page_state_can_see_radio_buttons_and_whether_they_are_chosen():
+    """A Google Form renders options as div[role=radio], not <input>.
+
+    The old selector list covered only a, button, input, textarea and select,
+    and reported no checked state at all -- so a multiple-choice question was
+    literally invisible and unanswerable.
+    """
+    page = _FakePage(nodes=[{"index": 0, "tag": "div", "role": "radio", "checked": False}])
+    state = asyncio.run(_browser_with(page).state())
+
+    assert "role=radio" in page.selector
+    assert "role=checkbox" in page.selector
+    assert state["interactive"][0]["checked"] is False
+
+
+def test_page_state_says_when_it_had_to_truncate():
+    """Silent truncation reads to a model as a complete page."""
+    page = _FakePage(nodes=[], body="x" * 10_000)
+    state = asyncio.run(_browser_with(page).state())
+
+    assert state["truncated"]["text"] is True
+    assert len(state["text"]) == browser.MAX_PAGE_TEXT
+
+
+def test_clicking_a_label_takes_the_innermost_match_not_the_outermost():
+    """``get_by_text`` also matches every ancestor containing the text.
+
+    DOM order puts the ancestors first, so taking ``.first`` clicked the
+    wrapper rather than the option -- silently, with no ambiguity reported.
+    """
+    page = _FakePage(matches=3)
+    result = asyncio.run(_browser_with(page).click_text("Paris"))
+
+    assert page.clicks and page.clicks[0].picked == "last"
+    assert result["matches"] == 3
+
+
+def test_clicking_text_that_is_not_present_says_so_instead_of_timing_out():
+    page = _FakePage(matches=0)
+    with pytest.raises(computer.CapabilityError, match="no element"):
+        asyncio.run(_browser_with(page).click_text("Berlin"))
+    # An exact miss retries loosely before giving up.
+    assert page.text_queries == [("Berlin", True), ("Berlin", False)]

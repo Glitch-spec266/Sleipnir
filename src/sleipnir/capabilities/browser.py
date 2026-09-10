@@ -228,6 +228,17 @@ def stop_browser(timeout_s: float = 8.0) -> bool:
     return True
 
 
+# Reaching past real form controls to ARIA roles is what makes a Google Form
+# answerable: each option there is a div[role=radio], not an <input>.
+INTERACTIVE_SELECTOR = (
+    "a, button, input, textarea, select, label, "
+    "[role=radio], [role=checkbox], [role=option], [role=button], "
+    "[role=link], [role=textbox], [role=combobox], [role=switch]"
+)
+MAX_INTERACTIVE = 120
+MAX_PAGE_TEXT = 4_000
+
+
 @dataclass
 class Browser:
     """An open browser the agent can drive.
@@ -287,10 +298,33 @@ class Browser:
         await self.page.click(selector, timeout=5_000)
         audit.record("browser.click", {"selector": selector})
 
-    async def click_text(self, text: str) -> None:
-        """Click the first exact visible label without asking a model for CSS."""
-        await self.page.get_by_text(text, exact=True).first.click(timeout=5_000)
-        audit.record("browser.click_text", {"text_length": len(text)})
+    async def click_text(self, text: str) -> dict[str, Any]:
+        """Click a visible label without asking a model for CSS.
+
+        ``get_by_text`` also matches every ancestor that contains the text, and
+        DOM order lists those before the element itself -- so taking the first
+        match clicked the wrapper rather than the option, silently. The last
+        match is the innermost one, which is the thing the operator named.
+
+        An exact miss is retried loosely before giving up: a rendered label
+        carries whatever spacing and casing the page chose, and failing on that
+        looks to the model like the element does not exist.
+        """
+        locator = self.page.get_by_text(text, exact=True)
+        matches = await locator.count()
+        exact = True
+        if not matches:
+            exact = False
+            locator = self.page.get_by_text(text, exact=False)
+            matches = await locator.count()
+        if not matches:
+            raise CapabilityError(f"no element on this page reads {text!r}")
+        await locator.last.click(timeout=5_000)
+        audit.record(
+            "browser.click_text",
+            {"text_length": len(text), "matches": matches, "exact": exact},
+        )
+        return {"clicked": text, "matches": matches, "exact": exact}
 
     async def fill(self, selector: str, value: str) -> None:
         await self.page.fill(selector, value, timeout=5_000)
@@ -309,27 +343,62 @@ class Browser:
         await self.page.press(selector, key)
         audit.record("browser.press", {"selector": selector, "key": key})
 
+    async def scroll(self, amount: int) -> None:
+        """Scroll the page itself, rather than whatever window has focus.
+
+        The only scroll available before this was a desktop wheel event through
+        ydotool, which needs the browser focused and moves whatever is under
+        the pointer.
+        """
+        await self.page.mouse.wheel(0, -amount)
+        audit.record("browser.scroll", {"amount": amount})
+
     async def text(self, selector: str = "body") -> str:
         return await self.page.inner_text(selector)
 
     async def state(self) -> dict[str, Any]:
-        """Return a bounded, model-friendly description of the current page."""
+        """Return a bounded, model-friendly description of the current page.
+
+        The selector list deliberately reaches past real form controls to ARIA
+        roles: a Google Form renders each option as ``div[role=radio]``, so a
+        multiple-choice question was previously invisible, and no field carried
+        whether an option was already chosen.
+
+        Truncation is reported rather than silent. A cut-off page reads to a
+        model exactly like a short one, which is how it confidently answers
+        about content it was never shown.
+        """
         page = self.page
-        elements = await page.locator("a, button, input, textarea, select").evaluate_all(
-            """nodes => nodes.slice(0, 80).map((node, index) => ({
-              index,
-              tag: node.tagName.toLowerCase(),
-              text: (node.innerText || node.value || node.getAttribute('aria-label') || '').trim().slice(0, 160),
-              id: node.id || '',
-              href: node.getAttribute('href') || '',
-              type: node.getAttribute('type') || ''
-            }))"""
+        elements = await page.locator(INTERACTIVE_SELECTOR).evaluate_all(
+            """(nodes, limit) => nodes.slice(0, limit).map((node, index) => {
+              const box = node.getBoundingClientRect();
+              const checked = node.getAttribute('aria-checked');
+              return {
+                index,
+                tag: node.tagName.toLowerCase(),
+                role: node.getAttribute('role') || '',
+                text: (node.innerText || node.value || node.getAttribute('aria-label') || '').trim().slice(0, 160),
+                id: node.id || '',
+                name: node.getAttribute('name') || '',
+                href: node.getAttribute('href') || '',
+                type: node.getAttribute('type') || '',
+                checked: checked === null ? (node.checked ?? null) : checked === 'true',
+                disabled: node.disabled === true || node.getAttribute('aria-disabled') === 'true',
+                box: [Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)]
+              };
+            })""",
+            MAX_INTERACTIVE,
         )
+        body = await page.inner_text("body")
         return {
             "url": page.url,
             "title": await page.title(),
-            "text": (await page.inner_text("body"))[:4_000],
+            "text": body[:MAX_PAGE_TEXT],
             "interactive": elements,
+            "truncated": {
+                "text": len(body) > MAX_PAGE_TEXT,
+                "interactive": len(elements) >= MAX_INTERACTIVE,
+            },
         }
 
     async def screenshot(self, path: str | Path) -> Path:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 import httpx
@@ -828,3 +829,54 @@ def test_a_model_that_stays_silent_without_thinking_still_answers_a_greeting(tmp
 
     assert reply.text == "Morning."
     assert thinks == [False, True]
+
+
+def test_a_close_look_crops_before_downscaling_instead_of_shrinking_the_whole_screen(monkeypatch, tmp_path):
+    """A 1920x1080 screen downscaled to 1280 leaves small text a guess.
+
+    Cropping first means the region the operator asked about keeps its own
+    pixels, which is the difference between reading a form question and
+    inventing one.
+    """
+    import shutil as _shutil
+    from sleipnir.capabilities import computer as _computer
+    from sleipnir.voice import local_agent as module
+
+    calls: list[list[str]] = []
+
+    def fake_screenshot(path):
+        Path(path).write_bytes(b"\x89PNG rawframe")
+        return Path(path)
+
+    class _Process:
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*argv, **kwargs):
+        calls.append(list(argv))
+        Path(argv[-1]).write_bytes(b"\xff\xd8jpeg")
+        return _Process()
+
+    monkeypatch.setattr(_computer, "screenshot", fake_screenshot)
+    monkeypatch.setattr(module.computer, "screenshot", fake_screenshot)
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/magick" if name == "magick" else None)
+    monkeypatch.setattr(module.asyncio, "create_subprocess_exec", fake_exec)
+
+    observer = module.ScreenObserver()
+    assert asyncio.run(observer.capture()) == b"\xff\xd8jpeg"
+    assert "-crop" not in calls[0]
+
+    calls.clear()
+    assert asyncio.run(observer.capture(region=(100, 200, 640, 360))) == b"\xff\xd8jpeg"
+    argv = calls[0]
+    assert "-crop" in argv
+    assert "640x360+100+200" in argv
+    # A cropped region is small enough to keep at full fidelity.
+    assert argv[argv.index("-quality") + 1] == "90"
+
+
+def test_a_region_must_have_a_positive_size():
+    from sleipnir.voice import local_agent as module
+
+    with pytest.raises(ValueError, match="region"):
+        asyncio.run(module.ScreenObserver().capture(region=(0, 0, 0, 100)))
