@@ -62,9 +62,9 @@ state to see which option is selected rather than judging it from a picture.
 
 Solve the operator's problem yourself. Reasoning, planning, explanations,
 research, maths, writing, and documents are your work, not someone else's: think
-it through and answer. Use write_file only when the operator asked for a
-document or deliverable -- a self-contained HTML presentation, an essay, notes,
-a plan -- and then say where you put it. A spoken question is answered by
+it through and answer. Use build_deck when the operator asks for a slide deck or
+presentation, and write_file for any other document or deliverable -- an essay,
+notes, a plan, a web page -- and then say where you put it. A spoken question is answered by
 speaking, not by writing a file. Only call delegate_work when the operator names Claude or Codex, or
 when the task needs changes to a source repository.
 
@@ -96,6 +96,7 @@ TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "computer_key", "description": "Press a key chord such as ctrl+l or enter.", "parameters": {"type": "object", "required": ["combo"], "properties": {"combo": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "computer_scroll", "description": "Scroll the focused window; negative moves down.", "parameters": {"type": "object", "required": ["amount"], "properties": {"amount": {"type": "integer"}}}}},
     {"type": "function", "function": {"name": "write_file", "description": "Write a document you have composed (HTML presentation, essay, notes, plan) into the operator's Sleipnir output folder and return its path.", "parameters": {"type": "object", "required": ["path", "content"], "properties": {"path": {"type": "string", "description": "File name, e.g. photosynthesis-deck.html"}, "content": {"type": "string"}}}}},
+    {"type": "function", "function": {"name": "build_deck", "description": "Build a real PowerPoint (.pptx) presentation in the operator's Sleipnir folder. Use this whenever a slide deck or presentation is asked for.", "parameters": {"type": "object", "required": ["path", "title", "slides"], "properties": {"path": {"type": "string", "description": "File name ending in .pptx, e.g. photosynthesis.pptx"}, "title": {"type": "string"}, "slides": {"type": "array", "items": {"type": "object", "required": ["title"], "properties": {"title": {"type": "string"}, "bullets": {"type": "array", "items": {"type": "string"}}}}}}}}},
     {"type": "function", "function": {"name": "open_file", "description": "Show a file you wrote to the operator in Sleipnir's browser.", "parameters": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "delegate_work", "description": "Hand a problem you cannot solve to a capable worker. Use claude or codex only when the operator names them or the task changes a source repository; use api with a tier from the delegation menu for a hard question you cannot answer yourself.", "parameters": {"type": "object", "required": ["provider", "instruction"], "properties": {"provider": {"type": "string", "enum": ["claude", "codex", "api"]}, "tier": {"type": "string", "description": "Required for provider=api: the tier name from the delegation menu."}, "instruction": {"type": "string"}}}}},
 ]
@@ -225,6 +226,11 @@ MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 # A delegated answer is spoken, and only its first line returns to the local
 # model. Paying for more than that buys detail nobody reads.
 MAX_DELEGATED_TOKENS = 700
+# A spoken request produces a deck somebody reads, not a book. These caps
+# are what keep a looping model from writing a hundred-slide file.
+MAX_DECK_SLIDES = 40
+MAX_DECK_BULLETS = 12
+MAX_DECK_TEXT = 300
 DEFAULT_OUTPUT_ROOT = Path.home() / "Sleipnir"
 
 
@@ -422,6 +428,13 @@ class LocalToolbox:
             destination.write_text(content, encoding="utf-8")
             audit.record("local.write_file", {"path": str(destination), "chars": len(content)})
             return json.dumps({"status": "written", "path": str(destination)})
+        if name == "build_deck":
+            return await asyncio.to_thread(
+                self._build_deck,
+                str(arguments.get("path", "")),
+                str(arguments.get("title", "")),
+                list(arguments.get("slides") or []),
+            )
         if name == "open_file":
             destination = self._resolved_output(arguments.get("path", ""))
             if not destination.is_file():
@@ -431,6 +444,53 @@ class LocalToolbox:
         if name == "delegate_work":
             return await self._delegate(arguments)
         raise ValueError(f"unknown local tool {name!r}")
+
+    def _build_deck(self, path: str, title: str, slides: list[Any]) -> str:
+        """Write a real .pptx, reusing write_file's containment check.
+
+        python-pptx is an optional extra so the core keeps its three runtime
+        dependencies. A machine without it gets a refusal that names the extra,
+        which the model can repeat to the operator -- a traceback cannot be.
+        """
+        try:
+            from pptx import Presentation  # noqa: PLC0415 - optional extra
+            from pptx.util import Pt
+        except ImportError:
+            return json.dumps({
+                "status": "unavailable",
+                "reason": "presentations need the optional python-pptx extra "
+                          "(pip install 'sleipnir[deck]')",
+            })
+        destination = self._resolved_output(path)
+        if destination.suffix.casefold() != ".pptx":
+            destination = destination.with_suffix(".pptx")
+        if destination.exists() and self.permission_mode != "always":
+            return json.dumps({"status": "approval_required", "action": f"overwrite {destination.name}"})
+        if len(slides) > MAX_DECK_SLIDES:
+            raise ValueError(f"a deck may hold at most {MAX_DECK_SLIDES} slides")
+
+        deck = Presentation()
+        opening = deck.slides.add_slide(deck.slide_layouts[0])
+        opening.shapes.title.text = title[:MAX_DECK_TEXT] or "Presentation"
+        for entry in slides:
+            if not isinstance(entry, dict):
+                raise ValueError("each slide must be an object with a title")
+            slide = deck.slides.add_slide(deck.slide_layouts[1])
+            slide.shapes.title.text = str(entry.get("title", ""))[:MAX_DECK_TEXT]
+            body = slide.placeholders[1].text_frame
+            body.clear()
+            bullets = [str(b)[:MAX_DECK_TEXT] for b in (entry.get("bullets") or [])]
+            for index, bullet in enumerate(bullets[:MAX_DECK_BULLETS]):
+                paragraph = body.paragraphs[0] if index == 0 else body.add_paragraph()
+                paragraph.text = bullet
+                paragraph.font.size = Pt(20)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        deck.save(str(destination))
+        audit.record(
+            "local.build_deck",
+            {"path": str(destination), "slides": len(slides)},
+        )
+        return json.dumps({"status": "written", "path": str(destination)})
 
     async def _delegate(self, arguments: dict[str, Any]) -> str:
         """Hand the turn to a capable worker, and audit every outcome.

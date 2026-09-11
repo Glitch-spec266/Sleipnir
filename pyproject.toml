@@ -36,6 +36,11 @@ dependencies = [
 host = [
     "playwright>=1.40",
 ]
+# Real .pptx output. Optional so the core keeps its three runtime dependencies;
+# without it `build_deck` refuses and names this extra.
+deck = [
+    "python-pptx>=1.0",
+]
 [dependency-groups]
 dev = [
     "pytest>=8",

@@ -345,3 +345,77 @@ def test_the_system_prompt_offers_the_menu_and_still_names_no_model(tmp_path):
     # No config at all is the ordinary case for a fresh machine: the menu is
     # simply absent, and the local model keeps every other tool.
     assert menu_for(tmp_path / "elsewhere") == ""
+
+
+def test_a_deck_is_written_as_a_real_pptx_inside_the_output_folder(tmp_path, monkeypatch):
+    """A presentation the operator can open in PowerPoint, not an HTML page.
+
+    python-pptx is an optional extra: the core keeps its three runtime
+    dependencies, and a machine without it gets a refusal that names the extra
+    rather than a traceback.
+    """
+    import asyncio
+    import json
+
+    pytest.importorskip("pptx")
+
+    from sleipnir.capabilities import audit
+    from sleipnir.voice.local_agent import LocalToolbox
+
+    monkeypatch.setattr(audit, "DEFAULT_LOG", tmp_path / "audit.jsonl")
+    toolbox = LocalToolbox(
+        workspace=tmp_path,
+        permission_mode="ask",
+        original_prompt="make me a deck",
+        output_root=tmp_path / "out",
+    )
+    result = json.loads(
+        asyncio.run(
+            toolbox.execute(
+                "build_deck",
+                {
+                    "path": "photosynthesis.pptx",
+                    "title": "Photosynthesis",
+                    "slides": [
+                        {"title": "The reaction", "bullets": ["Light", "Water", "CO2"]},
+                        {"title": "Why it matters", "bullets": ["Oxygen", "Food"]},
+                    ],
+                },
+            )
+        )
+    )
+
+    written = tmp_path / "out" / "photosynthesis.pptx"
+    assert result["status"] == "written"
+    assert written.is_file()
+    # A .pptx is a zip; anything else means we wrote a text file with the
+    # wrong extension, which is the failure this whole stage exists to end.
+    assert written.read_bytes()[:2] == b"PK"
+
+    from pptx import Presentation
+
+    deck = Presentation(str(written))
+    assert len(deck.slides) == 3  # title slide plus the two content slides
+
+
+def test_a_deck_may_not_escape_the_output_folder(tmp_path, monkeypatch):
+    """Same containment check as write_file: the name is untrusted model output."""
+    import asyncio
+
+    from sleipnir.capabilities import audit
+    from sleipnir.voice.local_agent import LocalToolbox
+
+    monkeypatch.setattr(audit, "DEFAULT_LOG", tmp_path / "audit.jsonl")
+    toolbox = LocalToolbox(
+        workspace=tmp_path,
+        permission_mode="always",
+        original_prompt="make me a deck",
+        output_root=tmp_path / "out",
+    )
+    with pytest.raises(ValueError, match="Sleipnir output folder"):
+        asyncio.run(
+            toolbox.execute(
+                "build_deck",
+                {"path": "../../escape.pptx", "title": "x", "slides": [{"title": "y"}]},
+            )
+        )
