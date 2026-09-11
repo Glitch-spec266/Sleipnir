@@ -579,3 +579,34 @@ def test_non_finite_numeric_config_is_a_config_error_not_a_crash():
         raw["tiers"]["code"]["min_context"] = float(literal)
         with pytest.raises(ConfigError, match="min_context"):
             SleipnirConfig.from_dict(raw, source="<test>")
+
+
+def test_a_tier_description_is_operator_data_and_is_length_capped(tmp_path):
+    """The local model is told about tiers, never about model names.
+
+    Tiers already carry the operator's capability and price policy, and the
+    router turns one into a concrete model. So the delegation menu costs about
+    sixty prompt tokens and no model name enters the source.
+    """
+    from sleipnir.config import ConfigError, SleipnirConfig
+
+    path = tmp_path / "sleipnir.toml"
+    path.write_text(
+        CONFIG_TOML.replace(
+            "[tiers.mechanical]",
+            '[tiers.mechanical]\ndescription = "quick lookups and short answers"',
+        ),
+        encoding="utf-8",
+    )
+    config = SleipnirConfig.load(path)
+    assert config.tiers[Tier.MECHANICAL].description == "quick lookups and short answers"
+
+    # A long description would eat the local model's 16K context.
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "quick lookups and short answers", "x" * 400
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="description"):
+        SleipnirConfig.load(path)

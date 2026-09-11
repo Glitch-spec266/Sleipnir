@@ -12,6 +12,8 @@ import httpx
 from sleipnir.voice.providers import VoiceProviderError
 from sleipnir import chat
 
+AMBIENT_TOKENS = 320
+
 AMBIENT_SYSTEM = (
     "You are Sleipnir's concise ambient voice. Answer in at most four short "
     "sentences. Never claim an action was taken. If work is requested, say it "
@@ -38,14 +40,38 @@ class AmbientRelay:
         api_key: str,
         model: str | None = None,
         run_digest: str = "",
+        base_url: str = "",
+        system: str = "",
+        max_tokens: int = AMBIENT_TOKENS,
     ) -> AmbientReply:
         clean = " ".join(prompt.split())
         if not clean:
             raise ValueError("ambient prompt cannot be empty")
         context = run_digest[:32_000]
         user = f"RUN DIGEST:\n{context}\n\nOPERATOR:\n{clean}" if context else clean
+        # A delegated turn is not ambient chatter: it carries its own contract
+        # (answer in one spoken line first) and its own length. The default
+        # keeps every existing caller unchanged.
+        system = system or AMBIENT_SYSTEM
+        if provider == "openai":
+            if not base_url:
+                raise VoiceProviderError("an openai-compatible provider needs a base_url")
+            if not model:
+                raise VoiceProviderError("an openai-compatible provider needs a model")
+            return await self._openai_shape(
+                user,
+                api_key,
+                model,
+                provider="openai",
+                url=f"{base_url.rstrip('/')}/chat/completions",
+                system=system,
+                max_tokens=max_tokens,
+            )
         if provider == "gemini":
-            return await self._gemini(user, api_key, model or "gemini-2.5-flash-lite")
+            return await self._gemini(
+                user, api_key, model or "gemini-2.5-flash-lite",
+                system=system, max_tokens=max_tokens,
+            )
         if provider == "openrouter":
             return await self._openai_shape(
                 user,
@@ -53,6 +79,8 @@ class AmbientRelay:
                 model or "openrouter/free",
                 provider="openrouter",
                 url="https://openrouter.ai/api/v1/chat/completions",
+                system=system,
+                max_tokens=max_tokens,
             )
         if provider == "nvidia-nim":
             return await self._openai_shape(
@@ -61,6 +89,8 @@ class AmbientRelay:
                 model or "meta/llama-3.1-8b-instruct",
                 provider="nvidia-nim",
                 url="https://integrate.api.nvidia.com/v1/chat/completions",
+                system=system,
+                max_tokens=max_tokens,
             )
         if provider == "ollama":
             return await self._openai_shape(
@@ -69,18 +99,23 @@ class AmbientRelay:
                 model or "qwen3.5:4b",
                 provider="ollama",
                 url="http://127.0.0.1:11434/v1/chat/completions",
+                system=system,
+                max_tokens=max_tokens,
             )
         raise VoiceProviderError(f"unknown ambient provider {provider!r}")
 
-    async def _gemini(self, prompt: str, key: str, model: str) -> AmbientReply:
+    async def _gemini(
+        self, prompt: str, key: str, model: str, *,
+        system: str = AMBIENT_SYSTEM, max_tokens: int = AMBIENT_TOKENS,
+    ) -> AmbientReply:
         async with httpx.AsyncClient(transport=self.transport, timeout=60) as client:
             response = await client.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                 headers={"x-goog-api-key": key},
                 json={
-                    "systemInstruction": {"parts": [{"text": AMBIENT_SYSTEM}]},
+                    "systemInstruction": {"parts": [{"text": system}]},
                     "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"maxOutputTokens": 320, "temperature": 0.2},
+                    "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2},
                 },
             )
         if response.status_code != 200:
@@ -99,6 +134,8 @@ class AmbientRelay:
         *,
         provider: str,
         url: str,
+        system: str = AMBIENT_SYSTEM,
+        max_tokens: int = AMBIENT_TOKENS,
     ) -> AmbientReply:
         headers = {"Authorization": f"Bearer {key}"} if key else {}
         async with httpx.AsyncClient(transport=self.transport, timeout=60) as client:
@@ -108,10 +145,10 @@ class AmbientRelay:
                 json={
                     "model": model,
                     "messages": [
-                        {"role": "system", "content": AMBIENT_SYSTEM},
+                        {"role": "system", "content": system},
                         {"role": "user", "content": prompt},
                     ],
-                    "max_tokens": 320,
+                    "max_tokens": max_tokens,
                     "temperature": 0.2,
                     **({"reasoning_effort": "none"} if provider == "ollama" else {}),
                 },

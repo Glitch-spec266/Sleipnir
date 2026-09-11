@@ -70,17 +70,25 @@ models = [{ id = "@cli-default" }]
 # the retry rotation order.
 
 [tiers.reason]
+# `description` is the ONLY thing the local voice assistant is told about a
+# tier. It writes one line per tier into a small model's prompt so the model
+# can name a tier when it needs to delegate -- no model id and no price ever
+# reaches it. At most 120 characters; omit it to keep the tier off that menu's
+# description column.
+description = "hard problems, ambiguous judgement, long careful answers"
 prefer = ["claude-sub", "openrouter"]
 min_context = 100000
 require_parameters = ["reasoning"]
 output_ratio = 0.35
 
 [tiers.code]
+description = "writing and changing code against a clear spec"
 prefer = ["codex-sub", "openrouter", "claude-sub"]
 min_context = 64000
 output_ratio = 0.30
 
 [tiers.mechanical]
+description = "short factual lookups and simple transforms"
 # Deliberately NOT claude-sub first: the ~30k fixed spawn overhead dwarfs the
 # work for renames and formatting. Metered models have no such floor.
 prefer = ["openrouter", "codex-sub", "claude-sub"]
@@ -89,12 +97,14 @@ max_price_per_mtok = 0.60
 output_ratio = 0.25
 
 [tiers.extract]
+description = "pulling structured facts out of a document"
 prefer = ["openrouter", "codex-sub", "claude-sub"]
 min_context = 32000
 max_price_per_mtok = 1.50
 output_ratio = 0.15
 
 [tiers.longctx]
+description = "questions that need a very large amount of text in view at once"
 # longctx is excluded from the downshift ladder on purpose: moving a task off
 # it is not a cost saving, it is a correctness failure.
 prefer = ["openrouter", "claude-sub"]

@@ -789,15 +789,10 @@ def test_a_local_model_that_deliberates_without_converging_asks_to_be_replaced(t
         observer=None,
         tool_runner=lambda name, arguments: {"status": "unexpected"},
     )
+    # The reasoning lane raises; `respond` turns that raise into a delegation,
+    # which is covered in tests/test_voice_dispatch.py.
     with pytest.raises(LocalCapabilityExceeded):
-        asyncio.run(
-            agent.respond(
-                "what is 17 times 24 plus 139",
-                workspace=tmp_path,
-                model="jarvis",
-                permission_mode="ask",
-            )
-        )
+        asyncio.run(agent._reason("what is 17 times 24 plus 139", model="jarvis"))
 
     # Exactly one attempt: a looping model is not owed a second, longer one.
     assert len(calls) == 1

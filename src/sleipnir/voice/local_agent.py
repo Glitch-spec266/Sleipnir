@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -27,6 +28,16 @@ from sleipnir.capabilities import audit
 from sleipnir.capabilities import computer
 from sleipnir.capabilities.browser import Browser
 from sleipnir.console import capability_brief
+from sleipnir.voice.dispatch import (
+    SPOKEN_CONTRACT,
+    DispatchRefused,
+    delegation_menu,
+    menu_for,
+    pick_model,
+    spoken_line,
+)
+from sleipnir.schema import Tier
+from sleipnir.voice.relay import AmbientRelay
 from sleipnir.voice.routing import needs_reasoning, needs_screen, needs_tools
 from sleipnir.voice.providers import VoiceProviderError
 from sleipnir.voice.relay import WorkRelay
@@ -86,7 +97,7 @@ TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "computer_scroll", "description": "Scroll the focused window; negative moves down.", "parameters": {"type": "object", "required": ["amount"], "properties": {"amount": {"type": "integer"}}}}},
     {"type": "function", "function": {"name": "write_file", "description": "Write a document you have composed (HTML presentation, essay, notes, plan) into the operator's Sleipnir output folder and return its path.", "parameters": {"type": "object", "required": ["path", "content"], "properties": {"path": {"type": "string", "description": "File name, e.g. photosynthesis-deck.html"}, "content": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "open_file", "description": "Show a file you wrote to the operator in Sleipnir's browser.", "parameters": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}}}},
-    {"type": "function", "function": {"name": "delegate_work", "description": "Ask Claude or Codex to solve a difficult task using Sleipnir's full audited capabilities. Only when the operator names them, or for source repository changes.", "parameters": {"type": "object", "required": ["provider", "instruction"], "properties": {"provider": {"type": "string", "enum": ["claude", "codex"]}, "instruction": {"type": "string"}}}}},
+    {"type": "function", "function": {"name": "delegate_work", "description": "Hand a problem you cannot solve to a capable worker. Use claude or codex only when the operator names them or the task changes a source repository; use api with a tier from the delegation menu for a hard question you cannot answer yourself.", "parameters": {"type": "object", "required": ["provider", "instruction"], "properties": {"provider": {"type": "string", "enum": ["claude", "codex", "api"]}, "tier": {"type": "string", "description": "Required for provider=api: the tier name from the delegation menu."}, "instruction": {"type": "string"}}}}},
 ]
 
 ACTION_NUDGE = (
@@ -196,6 +207,9 @@ def _promises_action(text: str) -> bool:
 
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
+# A delegated answer is spoken, and only its first line returns to the local
+# model. Paying for more than that buys detail nobody reads.
+MAX_DELEGATED_TOKENS = 700
 DEFAULT_OUTPUT_ROOT = Path.home() / "Sleipnir"
 
 
@@ -279,6 +293,11 @@ class LocalToolbox:
         self.output_root = (output_root or DEFAULT_OUTPUT_ROOT).expanduser()
         self.browser: Browser | None = None
         self.work = WorkRelay()
+        self.relay = AmbientRelay()
+        # Routing inputs are loaded once per turn at most, and only if the
+        # model actually delegates: an ordinary turn must not pay for a
+        # catalogue fetch it never uses.
+        self._routing: tuple[Any, Any] | None = None
         # Set by observe_region and consumed by the next frame refresh, so a
         # close-up replaces the wide frame rather than adding a second image.
         self.pending_region: tuple[int, int, int, int] | None = None
@@ -395,18 +414,129 @@ class LocalToolbox:
             await (await self._web()).goto(destination.as_uri())
             return json.dumps({"status": "opened", "path": str(destination)})
         if name == "delegate_work":
-            provider = str(arguments["provider"]).casefold()
-            if self.permission_mode != "always" and provider not in self.original_prompt:
-                return json.dumps({"status": "approval_required", "action": f"delegate to {provider}"})
-            prompt = f"{capability_brief()}\n\n{str(arguments['instruction']).strip()}"
-            reply = await self.work.send(
-                prompt,
-                provider=provider,
-                workspace=self.workspace,
-                permission_mode=self.permission_mode,
-            )
-            return reply.text[:MAX_TOOL_RESULT_CHARS]
+            return await self._delegate(arguments)
         raise ValueError(f"unknown local tool {name!r}")
+
+    async def _delegate(self, arguments: dict[str, Any]) -> str:
+        """Hand the turn to a capable worker, and audit every outcome.
+
+        Delegation spends the operator's quota somewhere else, which makes it a
+        privileged call in exactly the sense the audit log exists for. Three
+        shapes are recorded -- the refusal, the routing decision and the
+        result -- and never the instruction itself: that is the operator's
+        words and the worker's prompt, so only its size is logged, the same
+        rule as typed text.
+        """
+        provider = str(arguments["provider"]).casefold()
+        instruction = str(arguments["instruction"]).strip()
+        if self.permission_mode != "always" and provider not in self.original_prompt:
+            audit.record(
+                "local.delegate_work",
+                {"provider": provider, "chars": len(instruction), "outcome": "refused"},
+            )
+            return json.dumps({"status": "approval_required", "action": f"delegate to {provider}"})
+
+        if provider == "api":
+            return await self._delegate_to_tier(arguments.get("tier", ""), instruction)
+
+        prompt = f"{capability_brief()}\n\n{instruction}"
+        reply = await self.work.send(
+            prompt,
+            provider=provider,
+            workspace=self.workspace,
+            permission_mode=self.permission_mode,
+        )
+        audit.record(
+            "local.delegate_work",
+            {
+                "provider": provider,
+                "chars": len(instruction),
+                "outcome": "answered",
+                "reply_chars": len(reply.text),
+            },
+        )
+        return reply.text[:MAX_TOOL_RESULT_CHARS]
+
+    async def _delegate_to_tier(self, tier: str, instruction: str) -> str:
+        """Route a tier the model named to one free model and ask it.
+
+        Only the worker's spoken line comes back. Delegation happens because
+        the local model already lost this problem; handing it the whole reply
+        to summarise would spend its context on the work it could not do.
+        """
+        try:
+            config, catalog = await self._routing_inputs()
+            choice = pick_model(config, catalog, tier=str(tier))
+        except DispatchRefused as error:
+            audit.record(
+                "local.delegate_work",
+                {"provider": "api", "tier": str(tier)[:40], "outcome": "refused"},
+            )
+            return json.dumps({"status": "unavailable", "reason": str(error)[:400]})
+        audit.record(
+            "local.delegate_work",
+            {
+                "provider": "api",
+                "tier": choice.tier.value,
+                "backend": choice.backend,
+                "model": choice.model,
+                "chars": len(instruction),
+                "outcome": "routed",
+            },
+        )
+        # Read at call time and never stored, never logged: the choice carries
+        # the variable's *name*, exactly as the config schema does.
+        key = os.environ.get(choice.api_key_env, "") if choice.api_key_env else ""
+        reply = await self.relay.respond(
+            instruction,
+            provider="openai",
+            api_key=key,
+            model=choice.model,
+            base_url=choice.base_url,
+            system=SPOKEN_CONTRACT,
+            max_tokens=MAX_DELEGATED_TOKENS,
+        )
+        spoken = spoken_line(reply.text)
+        audit.record(
+            "local.delegate_work",
+            {"provider": "api", "model": choice.model, "outcome": "answered",
+             "reply_chars": len(reply.text), "spoken_chars": len(spoken)},
+        )
+        return spoken
+
+    async def _routing_inputs(self) -> tuple[Any, Any]:
+        """Load the operator's config and the price catalogue, once per turn."""
+        if self._routing is not None:
+            return self._routing
+        from sleipnir.config import ConfigError, SleipnirConfig
+        from sleipnir.pricing import (
+            DEFAULT_MODELS_URL,
+            CatalogUnavailableError,
+            ModelCatalog,
+        )
+
+        path = SleipnirConfig.discover(self.workspace)
+        if path is None:
+            raise DispatchRefused(
+                "no sleipnir.toml is configured, so there are no tiers to route to"
+            )
+        try:
+            config = SleipnirConfig.load(path)
+        except ConfigError as error:
+            raise DispatchRefused(f"the operator's config could not be read: {error}") from error
+        try:
+            catalog = await ModelCatalog(
+                url=config.catalog_url or DEFAULT_MODELS_URL,
+                ttl_s=config.catalog_ttl_s,
+                **({"cache_path": config.catalog_cache_path} if config.catalog_cache_path else {}),
+            ).load()
+        except CatalogUnavailableError as error:
+            # A missing catalogue means no prices, and a missing price is never
+            # zero. Refusing is the only answer that keeps the free-only
+            # guarantee honest.
+            raise DispatchRefused(f"live prices are unavailable: {error}") from error
+        self._routing = (config, catalog)
+        return self._routing
 
     async def close(self) -> None:
         if self.browser is not None:
@@ -450,7 +580,13 @@ class LocalDesktopAgent:
         performed: list[str] = []
         nudged = False
         if needs_reasoning(clean):
-            return await self._reason(clean, model=model)
+            try:
+                return await self._reason(clean, model=model)
+            except LocalCapabilityExceeded:
+                # The deadline exists to hand off fast rather than make the
+                # operator wait, so it has to actually hand off. Going through
+                # the tool keeps the delegation on the audited path.
+                return await self._escalate(clean, model=model, run_tool=run_tool)
         if not needs_tools(clean):
             return await self._chat(clean, model=model, history=history)
         opening: dict[str, Any] = (
@@ -458,8 +594,18 @@ class LocalDesktopAgent:
             if needs_screen(clean)
             else {"role": "user", "content": clean}
         )
+        # The menu is the only thing the model is ever told about delegation
+        # targets: tier names and the operator's own one-line descriptions,
+        # never a model id or a price.
+        menu = menu_for(workspace)
+        system = (
+            f"{LOCAL_AGENT_SYSTEM}\n\nDelegation tiers you may name with "
+            f"provider=api:\n{menu}"
+            if menu
+            else LOCAL_AGENT_SYSTEM
+        )
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": LOCAL_AGENT_SYSTEM},
+            {"role": "system", "content": system},
             opening,
         ]
         try:
@@ -567,6 +713,30 @@ class LocalDesktopAgent:
                 steps=MAX_AGENT_STEPS,
             )
         raise VoiceProviderError(f"local agent exceeded its {MAX_AGENT_STEPS}-step safety limit")
+
+    async def _escalate(
+        self, content: str, *, model: str, run_tool: Callable[[str, dict[str, Any]], Awaitable[str]]
+    ) -> LocalAgentReply:
+        """Hand an unanswerable question to a capable tier, and speak the result."""
+        answer = await run_tool(
+            "delegate_work",
+            {"provider": "api", "tier": Tier.REASON.value, "instruction": content},
+        )
+        text = str(answer).strip()
+        if text.startswith("{"):
+            # A refusal envelope is for the log, not for the speakers. The
+            # operator asked a question and is owed a sentence either way.
+            try:
+                reason = str(json.loads(text).get("reason", "")).strip()
+            except ValueError:
+                reason = ""
+            detail = f" -- {reason}" if reason else ""
+            return LocalAgentReply(
+                text=f"I couldn't work that one out, and I couldn't hand it on either{detail}.",
+                model=model,
+                steps=1,
+            )
+        return LocalAgentReply(text=text, model=model, steps=1)
 
     async def _single_turn(
         self,

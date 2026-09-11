@@ -65,6 +65,9 @@ class Backend:
     base_url: str | None = None
     api_key_env: str | None = None
 
+MAX_TIER_DESCRIPTION = 120
+
+
 @dataclass(slots=True, frozen=True)
 class TierPolicy:
     """What a tier requires and which backends it prefers, in order."""
@@ -77,6 +80,11 @@ class TierPolicy:
     deny: tuple[str, ...] = ()
     #: Share of tokens expected to be output, used to blend a comparable price.
     output_ratio: float = 0.25
+    #: One operator-written line describing what this tier is for. It is the
+    #: only thing the local model is told about a tier: names and prices stay
+    #: out of its prompt, so the delegation menu costs about sixty tokens and
+    #: no model name enters the source.
+    description: str = ""
 
 
 @dataclass(slots=True)
@@ -397,7 +405,7 @@ def _parse_tiers(
             entry,
             {
                 "prefer", "min_context", "max_price_per_mtok", "require_parameters",
-                "allow", "deny", "output_ratio",
+                "allow", "deny", "output_ratio", "description",
             },
             f"{source}: [tiers.{key}]",
         )
@@ -431,6 +439,17 @@ def _parse_tiers(
             max_price is None or not math.isfinite(max_price) or max_price < 0
         ):
             raise ConfigError(f"{source}: [tiers.{key}] max price must be finite and non-negative")
+        description = entry.get("description", "")
+        if not isinstance(description, str):
+            raise ConfigError(f"{source}: [tiers.{key}] description must be a string")
+        description = " ".join(description.split())
+        # A menu of five tiers is interpolated into a 16K local context on
+        # every delegation decision, so one operator line stays one line.
+        if len(description) > MAX_TIER_DESCRIPTION:
+            raise ConfigError(
+                f"{source}: [tiers.{key}] description must be at most "
+                f"{MAX_TIER_DESCRIPTION} characters"
+            )
         tiers[tier] = TierPolicy(
             prefer=prefer,
             min_context=min_context,
@@ -441,6 +460,7 @@ def _parse_tiers(
             allow=_pattern_list(entry.get("allow"), f"{source}: [tiers.{key}]", "allow"),
             deny=_pattern_list(entry.get("deny"), f"{source}: [tiers.{key}]", "deny"),
             output_ratio=output_ratio,
+            description=description,
         )
     return tiers
 
