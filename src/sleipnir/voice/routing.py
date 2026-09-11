@@ -74,6 +74,32 @@ _REASONING_PATTERN = re.compile(
 )
 _DIGIT_RUN = re.compile(r"\d")
 
+# An imperative verb is only evidence of a request when it is actually being
+# used as one. "I play guitar" and "that was a rough run" are conversation;
+# "play the next track" is an instruction. Position carries that distinction
+# far more reliably than the verb does, so the verb must open the utterance or
+# follow an explicit request opener.
+_REQUEST_OPENER = (
+    r"(?:(?:can|could|will|would)\s+you\s+(?:please\s+)?|please\s+|"
+    r"i\s+(?:need|want)\s+you\s+to\s+|go\s+ahead\s+and\s+)"
+)
+_ACTION_VERBS = (
+    r"(?:open|close|launch|start|stop|click|tap|press|type|scroll|swipe|"
+    r"search|google|look\s+up|find|navigate|go\s+to|visit|browse|"
+    r"play|pause|resume|skip|mute|"
+    r"send|email|message|reply|post|submit|download|upload|"
+    r"copy|paste|select|delete|rename|move|save|print|"
+    r"run|execute|check|show\s+me|pull\s+up|bring\s+up|fill\s+in|fill\s+out|"
+    r"make|draw|generate|prepare|produce|compose|summaris\w*|summariz\w*|"
+    r"translate|book|order|schedule|add|remove|update|set)"
+)
+_ACTION_PATTERN = re.compile(
+    rf"^(?:{_REQUEST_OPENER})?{_ACTION_VERBS}\b|\b{_REQUEST_OPENER}{_ACTION_VERBS}\b",
+    re.IGNORECASE,
+)
+# Naming a worker is itself a request, whatever the rest of the sentence says.
+_DELEGATION_PATTERN = re.compile(r"\b(claude|codex)\b", re.IGNORECASE)
+
 _SMALLTALK_MAX_CHARS = 48
 
 
@@ -90,6 +116,27 @@ def is_smalltalk(text: str) -> bool:
 def needs_screen(text: str) -> bool:
     """True when the operator is asking about what is currently displayed."""
     return bool(_SCREEN_PATTERN.search(" ".join(text.split())))
+
+
+def needs_tools(text: str) -> bool:
+    """True when the utterance actually asks for something to be done.
+
+    This is the gate on the twelve-step tool loop, and it is deliberately a
+    positive test. Conversation used to be a whitelist of greetings with the
+    tool lane as the fallback, so any remark that was not a recognised greeting
+    -- "I'm pretty tired today" -- arrived at a model holding fifteen tools and
+    was answered with a screenshot. Tools are entered on evidence of a request,
+    never by exhaustion.
+    """
+    clean = " ".join(text.split())
+    if not clean:
+        return False
+    return bool(
+        _SCREEN_PATTERN.search(clean)
+        or _WORK_PATTERN.search(clean)
+        or _ACTION_PATTERN.search(clean)
+        or _DELEGATION_PATTERN.search(clean)
+    )
 
 
 def needs_reasoning(text: str) -> bool:
@@ -155,5 +202,5 @@ def route_utterance(
 
 __all__ = [
     "RouteDecision", "RouteMode", "choose_ambient_provider", "is_smalltalk",
-    "needs_reasoning", "needs_screen", "route_utterance",
+    "needs_reasoning", "needs_screen", "needs_tools", "route_utterance",
 ]

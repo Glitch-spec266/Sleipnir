@@ -939,3 +939,117 @@ def test_the_reply_carries_what_it_needs_permission_for(tmp_path):
 
     assert reply.approval == "computer_click"
     assert reply.text
+
+
+def test_ordinary_conversation_stays_off_the_tool_loop():
+    """A remark is not an instruction, and the tool loop is the wrong shape for it.
+
+    Reproduced live on 2026-09-10: "I'm pretty tired today" entered the
+    twelve-step loop, took a screenshot and began narrating an unrelated web
+    page.  The cause was that conversation was a *whitelist* of greetings and
+    everything else fell through to the tool lane by default.  Tools are now
+    entered on evidence of an actual request, never by exhaustion.
+    """
+    from sleipnir.voice.routing import needs_tools
+
+    for remark in (
+        "I'm pretty tired today",
+        "how's your day going",
+        "what do you think about the weather",
+        "tell me a joke",
+        "do you like music",
+        "who was Ada Lovelace",
+        "that was a rough meeting",
+    ):
+        assert needs_tools(remark) is False, remark
+
+    for instruction in (
+        "what is on my screen right now",
+        "open the sleipnir repository and fix the router",
+        "click the submit button",
+        "search for flights to Tokyo",
+        "write me a presentation about photosynthesis",
+        "scroll down a bit",
+    ):
+        assert needs_tools(instruction) is True, instruction
+
+
+def test_the_conversation_lane_sees_the_recent_turns(tmp_path):
+    """Without prior turns the assistant cannot answer a follow-up at all.
+
+    ``gui_agent`` already wrote every turn to the encrypted history and then
+    passed none of it back, so "and you?" reached the model as a standalone
+    sentence with no referent.
+    """
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "Not bad at all."}})
+
+    agent = LocalDesktopAgent(
+        transport=httpx.MockTransport(handler),
+        tool_runner=lambda name, arguments: {"status": "unexpected"},
+    )
+    reply = asyncio.run(
+        agent.respond(
+            "and you?",
+            workspace=tmp_path,
+            model="jarvis",
+            permission_mode="ask",
+            history=[
+                {"role": "operator", "text": "how are you"},
+                {"role": "sleipnir", "text": "Good thanks."},
+            ],
+        )
+    )
+
+    assert reply.text == "Not bad at all."
+    assert len(requests) == 1
+    spoken = [message["content"] for message in requests[0]["messages"]]
+    assert "how are you" in spoken
+    assert "Good thanks." in spoken
+    assert spoken[-1] == "and you?"
+
+
+def test_the_listener_keeps_the_local_model_resident():
+    """MEASURED 2026-09-10: a cold ``jarvis`` turn costs 4.99 s, a warm one 0.20 s.
+
+    ``keep_alive`` alone does not help an assistant that is spoken to less
+    often than its own unload timer, which is the ordinary case -- every first
+    question of the morning paid a five second model load. The preload request
+    carries no prompt, so keeping it resident costs one HTTP call per interval
+    and no tokens at all.
+    """
+    from sleipnir.voice.listener import keep_model_warm
+
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return httpx.Response(200, json={"done": True})
+
+    asyncio.run(
+        keep_model_warm(
+            "jarvis", interval=0, transport=httpx.MockTransport(handler), iterations=2
+        )
+    )
+
+    assert len(calls) == 2
+    assert calls[0]["model"] == "jarvis"
+    assert "prompt" not in calls[0] or calls[0]["prompt"] == ""
+    assert calls[0]["keep_alive"] != "0"
+
+
+def test_keeping_the_model_warm_never_takes_the_listener_down():
+    """A dead Ollama must cost the wake loop nothing; warmth is an optimisation."""
+    from sleipnir.voice.listener import keep_model_warm
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    asyncio.run(
+        keep_model_warm(
+            "jarvis", interval=0, transport=httpx.MockTransport(handler), iterations=2
+        )
+    )

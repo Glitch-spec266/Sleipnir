@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import tempfile
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -26,7 +27,7 @@ from sleipnir.capabilities import audit
 from sleipnir.capabilities import computer
 from sleipnir.capabilities.browser import Browser
 from sleipnir.console import capability_brief
-from sleipnir.voice.routing import is_smalltalk, needs_reasoning, needs_screen
+from sleipnir.voice.routing import needs_reasoning, needs_screen, needs_tools
 from sleipnir.voice.providers import VoiceProviderError
 from sleipnir.voice.relay import WorkRelay
 
@@ -105,6 +106,26 @@ _PROMISE_PHRASES = (
 _PROMISE_EXCEPTIONS = ("let me know",)
 
 
+def _conversation_turns(
+    history: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, str]]:
+    """Turn recent stored history into bounded Ollama chat messages.
+
+    History entries are written by the GUI bridge and carry its own role names
+    plus routing metadata. Only the role and the text are forwarded; anything
+    else -- a route, a timestamp, a path -- is not conversation and would only
+    spend context.
+    """
+    turns: list[dict[str, str]] = []
+    for entry in list(history or [])[-CHAT_HISTORY_TURNS:]:
+        text = str(entry.get("text", "")).strip()
+        if not text:
+            continue
+        role = "user" if str(entry.get("role", "")) == "operator" else "assistant"
+        turns.append({"role": role, "content": text})
+    return turns
+
+
 class LocalCapabilityExceeded(VoiceProviderError):
     """The local model cannot finish this task, so it must be delegated.
 
@@ -128,11 +149,26 @@ REASON_TOKENS = 2048
 # different model. The deadline turns that into a prompt, bounded escalation.
 REASON_DEADLINE_SECONDS = 25.0
 
+# The conversational lane is the default, so this system prompt answers
+# questions as well as greetings. It must not mention tools: the model does not
+# have any on this lane, and naming them makes a small model promise an action
+# it cannot take.
 CHAT_SYSTEM = (
-    "You are JARVIS, the operator's assistant, speaking aloud. This is small "
-    "talk, not a task. Reply in one short friendly sentence. Do not think out "
-    "loud, do not explain yourself, and do not mention the screen."
+    "You are JARVIS, the operator's assistant, speaking aloud in conversation. "
+    "Talk with them: greet them back, answer from what you know, and ask a "
+    "natural follow-up when there is one. Keep it to one or two spoken "
+    "sentences. Do not think out loud and do not mention the screen. You are "
+    "not doing anything right now: never say you have adjusted, opened, "
+    "checked or changed something, and do not offer to -- if the operator "
+    "wants something done they will ask for it."
 )
+# One or two spoken sentences, with the headroom a real answer needs. 96 tokens
+# truncated anything longer than a greeting.
+CHAT_TOKENS = 320
+# Enough to resolve "and you?" or "why?" without turning every greeting into a
+# long prompt. Bounded on purpose: history is the one thing on this lane that
+# could grow without limit.
+CHAT_HISTORY_TURNS = 8
 
 
 _THINK_BLOCK = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
@@ -398,6 +434,7 @@ class LocalDesktopAgent:
         workspace: Path,
         permission_mode: str,
         task_grant: bool = False,
+        history: Sequence[Mapping[str, Any]] | None = None,
     ) -> LocalAgentReply:
         clean = prompt.strip()
         if not clean:
@@ -412,10 +449,10 @@ class LocalDesktopAgent:
         run_tool = self.tool_runner or toolbox.execute  # type: ignore[union-attr]
         performed: list[str] = []
         nudged = False
-        if is_smalltalk(clean):
-            return await self._chat(clean, model=model)
         if needs_reasoning(clean):
             return await self._reason(clean, model=model)
+        if not needs_tools(clean):
+            return await self._chat(clean, model=model, history=history)
         opening: dict[str, Any] = (
             await self._visual_message(clean)
             if needs_screen(clean)
@@ -532,7 +569,14 @@ class LocalDesktopAgent:
         raise VoiceProviderError(f"local agent exceeded its {MAX_AGENT_STEPS}-step safety limit")
 
     async def _single_turn(
-        self, content: str, *, model: str, system: str, think: bool, num_predict: int
+        self,
+        content: str,
+        *,
+        model: str,
+        system: str,
+        think: bool,
+        num_predict: int,
+        prior: list[dict[str, str]] | None = None,
     ) -> tuple[str, str]:
         """One Ollama call. Returns ``(content, thinking)``, both stripped."""
         async with httpx.AsyncClient(transport=self.transport, timeout=300) as client:
@@ -542,6 +586,7 @@ class LocalDesktopAgent:
                     "model": model,
                     "messages": [
                         {"role": "system", "content": system},
+                        *(prior or []),
                         {"role": "user", "content": content},
                     ],
                     "stream": False,
@@ -595,22 +640,31 @@ class LocalDesktopAgent:
             )
         return LocalAgentReply(text=text, model=model, steps=1)
 
-    async def _chat(self, content: str, *, model: str) -> LocalAgentReply:
-        """Answer a greeting in exactly one call: no tools, no frame, no loop.
+    async def _chat(
+        self,
+        content: str,
+        *,
+        model: str,
+        history: Sequence[Mapping[str, Any]] | None = None,
+    ) -> LocalAgentReply:
+        """Hold a conversation in exactly one call: no tools, no frame, no loop.
 
-        The twelve-step agent loop is the wrong shape for "what's up" -- it
-        pays a screenshot and a vision encode before it can even decline to use
-        a tool, which is what made a greeting take twenty seconds.
+        The twelve-step agent loop is the wrong shape for talking -- it pays a
+        screenshot and a vision encode before it can even decline to use a
+        tool, which is what made a greeting take twenty seconds.
         """
+        prior = _conversation_turns(history)
         text, _ = await self._single_turn(
-            content, model=model, system=CHAT_SYSTEM, think=False, num_predict=96
+            content, model=model, system=CHAT_SYSTEM, think=False,
+            num_predict=CHAT_TOKENS, prior=prior,
         )
         if not text:
             # MEASURED: qwen3-vl answers nothing at all with thinking disabled,
-            # so every greeting fell through to the placeholder. A greeting is
-            # short enough that a bounded scratchpad is still fast.
+            # so every greeting fell through to the placeholder. A reply this
+            # short is still fast with a bounded scratchpad.
             text, _ = await self._single_turn(
-                content, model=model, system=CHAT_SYSTEM, think=True, num_predict=256
+                content, model=model, system=CHAT_SYSTEM, think=True,
+                num_predict=CHAT_TOKENS, prior=prior,
             )
         return LocalAgentReply(text=text or "I'm here.", model=model, steps=1)
 

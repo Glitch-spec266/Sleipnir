@@ -380,7 +380,20 @@ fn start_voice_listener(app: &AppHandle, state: &DesktopState) -> Result<(), Str
     if !preferences.voice.listening_enabled || !preferences.voice.local_wake {
         return Ok(());
     }
-    let arguments = vec!["--wake-name".into(), preferences.voice.wake_name.into()];
+    let mut arguments = vec!["--wake-name".into(), preferences.voice.wake_name.into()];
+    // MEASURED: a cold local turn costs 4.99 s against 0.20 s warm. Hold the
+    // model resident for as long as the wake loop is armed, and only when the
+    // local lane is the one that will answer -- warming Ollama for a Gemini
+    // operator would spend VRAM on a model nothing is going to call.
+    if preferences.voice.ambient_provider == "ollama" {
+        let alias = preferences.voice.response_model.trim();
+        let alias = if matches!(alias, "" | "auto" | "openrouter/auto") {
+            "jarvis"
+        } else {
+            alias
+        };
+        arguments.extend(["--warm-model".into(), alias.to_string().into()]);
+    }
     let (mut receiver, child) = core_command(app, "listen", arguments)?
         .spawn()
         .map_err(|error| format!("start local wake listener: {error}"))?;

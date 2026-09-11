@@ -19,6 +19,9 @@ from sleipnir.voice.local_agent import LocalDesktopAgent
 from sleipnir.voice.routing import RouteMode, choose_ambient_provider, route_utterance
 
 MAX_INSTRUCTION_BYTES = 1_048_576
+# Bounded on purpose. The local conversation lane is the one place where a
+# growing transcript could quietly become a growing prompt.
+CONVERSATION_TURNS = 8
 
 
 def _activated_provider(
@@ -81,6 +84,10 @@ async def handle_instruction(
             "sessionId": session_id,
         }
     selected = route or "ambient"
+    # Read before the append: the operator's current words are the prompt, not
+    # prior context, and echoing them back as history makes a model answer the
+    # question twice.
+    prior = history.read(limit=64)[-CONVERSATION_TURNS:] if history else []
     if history:
         history.append(
             {
@@ -105,6 +112,7 @@ async def handle_instruction(
                 workspace=workspace,
                 permission_mode=permission_mode,
                 task_grant=task_grant,
+                history=prior,
             )
             result = {
                 "status": "complete",

@@ -24,6 +24,8 @@ from array import array
 from collections import deque
 from dataclasses import dataclass, field
 
+import httpx
+
 from sleipnir.voice.config import VoiceConfig
 from sleipnir.voice.runtime import VoiceRuntime, _words
 from sleipnir.voice.transcription import LocalWhisperTranscriber
@@ -259,6 +261,44 @@ class VoiceSegmenter:
         return audio
 
 
+# MEASURED on this machine 2026-09-10: a cold ``jarvis`` turn took 4.99 s and a
+# warm one 0.20 s. ``keep_alive`` expires while the operator is simply not
+# talking, so the first question after any quiet spell paid the whole load.
+OLLAMA_KEEP_ALIVE = "30m"
+OLLAMA_WARM_SECONDS = 480.0
+
+
+async def keep_model_warm(
+    model: str,
+    *,
+    interval: float = OLLAMA_WARM_SECONDS,
+    transport: object | None = None,
+    iterations: int | None = None,
+) -> None:
+    """Hold the local model in VRAM for as long as the wake loop is listening.
+
+    Ollama loads a model for a request that carries no prompt, so this costs an
+    HTTP round trip and no tokens. Warmth is an optimisation and never a
+    dependency: every failure is swallowed, because a stopped Ollama must not
+    take the microphone down with it.
+    """
+    remaining = iterations
+    while remaining is None or remaining > 0:
+        try:
+            async with httpx.AsyncClient(transport=transport, timeout=120) as client:  # type: ignore[arg-type]
+                await client.post(
+                    "http://127.0.0.1:11434/api/generate",
+                    json={"model": model, "keep_alive": OLLAMA_KEEP_ALIVE},
+                )
+        except Exception:  # noqa: BLE001 - warmth is best effort, never fatal
+            pass
+        if remaining is not None:
+            remaining -= 1
+            if remaining <= 0:
+                return
+        await asyncio.sleep(interval)
+
+
 def _wav_bytes(pcm: bytes) -> bytes:
     output = io.BytesIO()
     with wave.open(output, "wb") as wav:
@@ -270,7 +310,11 @@ def _wav_bytes(pcm: bytes) -> bytes:
 
 
 async def listen_forever(
-    config: VoiceConfig, *, chunk_seconds: float = 0.1, device: str | None = None
+    config: VoiceConfig,
+    *,
+    chunk_seconds: float = 0.1,
+    device: str | None = None,
+    warm_model: str = "",
 ) -> None:
     recorder = shutil.which("parecord")
     if recorder is None:
@@ -344,6 +388,9 @@ async def listen_forever(
 
     capture_task = asyncio.create_task(capture())
     control_task = asyncio.create_task(control())
+    # Residency is tied to the wake loop rather than to a timer: the model is
+    # held exactly while the assistant is listening for its name.
+    warm_task = asyncio.create_task(keep_model_warm(warm_model)) if warm_model else None
     try:
         while True:
             frame = await queue.get()
@@ -372,6 +419,8 @@ async def listen_forever(
     finally:
         capture_task.cancel()
         control_task.cancel()
+        if warm_task is not None:
+            warm_task.cancel()
         if process.returncode is None:
             process.terminate()
             await process.wait()
@@ -385,6 +434,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wake-name", default="Sleipnir")
     parser.add_argument("--chunk-seconds", type=float, default=0.1)
     parser.add_argument("--device", help="PulseAudio/PipeWire source name (default: system input)")
+    parser.add_argument(
+        "--warm-model",
+        default="",
+        help="keep this Ollama model resident while listening (empty disables)",
+    )
     return parser
 
 
@@ -399,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
                 VoiceConfig(wake_name=args.wake_name, local_wake=True),
                 chunk_seconds=args.chunk_seconds,
                 device=args.device,
+                warm_model=args.warm_model.strip(),
             )
         )
     except KeyboardInterrupt:
@@ -413,4 +468,4 @@ if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
 
 
-__all__ = ["VoiceSegmenter", "WakeCommandDetector", "listen_forever", "main"]
+__all__ = ["VoiceSegmenter", "WakeCommandDetector", "keep_model_warm", "listen_forever", "main"]
