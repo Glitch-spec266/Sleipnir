@@ -145,20 +145,35 @@ class LocalCapabilityExceeded(VoiceProviderError):
     """
 
 
-REASON_SYSTEM = (
-    "You are JARVIS, the operator's assistant, speaking aloud. Work the problem "
-    "carefully, then state only the final answer in one short sentence with its "
-    "units. Do not read your working aloud."
+# MEASURED 2026-09-10: asking this model to be brief is what made it loop.
+# Bare, it answered 17*24+139 correctly in 11.0 s with 1,748 characters of
+# thinking. Adding *any* brevity instruction -- in the system role or appended
+# to the user turn -- pushed thinking to 6,800-7,700 characters and returned
+# empty content past the deadline, every time. It deliberates about being
+# short instead of about the problem.
+#
+# So the question goes in bare and the answer is shortened afterwards. Same
+# rule as "clip the goal, never the prompt": shorten the output, not the ask.
+SHORTEN_PROMPT = (
+    "Restate this answer as one short spoken sentence, keeping the number and "
+    "its units:\n\n"
 )
+#: How much of a long answer is shown to the shortening call. Two thousand
+#: characters is far more than any spoken answer needs and keeps the second
+#: call cheap.
+SHORTEN_SOURCE_CHARS = 2_000
+SHORTEN_TOKENS = 120
 
 # MEASURED: reasoning consumed the whole token budget on the physics question
 # and left nothing for the answer, which reached the operator as silence.
 REASON_TOKENS = 2048
-# MEASURED: "17 times 24 plus 139" made both 4B and 9B deliberate for 121 s and
-# 131 s and still answer nothing, while a retry at a larger ceiling only bought
-# a longer wait. A model that loops does not need more budget -- it needs a
-# different model. The deadline turns that into a prompt, bounded escalation.
-REASON_DEADLINE_SECONDS = 25.0
+# MEASURED 2026-09-10 on the bare-question protocol: 12.0 s for the arithmetic
+# and 25.0 s for the projectile question, both correct. The 9B was correct too
+# and took 21.4 s and 36.9 s for twice the VRAM, which is why the smaller model
+# stayed. Forty seconds covers the measured worst case with headroom; a model
+# that is genuinely looping still hands the question on rather than making the
+# operator wait for a longer version of the same failure.
+REASON_DEADLINE_SECONDS = 40.0
 
 # The conversational lane is the default, so this system prompt answers
 # questions as well as greetings. It must not mention tools: the model does not
@@ -755,7 +770,7 @@ class LocalDesktopAgent:
                 json={
                     "model": model,
                     "messages": [
-                        {"role": "system", "content": system},
+                        *([{"role": "system", "content": system}] if system else []),
                         *(prior or []),
                         {"role": "user", "content": content},
                     ],
@@ -794,7 +809,7 @@ class LocalDesktopAgent:
                 text, thinking = await self._single_turn(
                     content,
                     model=model,
-                    system=REASON_SYSTEM,
+                    system="",
                     think=True,
                     num_predict=REASON_TOKENS,
                 )
@@ -808,7 +823,16 @@ class LocalDesktopAgent:
                 if thinking
                 else "the local model returned no answer"
             )
-        return LocalAgentReply(text=text, model=model, steps=1)
+        # The scratchpad answer is prose. Shortening it costs a measured
+        # 0.2-0.4 s with thinking off and is what makes it speakable.
+        short, _ = await self._single_turn(
+            f"{SHORTEN_PROMPT}{text[:SHORTEN_SOURCE_CHARS]}",
+            model=model,
+            system="",
+            think=False,
+            num_predict=SHORTEN_TOKENS,
+        )
+        return LocalAgentReply(text=short or text, model=model, steps=2)
 
     async def _chat(
         self,
@@ -850,6 +874,6 @@ class LocalDesktopAgent:
 
 
 __all__ = [
-    "CHAT_SYSTEM", "LOCAL_AGENT_SYSTEM", "LocalCapabilityExceeded", "REASON_SYSTEM", "LocalAgentReply", "LocalDesktopAgent", "LocalToolbox",
+    "CHAT_SYSTEM", "LOCAL_AGENT_SYSTEM", "LocalCapabilityExceeded", "SHORTEN_PROMPT", "LocalAgentReply", "LocalDesktopAgent", "LocalToolbox",
     "MAX_AGENT_STEPS", "ScreenObserver", "TOOLS", "strip_thinking",
 ]

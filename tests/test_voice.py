@@ -1048,3 +1048,54 @@ def test_keeping_the_model_warm_never_takes_the_listener_down():
             "jarvis", interval=0, transport=httpx.MockTransport(handler), iterations=2
         )
     )
+
+
+def test_the_reasoning_lane_asks_the_bare_question_then_shortens_the_answer(tmp_path):
+    """MEASURED 2026-09-10: asking for brevity is what made the model loop.
+
+    With no instruction at all, jarvis answered 17*24+139 correctly in 11.0 s
+    with 1,748 characters of thinking. Adding *any* instruction to answer in
+    one short sentence -- in the system role or appended to the user turn --
+    pushed thinking to 6,800-7,700 characters and returned empty content past
+    the deadline, every time. The model deliberates about being brief instead
+    of about the problem.
+
+    So the question goes in bare and the answer is shortened afterwards, by a
+    second call with thinking off. Measured at 0.2-0.4 s, and it is the same
+    rule as "clip the goal, never the prompt": shorten the output, never the
+    instruction.
+    """
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        if body["think"]:
+            return httpx.Response(200, json={"message": {"role": "assistant", "content": (
+                "To solve this, follow the order of operations. First 17 times 24 "
+                "is 408. Then 408 plus 139 is 547. So the answer is 547."
+            )}})
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "The answer is 547."}})
+
+    agent = LocalDesktopAgent(
+        transport=httpx.MockTransport(handler),
+        tool_runner=lambda name, arguments: {"status": "unexpected"},
+    )
+    reply = asyncio.run(
+        agent.respond(
+            "what is 17 times 24 plus 139",
+            workspace=tmp_path,
+            model="jarvis",
+            permission_mode="ask",
+        )
+    )
+
+    assert reply.text == "The answer is 547."
+    assert len(requests) == 2
+    # The question reaches the model exactly as it was spoken: no system role,
+    # no appended instruction, nothing to deliberate about except the problem.
+    reasoning = requests[0]
+    assert reasoning["think"] is True
+    assert [message["role"] for message in reasoning["messages"]] == ["user"]
+    assert reasoning["messages"][0]["content"] == "what is 17 times 24 plus 139"
+    assert requests[1]["think"] is False
