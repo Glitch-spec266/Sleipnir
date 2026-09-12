@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 
 import { isTauriRuntime } from "../bridge";
+import { playSpeechAudio } from "../bridge/speech";
 import { createDemoBridge } from "../bridge/demo";
 import { createTauriBridge } from "../bridge/tauri";
 import { VoiceOrb } from "../components/VoiceOrb";
@@ -65,18 +66,10 @@ export function OrbApp() {
         await bridge.handoffInstruction(transcript);
       } else {
         setMessage(transcript);
-        const response = await bridge.sendMessage(transcript, "ambient");
+        const response = await bridge.sendMessage(transcript, "ambient", true);
         setPhase("speaking");
         setMessage(response.text);
-        const speech = await bridge.speak(response.text);
-        if (speech) {
-          const player = new Audio(`data:${speech.mimeType};base64,${speech.data}`);
-          await new Promise<void>((resolve, reject) => {
-            player.addEventListener("ended", () => resolve(), { once: true });
-            player.addEventListener("error", () => reject(new Error("The selected voice could not be played")), { once: true });
-            void player.play().catch(reject);
-          });
-        }
+        await playSpeechAudio(response.audio, bridge);
         setPhase("armed");
       }
     } catch (caught) {

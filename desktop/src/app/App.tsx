@@ -4,6 +4,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 
 import type { SleipnirBridge } from "../bridge";
 import { isTauriRuntime } from "../bridge";
+import { playSpeechAudio } from "../bridge/speech";
 import { createDemoBridge } from "../bridge/demo";
 import { createTauriBridge } from "../bridge/tauri";
 import { Brand } from "../components/Brand";
@@ -96,9 +97,8 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
         const route = decision.kind === "direct" ? decision.recommended : "ambient";
         void runAndRefresh(async () => {
           try {
-            const response = await bridge.sendMessage(event.payload, route);
-            await emit("voice-phase", "speaking");
-            await bridge.speak(response.text);
+            const response = await bridge.sendMessage(event.payload, route, true);
+            await playSpeechAudio(response.audio, bridge);
           } finally {
             await emit("voice-phase", "armed");
           }

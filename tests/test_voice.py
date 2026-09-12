@@ -106,6 +106,37 @@ def test_default_silence_tail_keeps_voice_turns_responsive():
     assert segmenter.silence_seconds == 0.5
 
 
+def test_short_replies_finish_quickly_while_long_instructions_allow_a_pause():
+    voice = (2000).to_bytes(2, "little", signed=True) * 1600
+    quiet = bytes(3200)
+    short = VoiceSegmenter()
+    for _ in range(5):
+        assert short.feed(voice) is None
+    assert short.feed(quiet) is None
+    assert short.feed(quiet) is None
+    assert short.feed(quiet) is not None
+    long = VoiceSegmenter()
+    for _ in range(25):
+        assert long.feed(voice) is None
+    for _ in range(4):
+        assert long.feed(quiet) is None
+    assert long.feed(quiet) is not None
+
+
+def test_speech_tail_preserves_quiet_word_endings_without_waiting_longer():
+    segmenter = VoiceSegmenter(minimum_seconds=0.2)
+    voice = (2000).to_bytes(2, "little", signed=True) * 1600
+    soft_ending = (150).to_bytes(2, "little", signed=True) * 1600
+    quiet = bytes(3200)
+    assert segmenter.feed(voice) is None
+    assert segmenter.feed(voice) is None
+    assert segmenter.feed(soft_ending) is None
+    assert segmenter.feed(quiet) is None
+    utterance = segmenter.feed(quiet)
+    assert utterance is not None
+    assert soft_ending in utterance
+
+
 def test_local_agent_sends_live_vision_and_continues_after_a_tool_call(tmp_path):
     requests = []
 
@@ -830,6 +861,10 @@ def test_multi_step_arithmetic_is_routed_to_the_reasoning_lane():
     assert needs_reasoning("calculate the compound interest on 5000 at 4 percent") is True
     assert needs_reasoning("what's up") is False
     assert needs_reasoning("what is on my screen") is False
+    assert needs_reasoning("I'm tired from physics homework.") is False
+    assert needs_reasoning("I have 3 physics assignments and I'm stressed") is False
+    assert needs_reasoning("What is physics?") is False
+    assert needs_reasoning("17*24+139") is True
 
 
 def test_a_local_model_that_deliberates_without_converging_asks_to_be_replaced(tmp_path):
@@ -1087,16 +1122,18 @@ def test_ordinary_conversation_stays_off_the_tool_loop():
         "do you like music",
         "who was Ada Lovelace",
         "that was a rough meeting",
+        "what is on my screen right now",
+        "what is the answer to the chemistry question on screen",
     ):
         assert needs_tools(remark) is False, remark
 
     for instruction in (
-        "what is on my screen right now",
         "open the sleipnir repository and fix the router",
         "click the submit button",
         "search for flights to Tokyo",
         "write me a presentation about photosynthesis",
         "scroll down a bit",
+        "tell me what is on screen then click submit",
     ):
         assert needs_tools(instruction) is True, instruction
 
@@ -1264,13 +1301,21 @@ def test_a_look_question_never_enters_the_tool_loop() -> None:
     assert is_observation("show me what is on my screen")
     assert is_observation("what does this error dialog say")
     assert is_observation("solve the question currently displayed on my screen")
+    assert is_observation("Answer the chemistry question shown on my screen.")
+    assert not is_observation("Answer the chemistry question on this form")
+    assert not is_observation("Answer the physics question shown then click submit")
     # A second verb survives the look-opener strip, so real work still routes.
     assert not is_observation("tell me what is on screen then click submit")
     assert not is_observation("answer the question on my screen")
     assert not is_observation("hey how are you")
 
 
-def test_the_look_lane_sends_no_tools_and_answers_in_one_step(tmp_path: Path) -> None:
+@pytest.mark.parametrize("prompt", [
+    "what's on my screen right now",
+    "what is the answer to the chemistry question on my screen",
+    "what does the run button on my screen do",
+])
+def test_the_look_lane_sends_no_tools_and_answers_in_one_step(tmp_path: Path, prompt: str) -> None:
     seen: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1284,7 +1329,7 @@ def test_the_look_lane_sends_no_tools_and_answers_in_one_step(tmp_path: Path) ->
     agent = LocalDesktopAgent(transport=httpx.MockTransport(handler), observer=Observer())
     reply = asyncio.run(
         agent.respond(
-            "what's on my screen right now",
+            prompt,
             workspace=tmp_path,
             model="jarvis",
             permission_mode="ask",
@@ -1296,6 +1341,7 @@ def test_the_look_lane_sends_no_tools_and_answers_in_one_step(tmp_path: Path) ->
     assert reply.text == "A terminal and a browser."
     assert len(seen) == 1
     assert "tools" not in seen[0]
+    assert seen[0]["messages"][-1]["images"]
     assert "Prahlad" in seen[0]["messages"][0]["content"]
 
 

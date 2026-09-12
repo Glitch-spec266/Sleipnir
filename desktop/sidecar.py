@@ -13,9 +13,12 @@ from sleipnir.gui_project import main as project_main
 from sleipnir.voice.transcription import main as transcription_main
 from sleipnir.voice.synthesis import main as synthesis_main
 from sleipnir.voice.listener import main as listener_main
+from sleipnir.voice.service import main as service_main
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "service":
+        raise SystemExit(service_main())
     if len(sys.argv) > 1 and sys.argv[1] == "gui":
         raise SystemExit(gui_main(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == "agent":

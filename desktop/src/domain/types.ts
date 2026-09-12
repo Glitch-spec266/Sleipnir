@@ -198,6 +198,7 @@ export interface AgentResponse {
   route: string;
   rationale: string;
   sessionId: string | null;
+  audio?: SpeechAudio | null;
 }
 
 export interface SpeechAudio {

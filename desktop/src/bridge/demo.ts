@@ -8,6 +8,7 @@ export function createDemoBridge(): SleipnirBridge {
   const refresh = (): DashboardSnapshot => structuredClone(snapshot);
 
   return {
+    async setSpeechPlayback() {},
     async loadDashboard() {
       return refresh();
     },

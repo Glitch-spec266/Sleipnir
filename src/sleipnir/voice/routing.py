@@ -130,11 +130,12 @@ def needs_tools(text: str) -> bool:
     never by exhaustion.
     """
     clean = " ".join(text.split())
+    if needs_screen(clean) and re.search(rf"\bthen\s+(?:{_REQUEST_OPENER})?{_ACTION_VERBS}\b", clean, re.IGNORECASE):
+        return True
     if not clean:
         return False
     return bool(
-        _SCREEN_PATTERN.search(clean)
-        or _WORK_PATTERN.search(clean)
+        _WORK_PATTERN.search(clean)
         or _ACTION_PATTERN.search(clean)
         or _DELEGATION_PATTERN.search(clean)
     )
@@ -164,6 +165,10 @@ def is_observation(text: str) -> bool:
         return False
     if _WORK_PATTERN.search(clean) or _DELEGATION_PATTERN.search(clean):
         return False
+    # Answering a displayed science question means saying the answer. Only
+    # explicit interaction verbs (or form intent) should expose click tools.
+    if re.search(r"\b(math\w*|physics|chem\w*|algebra|geometry|trigonometry|stoichiometry)\b", clean, re.IGNORECASE) and not re.search(r"\bform\b", clean, re.IGNORECASE):
+        clean = re.sub(rf"^(?:{_REQUEST_OPENER})?answer\b", "", clean, count=1, flags=re.IGNORECASE)
     return not _ANY_ACTION.search(_LOOK_OPENER.sub("", clean, count=1))
 
 
@@ -172,15 +177,20 @@ def needs_reasoning(text: str) -> bool:
     clean = " ".join(text.split())
     if not clean or is_smalltalk(clean) or needs_screen(clean):
         return False
-    if not _REASONING_PATTERN.search(clean):
+    mathematical_expression = bool(re.search(r"\d\s*[+*/×÷^−-]\s*\d", clean))
+    if not _REASONING_PATTERN.search(clean) and not mathematical_expression:
         return False
-    # A bare "how many tabs" is a lookup; a sum has numbers in it or names a
-    # named technique. Requiring one of the two keeps ordinary chat off a lane
-    # that costs ten seconds of deliberation.
-    return bool(_DIGIT_RUN.search(clean)) or bool(
-        re.search(r"\b(deriv\w*|prove|proof|solve|equation|formula|physics|"
-                  r"algebra|geometry|calculus|probability)\b", clean, re.IGNORECASE)
+    # Mentioning physics homework or an exam is conversation. Only an actual
+    # calculation/proof request earns the much slower scratchpad lane.
+    calculation_request = bool(re.match(
+        rf"^(?:{_REQUEST_OPENER})?(?:calculat\w*|comput\w*|deriv\w*|prove|solve|evaluate|convert)\b",
+        clean, re.IGNORECASE,
+    ))
+    numeric_question = bool(_DIGIT_RUN.search(clean)) and bool(
+        re.match(r"^(?:what|how|if|find)\b", clean, re.IGNORECASE)
+        or re.search(r"\b(times|multipl\w*|divid\w*|plus|minus)\b", clean, re.IGNORECASE)
     )
+    return calculation_request or mathematical_expression or numeric_question
 
 
 def choose_ambient_provider(environment: Mapping[str, str] | None = None) -> str | None:

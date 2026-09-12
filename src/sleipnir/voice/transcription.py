@@ -6,10 +6,12 @@ import argparse
 import asyncio
 import base64
 import json
+import math
 import os
 import shutil
 import sys
 import tempfile
+import wave
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -54,6 +56,21 @@ def _audio_suffix(mime_type: str) -> str:
         "audio/mpeg": ".mp3",
         "audio/mp4": ".m4a",
     }.get(family, ".audio")
+
+
+def whisper_audio_context(path: Path) -> int:
+    """Avoid encoding thirty seconds of padding for a brief spoken turn.
+
+    A 512-frame minimum plus two seconds of headroom preserves recognition;
+    measured 256-frame windows repeated/truncated words. Invalid/unsupported
+    wave headers retain Whisper's full default context.
+    """
+    try:
+        with wave.open(str(path), "rb") as recording:
+            seconds = recording.getnframes() / recording.getframerate()
+    except (OSError, EOFError, wave.Error, ZeroDivisionError):
+        return 0
+    return min(1500, max(512, math.ceil((seconds + 2.0) * 50 / 256) * 256))
 
 
 class GeminiTranscriber:
@@ -171,6 +188,7 @@ class LocalWhisperTranscriber:
             command = [
                 executable, "-m", str(model), "-f", str(wave),
                 "-l", "en", "-nt", "-np", "-otxt", "-of", str(output),
+                "-ac", str(whisper_audio_context(wave)),
             ]
             if self.prompt:
                 command.extend(["--prompt", self.prompt])
@@ -211,7 +229,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mime-type", required=True)
     parser.add_argument("--gemini-env", default="GEMINI_API_KEY")
     parser.add_argument("--model")
+    parser.add_argument("--prompt", default="")
     return parser
+
+
+async def transcribe_audio(
+    audio: bytes, *, mode: str, mime_type: str, model: str | None = None,
+    gemini_key: str | None = None, prompt: str = "",
+) -> str:
+    if mode == "gemini":
+        transcriber = GeminiTranscriber(api_key=gemini_key, **({"model": model} if model else {}))
+    elif mode == "local":
+        transcriber = LocalWhisperTranscriber(model=Path(model) if model else None, prompt=prompt)
+    else:
+        raise ValueError("unsupported transcription mode")
+    return await transcriber.transcribe(audio, mime_type=mime_type)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,12 +253,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "error", "text": "recording exceeds 12 MiB"}))
         return 2
     try:
-        if args.mode == "gemini":
-            key = os.environ.get(args.gemini_env)
-            transcriber = GeminiTranscriber(api_key=key, model=args.model or "gemini-2.5-flash-lite")
-        else:
-            transcriber = LocalWhisperTranscriber()
-        text = asyncio.run(transcriber.transcribe(audio, mime_type=args.mime_type))
+        text = asyncio.run(transcribe_audio(
+            audio, mode=args.mode, mime_type=args.mime_type, model=args.model,
+            gemini_key=os.environ.get(args.gemini_env), prompt=args.prompt,
+        ))
     except Exception as error:  # noqa: BLE001 - native boundary returns a clean envelope
         print(json.dumps({"status": "error", "text": str(error)}))
         return 2
@@ -244,4 +274,5 @@ __all__ = [
     "MAX_AUDIO_BYTES",
     "main",
     "resolve_whisper_model",
+    "transcribe_audio",
 ]

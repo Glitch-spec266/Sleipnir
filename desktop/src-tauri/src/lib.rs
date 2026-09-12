@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -19,6 +20,12 @@ struct CoreOutput {
     success: bool,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+}
+
+struct CoreService {
+    child: CommandChild,
+    next_id: u64,
+    pending: HashMap<u64, tauri::async_runtime::Sender<Result<Value, String>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,9 +158,11 @@ struct DesktopState {
     project_starting: Mutex<bool>,
     history_loaded: Mutex<bool>,
     voice_listener: Mutex<Option<CommandChild>>,
+    core_service: Mutex<Option<CoreService>>,
     hub: Mutex<Option<CommandChild>>,
     hub_address: Mutex<String>,
     turn_in_flight: Mutex<bool>,
+    speech_playback: Mutex<bool>,
     /// The action the previous turn stopped on, awaiting one spoken "yes".
     ///
     /// Answering a form takes a dozen consequential actions, so asking per
@@ -177,7 +186,7 @@ impl TurnGuard {
         let state = app.try_state::<DesktopState>()?;
         {
             let mut busy = state.turn_in_flight.lock().ok()?;
-            if *busy {
+            if *busy || *state.speech_playback.lock().ok()? {
                 return None;
             }
             *busy = true;
@@ -190,10 +199,15 @@ impl TurnGuard {
 impl Drop for TurnGuard {
     fn drop(&mut self) {
         if let Some(state) = self.app.try_state::<DesktopState>() {
-            set_listener_muted(&state, false);
             if let Ok(mut busy) = state.turn_in_flight.lock() {
                 *busy = false;
             }
+            let speaking = state
+                .speech_playback
+                .lock()
+                .map(|value| *value)
+                .unwrap_or(true);
+            set_listener_muted(&state, speaking);
         }
     }
 }
@@ -296,6 +310,7 @@ fn core_command(
             "transcribe" => "sleipnir.voice.transcription",
             "speak" => "sleipnir.voice.synthesis",
             "listen" => "sleipnir.voice.listener",
+            "service" => "sleipnir.voice.service",
             "project" => "sleipnir.gui_project",
             "history" => "sleipnir.gui_history",
             "hub" => "sleipnir.hub",
@@ -314,6 +329,155 @@ fn core_command(
         command.args(arguments)
     };
     Ok(command)
+}
+
+/// Keep the packaged Python runtime alive instead of extracting it twice per
+/// spoken turn. Correlate replies so process failure releases every waiter.
+fn start_core_service(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
+    let mut slot = state
+        .core_service
+        .lock()
+        .map_err(|_| "core service lock poisoned")?;
+    if slot.is_some() {
+        return Ok(());
+    }
+    let (mut events, child) = core_command(app, "service", vec![])?
+        .spawn()
+        .map_err(|error| format!("start resident core: {error}"))?;
+    let pid = child.pid();
+    *slot = Some(CoreService {
+        child,
+        next_id: 0,
+        pending: HashMap::new(),
+    });
+    drop(slot);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = events.recv().await {
+            match event {
+                CommandEvent::Stdout(line) => {
+                    let envelope = if line.len() <= 16 * 1024 * 1024 {
+                        serde_json::from_slice::<Value>(&line).ok()
+                    } else {
+                        None
+                    };
+                    let Some(envelope) = envelope else {
+                        if let Some(state) = app.try_state::<DesktopState>() {
+                            stop_core_service(&state);
+                        }
+                        break;
+                    };
+                    if let Some(id) = envelope["id"].as_u64() {
+                        if let Some(state) = app.try_state::<DesktopState>() {
+                            if let Ok(mut slot) = state.core_service.lock() {
+                                if let Some(service) =
+                                    slot.as_mut().filter(|service| service.child.pid() == pid)
+                                {
+                                    if let Some(reply) = service.pending.remove(&id) {
+                                        let _ = reply.try_send(Ok(envelope["result"].clone()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                CommandEvent::Terminated(_) | CommandEvent::Error(_) => break,
+                // Provider diagnostics never enter the UI or a model context.
+                _ => {}
+            }
+        }
+        if let Some(state) = app.try_state::<DesktopState>() {
+            let matches = state
+                .core_service
+                .lock()
+                .map(|slot| {
+                    slot.as_ref()
+                        .map(|service| service.child.pid() == pid)
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if matches {
+                stop_core_service(&state);
+            }
+        }
+    });
+    Ok(())
+}
+
+fn stop_core_service(state: &DesktopState) {
+    let service = state
+        .core_service
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take());
+    if let Some(service) = service {
+        for reply in service.pending.into_values() {
+            let _ = reply.try_send(Err(
+                "The local core stopped during this request; please try again".into(),
+            ));
+        }
+        terminate_sidecar(service.child);
+    }
+}
+
+async fn service_request(
+    app: &AppHandle,
+    entrypoint: &str,
+    arguments: Vec<OsString>,
+    text: &str,
+) -> Result<Value, String> {
+    let state = app.state::<DesktopState>();
+    start_core_service(app, &state)?;
+    let (reply, mut response) = tauri::async_runtime::channel(1);
+    let sent = {
+        let mut slot = state
+            .core_service
+            .lock()
+            .map_err(|_| "core service lock poisoned")?;
+        let service = slot.as_mut().ok_or("resident core is not running")?;
+        service.next_id = service
+            .next_id
+            .checked_add(1)
+            .ok_or("core request id exhausted")?;
+        let id = service.next_id;
+        let arguments: Vec<_> = arguments
+            .iter()
+            .map(|argument| argument.to_string_lossy())
+            .collect();
+        let mut line = serde_json::to_vec(&json!({
+            "id": id, "entrypoint": entrypoint, "arguments": arguments, "text": text,
+        }))
+        .map_err(|error| format!("encode resident core request: {error}"))?;
+        line.push(b'\n');
+        let limit = if entrypoint == "transcribe" {
+            18 * 1024 * 1024
+        } else {
+            2 * 1024 * 1024
+        };
+        if line.len() > limit {
+            return Err("core request exceeds its size limit".into());
+        }
+        service.pending.insert(id, reply);
+        service
+            .child
+            .write(&line)
+            .map_err(|error| format!("send resident core request: {error}"))
+    };
+    if let Err(error) = sent {
+        stop_core_service(&state);
+        return Err(error);
+    }
+    let result = response
+        .recv()
+        .await
+        .ok_or("resident core closed without a response")??;
+    if result["status"] == "error" {
+        return Err(result["text"]
+            .as_str()
+            .unwrap_or("local core request failed")
+            .to_owned());
+    }
+    Ok(result)
 }
 
 /// Everything a fresh install still needs, as the Python probe reports it.
@@ -604,6 +768,19 @@ fn start_voice_listener(app: &AppHandle, state: &DesktopState) -> Result<(), Str
         .voice_listener
         .lock()
         .map_err(|_| "voice listener lock poisoned")? = Some(child);
+    let busy = state
+        .turn_in_flight
+        .lock()
+        .map(|value| *value)
+        .unwrap_or(true);
+    let speaking = state
+        .speech_playback
+        .lock()
+        .map(|value| *value)
+        .unwrap_or(true);
+    if busy || speaking {
+        set_listener_muted(state, true);
+    }
 
     let listener_app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -919,15 +1096,14 @@ async fn hub_pairing(app: AppHandle, state: State<'_, DesktopState>) -> Result<V
     if address.is_empty() {
         return Ok(json!({"running": false, "address": "", "token": ""}));
     }
-    let output = run_core(&app, "cli", vec!["hub-token".into()]).await?;
+    let output = run_core(&app, "cli", vec!["hub-token".into(), "--json".into()]).await?;
     if !output.success {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
     }
-    Ok(json!({
-        "running": true,
-        "address": address,
-        "token": String::from_utf8_lossy(&output.stdout).trim(),
-    }))
+    let mut pairing: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode phone pairing: {error}"))?;
+    pairing["running"] = json!(true);
+    Ok(pairing)
 }
 
 #[tauri::command]
@@ -958,16 +1134,11 @@ async fn transcribe_audio(
         mime_type.into(),
         "--gemini-env".into(),
         preferences.settings.provider_env.gemini.into(),
+        "--prompt".into(),
+        format!("A conversation with {}. Say or repeat words. Ask questions. Discuss homework. Click controls.", preferences.voice.wake_name).into(),
     ];
-    let output = run_core_with_stdin(&app, "transcribe", arguments, &audio).await?;
-    let result: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("decode local transcription response: {error}"))?;
-    if !output.success || result["status"] == "error" {
-        return Err(result["text"]
-            .as_str()
-            .unwrap_or("transcription failed")
-            .to_owned());
-    }
+    let encoded = base64::engine::general_purpose::STANDARD.encode(audio);
+    let result = service_request(&app, "transcribe", arguments, &encoded).await?;
     result["text"]
         .as_str()
         .map(str::to_owned)
@@ -979,6 +1150,16 @@ async fn speak_text(
     app: AppHandle,
     text: String,
     state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    let _turn =
+        TurnGuard::claim(&app).ok_or("Sleipnir is still working on the previous request")?;
+    speak_text_inner(&app, &text, &state).await
+}
+
+async fn speak_text_inner(
+    app: &AppHandle,
+    text: &str,
+    state: &DesktopState,
 ) -> Result<Value, String> {
     let clean = text.trim();
     if clean.is_empty() || clean.len() > 64 * 1024 {
@@ -1005,16 +1186,23 @@ async fn speak_text(
         "--gemini-env".into(),
         preferences.settings.provider_env.gemini.into(),
     ];
-    let output = run_core_with_stdin(&app, "speak", arguments, clean.as_bytes()).await?;
-    let result: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("decode speech response: {error}"))?;
-    if !output.success || result["status"] == "error" {
-        return Err(result["text"]
-            .as_str()
-            .unwrap_or("speech synthesis failed")
-            .to_owned());
-    }
+    let result = service_request(app, "speak", arguments, clean).await?;
     Ok(result["audio"].clone())
+}
+
+/// Browser-rendered provider audio must also keep the wake microphone shut.
+#[tauri::command]
+fn set_speech_playback(active: bool, state: State<'_, DesktopState>) -> Result<(), String> {
+    let busy = *state
+        .turn_in_flight
+        .lock()
+        .map_err(|_| "turn lock poisoned")?;
+    *state
+        .speech_playback
+        .lock()
+        .map_err(|_| "speech lock poisoned")? = active;
+    set_listener_muted(&state, busy || active);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1110,13 +1298,29 @@ async fn send_message(
     app: AppHandle,
     text: String,
     route: Option<String>,
+    speak: Option<bool>,
     state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    let _turn =
+        TurnGuard::claim(&app).ok_or("Sleipnir is still working on the previous request")?;
+    let mut result = send_message_inner(&app, text, route, &state).await?;
+    if speak.unwrap_or(false) {
+        let _ = app.emit("voice-phase", "speaking");
+        let audio = speak_text_inner(&app, result["text"].as_str().unwrap_or(""), &state).await?;
+        result["audio"] = audio;
+    }
+    Ok(result)
+}
+
+async fn send_message_inner(
+    app: &AppHandle,
+    text: String,
+    route: Option<String>,
+    state: &DesktopState,
 ) -> Result<Value, String> {
     if text.trim().is_empty() {
         return Err("instruction cannot be empty".into());
     }
-    let _turn =
-        TurnGuard::claim(&app).ok_or("Sleipnir is still working on the previous request")?;
     // A pending approval turns the operator's next word into a decision about
     // the task Sleipnir stopped on, rather than a fresh instruction.
     let awaiting = state
@@ -1199,15 +1403,7 @@ async fn send_message(
     if let Some(session_id) = preferences.sessions.get(&selected).cloned() {
         arguments.extend(["--session-id".into(), session_id.into()]);
     }
-    let output = run_core_with_stdin(&app, "agent", arguments, text.as_bytes()).await?;
-    let result: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("decode local agent response: {error}"))?;
-    if !output.success || result["status"] == "error" {
-        return Err(result["text"]
-            .as_str()
-            .unwrap_or("local agent failed")
-            .to_owned());
-    }
+    let result = service_request(app, "agent", arguments, &text).await?;
     if let Some(pending) = result["approval"].as_str() {
         // Remember the instruction, not the tool name: re-issuing has to ask
         // for the same task again, with the grant attached.
@@ -1560,11 +1756,19 @@ pub fn run() {
                 project_starting: Mutex::new(false),
                 history_loaded: Mutex::new(false),
                 voice_listener: Mutex::new(None),
+                core_service: Mutex::new(None),
                 hub: Mutex::new(None),
                 hub_address: Mutex::new(String::new()),
                 turn_in_flight: Mutex::new(false),
+                speech_playback: Mutex::new(false),
                 pending_approval: Mutex::new(None),
             });
+            {
+                let state = app.state::<DesktopState>();
+                if let Err(error) = start_core_service(app.handle(), &state) {
+                    append_message(app.handle(), "sleipnir", error, "voice-error");
+                }
+            }
             let _ = app.global_shortcut().register(shortcut.as_str());
             let _ = if start_at_login {
                 app.autolaunch().enable()
@@ -1637,6 +1841,7 @@ pub fn run() {
             transcribe_audio,
             handoff_instruction,
             speak_text,
+            set_speech_playback,
             clear_history,
             onboarding_probe,
             onboarding_models,
@@ -1651,6 +1856,7 @@ pub fn run() {
             if let Some(state) = app.try_state::<DesktopState>() {
                 stop_hub(&state);
                 stop_voice_listener(&state);
+                stop_core_service(&state);
             }
         }
     });

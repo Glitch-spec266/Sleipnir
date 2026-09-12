@@ -239,6 +239,10 @@ class VoiceSegmenter:
     # making every command pay an audible extra pause. Measured end-to-end,
     # the former 0.8 s tail was the largest avoidable fixed latency.
     silence_seconds: float = 0.5
+    # Brief replies need a shorter tail; longer instructions keep enough room
+    # for a natural pause between clauses.
+    short_silence_seconds: float = 0.3
+    short_utterance_seconds: float = 2.0
     minimum_seconds: float = 0.45
     maximum_seconds: float = 12.0
     pre_roll_seconds: float = 0.3
@@ -277,17 +281,25 @@ class VoiceSegmenter:
         self._frames.append(pcm)
         self._silent_frames = 0 if voiced else self._silent_frames + 1
         duration = len(self._frames) * self.frame_seconds
-        ended = self._silent_frames >= round(self.silence_seconds / self.frame_seconds)
+        spoken_duration = duration - self._silent_frames * self.frame_seconds
+        tail = min(self.silence_seconds, self.short_silence_seconds) if spoken_duration <= self.short_utterance_seconds else self.silence_seconds
+        ended = self._silent_frames >= round(tail / self.frame_seconds)
         if duration < self.maximum_seconds and not ended:
             return None
 
         trailing = self._silent_frames
-        frames = self._frames[:-trailing] if trailing else self._frames
+        spoken_frames = self._frames[:-trailing] if trailing else self._frames
+        enough_speech = sum(map(len, spoken_frames)) >= int(_RATE * _CHANNELS * _SAMPLE_WIDTH * self.minimum_seconds)
+        # Low-energy final consonants can fall below the VAD threshold. Keep
+        # the first two tail frames rather than cutting the word at that point;
+        # these frames were already captured, so this adds no waiting time.
+        trim = max(0, trailing - max(1, round(0.2 / self.frame_seconds)))
+        frames = self._frames[:-trim] if trim else self._frames
         self._frames = []
         self._silent_frames = 0
         self._pre_roll.clear()
         audio = b"".join(frames)
-        if len(audio) < int(_RATE * _CHANNELS * _SAMPLE_WIDTH * self.minimum_seconds):
+        if not enough_speech:
             return None
         return audio
 
@@ -351,7 +363,8 @@ async def listen_forever(
     if recorder is None:
         raise RuntimeError("continuous local listening needs parecord")
     model = LocalWhisperTranscriber(
-        prompt=f"Hey {config.wake_name}. Sleipnir computer assistant commands."
+        prompt=(f"A conversation with {config.wake_name}. Say or repeat words. "
+                "Ask questions. Discuss homework. Click controls.")
     )
     detector = WakeCommandDetector(config)
     gate = ListenerGate()
@@ -365,6 +378,10 @@ async def listen_forever(
         "--format=s16le",
         f"--rate={_RATE}",
         f"--channels={_CHANNELS}",
+        # Pulse capture otherwise buffers roughly two seconds before delivering
+        # the words. Process small blocks; the segmenter still owns turn timing.
+        "--latency-msec=30",
+        "--process-time-msec=10",
     ])
     process = await asyncio.create_subprocess_exec(
         *recorder_args,
@@ -410,6 +427,15 @@ async def listen_forever(
                 break
             was_muted = gate.muted
             gate.apply(line.decode("utf-8", "replace").strip())
+            if gate.muted or was_muted:
+                segmenter.reset()
+                # Discard capture queued before the control transition. In
+                # particular, the last speaker frames must not survive unmute.
+                while not queue.empty():
+                    buffered = queue.get_nowait()
+                    if buffered is None:
+                        queue.put_nowait(None)
+                        break
             if was_muted and not gate.muted:
                 detector.resume(now=time.monotonic())
         # EOF on a pipe means the host that spawned us is gone. Exiting here is

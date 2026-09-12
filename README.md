@@ -165,6 +165,13 @@ stays warm while listening is enabled. Recent conversation is recovered from
 encrypted history across turns and wake cycles, limited to eight messages
 from the last six hours.
 
+Conversation and speech share a resident Python process, avoiding repeated
+packaged-runtime startup on every reply. The microphone stays muted from the
+start of an answer through completed playback, including cloud audio, so the
+assistant cannot converse with its own voice. Brief spoken turns use a shorter
+silence tail and a bounded Whisper audio window; ordinary conversation skips
+screenshots, action tools, and extended reasoning.
+
 The desktop permission posture still applies. `ask` allows observation and
 safe navigation. Asking to answer or fill a form also authorizes entering its
 answers; submitting still requires an explicit request or approval. Other
@@ -191,6 +198,18 @@ the token in the device keychain. Allow Local Network access when prompted;
 if previously denied, enable it in iOS Settings for SleipnirHub. Build an
 unsigned IPA on Linux with
 `sleipnir ios ipa-unsigned --project ios/SleipnirHub -- -c release`.
+
+Build a runnable desktop binary through the Tauri CLI:
+
+```sh
+python desktop/scripts/build-sidecar.py
+cd desktop
+npm run tauri build -- --no-bundle
+```
+
+The CLI embeds the renderer with `tauri/custom-protocol`. A plain
+`cargo build --release` expects the development server and can open to a
+localhost connection-refused error.
 
 On current Arch/CachyOS, Tauri's cached `linuxdeploy` contains an older `strip`
 that cannot parse modern `.relr.dyn` ELF sections. Build AppImage with:

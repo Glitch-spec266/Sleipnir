@@ -194,7 +194,7 @@ import subprocess, sys, time
 child = subprocess.Popen([
     sys.executable, {str(guard)!r}, '--',
     sys.executable, '-c',
-    'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'
+    'import time; time.sleep(30)'
 ])
 print(child.pid, flush=True)
 time.sleep(30)

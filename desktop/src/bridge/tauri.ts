@@ -7,7 +7,7 @@ import type { InstructionRoute } from "../routing/intent";
 export function createTauriBridge(): SleipnirBridge {
   return {
     loadDashboard: () => invoke<DashboardSnapshot>("load_dashboard"),
-    sendMessage: (text: string, route?: InstructionRoute) => invoke<AgentResponse>("send_message", { text, route }),
+    sendMessage: (text: string, route?: InstructionRoute, speak = false) => invoke<AgentResponse>("send_message", { text, route, speak }),
     startProject: (goal: string) => invoke<void>("start_project", { goal }),
     review: (itemId: string, decision: ReviewDecision) =>
       invoke<void>("review_item", { itemId, decision }),
@@ -21,6 +21,7 @@ export function createTauriBridge(): SleipnirBridge {
       invoke<string>("transcribe_audio", { audio, mimeType }),
     handoffInstruction: (text: string) => invoke<void>("handoff_instruction", { text }),
     speak: (text: string) => invoke<SpeechAudio | null>("speak_text", { text }),
+    setSpeechPlayback: (active: boolean) => invoke<void>("set_speech_playback", { active }),
     clearHistory: () => invoke<void>("clear_history"),
     probeSetup: () => invoke<SetupRequirement[]>("onboarding_probe"),
     applySetup: () => invoke<SetupStepResult[]>("onboarding_apply"),

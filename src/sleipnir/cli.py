@@ -1147,9 +1147,15 @@ async def cmd_hub_token(args: argparse.Namespace) -> int:
     logged, audited, or included in any snapshot -- the same rule the provider
     keys follow.
     """
-    from sleipnir.hub import load_token
+    import json
 
-    print(load_token())
+    from sleipnir.hub import DEFAULT_PORT, lan_address, load_token
+
+    token = load_token()
+    if getattr(args, "json", False):
+        print(json.dumps({"address": f"http://{lan_address()}:{DEFAULT_PORT}", "token": token}))
+    else:
+        print(token)
     return 0
 
 
@@ -1729,6 +1735,7 @@ def build_parser() -> argparse.ArgumentParser:
     hub_token_parser = subparsers.add_parser(
         "hub-token", help="print the phone hub pairing token"
     )
+    hub_token_parser.add_argument("--json", action="store_true", help="include the current LAN address")
     hub_token_parser.set_defaults(func=cmd_hub_token)
 
     doctor_parser = subparsers.add_parser("doctor", help="report host capability status")

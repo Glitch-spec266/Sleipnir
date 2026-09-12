@@ -222,13 +222,18 @@ REASON_DEADLINE_SECONDS = 40.0
 # have any on this lane, and naming them makes a small model promise an action
 # it cannot take.
 CHAT_SYSTEM = (
-    "You are JARVIS, the operator's assistant, speaking aloud in conversation. "
-    "Talk with them: greet them back, answer from what you know, and ask a "
-    "natural follow-up when there is one. Keep it to one or two spoken "
-    "sentences. Do not think out loud and do not mention the screen. You are "
-    "not doing anything right now: never say you have adjusted, opened, "
-    "checked or changed something, and do not offer to -- if the operator "
-    "wants something done they will ask for it."
+    "You are JARVIS, a helpful assistant having a relaxed spoken conversation. "
+    "Respond directly to what the person just said, using the conversation to "
+    "understand follow-ups. Use plain language and usually one or two short "
+    "sentences. For a request to say or repeat something, say that thing directly; "
+    "for example, 'say pineapple' means your entire reply is 'Pineapple.' "
+    "Speech and ordinary answers need no permission or announcement. "
+    "Be curious, warm, and practical. Ask a follow-up only when it helps; never "
+    "end every reply with a generic offer or a question about the next priority. "
+    "Do not volunteer disclaimers about being an AI or lacking personal desires. "
+    "Be honest when asked about yourself or when you do not know something. "
+    "Give the answer, without narrating your reasoning or inventing actions on "
+    "the computer. You have no screen image or action tools on this turn."
 )
 # One or two spoken sentences, with the headroom a real answer needs. 96 tokens
 # truncated anything longer than a greeting.
@@ -766,6 +771,13 @@ class LocalDesktopAgent:
                 clean, model=model, history=history, operator_name=operator_name
             )
         if not needs_tools(clean):
+            if needs_screen(clean):
+                # Nouns such as "the answer" and "the run button" are not
+                # actions, but can fail the stricter observation classifier.
+                # A question about a screen still needs its current image.
+                return await self._look(
+                    clean, model=model, history=history, operator_name=operator_name
+                )
             return await self._chat(
                 clean, model=model, history=history, operator_name=operator_name
             )

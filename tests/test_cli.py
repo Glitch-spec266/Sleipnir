@@ -27,6 +27,21 @@ from sleipnir.schema import (
     TokenUsage,
 )
 
+def test_phone_pairing_refreshes_lan_address_without_rotating_token(monkeypatch, capsys):
+    from sleipnir import hub
+
+    addresses = iter(["192.168.1.230", "192.168.1.231"])
+    monkeypatch.setattr(hub, "lan_address", lambda: next(addresses))
+    monkeypatch.setattr(hub, "load_token", lambda: "test-pairing-token")
+    for address in ("192.168.1.230", "192.168.1.231"):
+        assert cli.main(["hub-token", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out) == {
+            "address": f"http://{address}:8765", "token": "test-pairing-token",
+        }
+    assert cli.main(["hub-token"]) == 0
+    assert capsys.readouterr().out.strip() == "test-pairing-token"
+
+
 GOOD_TASKS = {
     "tasks": [
         {
