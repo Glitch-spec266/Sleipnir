@@ -195,6 +195,7 @@ export function createDemoSnapshot(): DashboardSnapshot {
       privacyLabel: "Wake phrase stays on this device",
       settings: {
         wakeName: "Sleipnir",
+        operatorName: "",
         localWake: true,
         listeningEnabled: true,
         startAtLogin: false,
@@ -220,6 +221,7 @@ export function createDemoSnapshot(): DashboardSnapshot {
         audit: true,
       },
       telemetryEnabled: true,
+      hubEnabled: false,
       permissionMode: "ask",
       providerEnv: {
         openrouter: "OPENROUTER_API_KEY",

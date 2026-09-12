@@ -1,4 +1,4 @@
-import type { AgentResponse, AppSettings, DashboardSnapshot, ReviewDecision, SpeechAudio, VoiceSettings } from "../domain/types";
+import type { AgentResponse, AppSettings, DashboardSnapshot, HubPairing, LocalModelReport, ReviewDecision, SetupRequirement, SetupStepResult, SpeechAudio, VoiceSettings } from "../domain/types";
 import type { InstructionRoute } from "../routing/intent";
 
 export interface SleipnirBridge {
@@ -15,6 +15,11 @@ export interface SleipnirBridge {
   handoffInstruction(text: string): Promise<void>;
   speak(text: string): Promise<SpeechAudio | null>;
   clearHistory(): Promise<void>;
+  probeSetup(): Promise<SetupRequirement[]>;
+  applySetup(): Promise<SetupStepResult[]>;
+  localModels(): Promise<LocalModelReport>;
+  pullModel(model: string): Promise<SetupStepResult>;
+  hubPairing(): Promise<HubPairing>;
 }
 
 export function isTauriRuntime(): boolean {

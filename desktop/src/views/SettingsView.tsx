@@ -1,7 +1,7 @@
-import { BarChart3, Blocks, FolderGit2, History, KeyRound, ListChecks, MonitorCog, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { BarChart3, Blocks, Eye, EyeOff, FolderGit2, History, KeyRound, ListChecks, MonitorCog, Save, ShieldCheck, Smartphone, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { AppSettings, DashboardSnapshot } from "../domain/types";
+import type { AppSettings, DashboardSnapshot, HubPairing } from "../domain/types";
 
 const modules = [
   { id: "mission", label: "Mission work queue", detail: "Repository lifecycle and resumable work lanes.", icon: ListChecks },
@@ -16,12 +16,36 @@ interface SettingsViewProps {
   onSave(settings: AppSettings): Promise<void>;
   onSelectProject(path: string): Promise<void>;
   onClearHistory(): Promise<void>;
+  hubPairing(): Promise<HubPairing>;
 }
 
-export function SettingsView({ snapshot, onSave, onSelectProject, onClearHistory }: SettingsViewProps) {
+export function SettingsView({ snapshot, onSave, onSelectProject, onClearHistory, hubPairing }: SettingsViewProps) {
   const [draft, setDraft] = useState(snapshot.settings);
   const [projectPath, setProjectPath] = useState(snapshot.run?.workspace ?? "");
   const [message, setMessage] = useState<string | null>(null);
+  const [pairing, setPairing] = useState<HubPairing | null>(null);
+  // The token is fetched only when the operator asks to see it, and is never
+  // held in the dashboard snapshot -- the same rule the provider keys follow.
+  const [tokenVisible, setTokenVisible] = useState(false);
+
+  useEffect(() => {
+    if (!snapshot.settings.hubEnabled) {
+      setPairing(null);
+      setTokenVisible(false);
+      return;
+    }
+    let cancelled = false;
+    hubPairing()
+      .then((result) => {
+        if (!cancelled) setPairing(result);
+      })
+      .catch(() => {
+        if (!cancelled) setPairing(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hubPairing, snapshot.settings.hubEnabled]);
 
   useEffect(() => setDraft(snapshot.settings), [snapshot.settings]);
   useEffect(() => setProjectPath(snapshot.run?.workspace ?? ""), [snapshot.run?.workspace]);
@@ -76,6 +100,24 @@ export function SettingsView({ snapshot, onSave, onSelectProject, onClearHistory
             <div className="surface__head"><span className="section-label">Trust posture</span><ShieldCheck size={16} /></div>
             <label className="field-label"><span>Capability approval</span><select aria-label="Capability approval" value={draft.permissionMode} onChange={(event) => setDraft((current) => ({ ...current, permissionMode: event.target.value as AppSettings["permissionMode"] }))}><option value="ask">Ask before every host action</option><option value="always">Always allow in this workspace</option></select></label>
             <label className="inline-toggle"><span><strong>Adaptive color scheme</strong><small>Follow ambient light and system preference.</small></span><input type="checkbox" checked={draft.adaptiveScheme} onChange={(event) => setDraft((current) => ({ ...current, adaptiveScheme: event.target.checked }))} /></label>
+          </section>
+
+          <section className="surface settings-card compact-settings">
+            <div className="surface__head"><span className="section-label">Phone hub</span><Smartphone size={16} /></div>
+            <label className="inline-toggle"><span><strong>Serve the phone hub</strong><small>Lets a paired phone watch this run, approve work, glance at this screen, and switch voice on or off. It listens on your local network, so leave it off on networks you do not control.</small></span><input type="checkbox" checked={draft.hubEnabled} onChange={(event) => setDraft((current) => ({ ...current, hubEnabled: event.target.checked }))} /></label>
+            {snapshot.settings.hubEnabled && pairing?.running && (
+              <div className="hub-pairing">
+                <label className="field-label"><span>Address</span><input aria-label="Hub address" readOnly value={pairing.address} /></label>
+                <label className="field-label"><span>Pairing token</span><input aria-label="Pairing token" readOnly type={tokenVisible ? "text" : "password"} value={pairing.token} /></label>
+                <button type="button" className="save-action" onClick={() => setTokenVisible((current) => !current)}>
+                  {tokenVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+                  {tokenVisible ? "Hide token" : "Show token"}
+                </button>
+              </div>
+            )}
+            {snapshot.settings.hubEnabled && !pairing?.running && (
+              <p className="hub-pairing__note">The hub is starting. Its address appears here once it is listening.</p>
+            )}
           </section>
 
           <section className="surface settings-card compact-settings">

@@ -133,6 +133,8 @@ export interface ConversationMessage {
 
 export interface VoiceSettings {
   wakeName: string;
+  /** What the assistant calls you. Preference data, never a credential. */
+  operatorName: string;
   localWake: boolean;
   listeningEnabled: boolean;
   startAtLogin: boolean;
@@ -161,6 +163,8 @@ export interface AppSettings {
   advancedModules: Record<"mission" | "chronicle" | "helm" | "tools" | "audit", boolean>;
   telemetryEnabled: boolean;
   permissionMode: "ask" | "always";
+  /** Serve the LAN phone hub. Off by default: it binds every interface. */
+  hubEnabled: boolean;
   providerEnv: {
     openrouter: string;
     gemini: string;
@@ -199,4 +203,43 @@ export interface AgentResponse {
 export interface SpeechAudio {
   data: string;
   mimeType: string;
+}
+
+/** One thing a fresh install still needs, and the command that supplies it. */
+export interface SetupRequirement {
+  id: string;
+  label: string;
+  present: boolean;
+  detail: string;
+  fix: string;
+  needsRoot: boolean;
+  /** The wizard resolves this by asking, not by running `fix`. */
+  interactive: boolean;
+}
+
+export interface SetupStepResult {
+  id: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface LocalModelOption {
+  tier: "low" | "moderate" | "high";
+  model: string;
+  /** Live from Ollama's registry, or "unknown" when it could not be read. */
+  download: string;
+  fits: boolean;
+  note: string;
+}
+
+export interface LocalModelReport {
+  headroom: { freeGib: number; totalGib: number; device: string; accelerated: boolean };
+  options: LocalModelOption[];
+}
+
+export interface HubPairing {
+  running: boolean;
+  address: string;
+  /** Shown on the operator's own screen only; never stored in a snapshot. */
+  token: string;
 }

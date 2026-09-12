@@ -96,5 +96,32 @@ export function createDemoBridge(): SleipnirBridge {
     async clearHistory() {
       snapshot.messages = [];
     },
+    // The demo bridge answers as a machine that is already set up, so the
+    // wizard is reachable for design work without pretending anything is
+    // missing on a host it cannot see.
+    async probeSetup() {
+      return [
+        { id: "ollama", label: "Ollama (runs the local assistant model)", present: true, detail: "/usr/bin/ollama", fix: "", needsRoot: false, interactive: false },
+      ];
+    },
+    async applySetup() {
+      return [];
+    },
+    async localModels() {
+      return {
+        headroom: { freeGib: 7.5, totalGib: 8, device: "demo GPU", accelerated: true },
+        options: [
+          { tier: "low" as const, model: "qwen3-vl:4b", download: "3.3GB", fits: true, note: "Runs on your GPU." },
+          { tier: "moderate" as const, model: "qwen3-vl:8b", download: "6.1GB", fits: true, note: "Runs on your GPU." },
+          { tier: "high" as const, model: "qwen3-vl:32b", download: "20.9GB", fits: false, note: "Needs about 22.0 GiB; this machine has 8.0 GiB." },
+        ],
+      };
+    },
+    async pullModel(model: string) {
+      return { id: "model", ok: true, detail: `jarvis ready (${model})` };
+    },
+    async hubPairing() {
+      return { running: false, address: "", token: "" };
+    },
   };
 }

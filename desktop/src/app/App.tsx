@@ -21,6 +21,7 @@ import { ReviewView } from "../views/ReviewView";
 import { RoutingView } from "../views/RoutingView";
 import { SettingsView } from "../views/SettingsView";
 import { TrustView } from "../views/TrustView";
+import { SetupView } from "../views/SetupView";
 import { VoiceView } from "../views/VoiceView";
 import { useSleipnir } from "./useSleipnir";
 
@@ -31,6 +32,10 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
   const [scheme, setScheme] = useState<ColorScheme>("orbit");
   const [activeView, setActiveView] = useState<ViewId>("home");
   const [pendingRoute, setPendingRoute] = useState<{ text: string; recommended: "claude" | "codex"; reason: string } | null>(null);
+  // null while the probe is in flight. Setup is decided by asking the machine,
+  // never by a "setup complete" flag: a flag survives the operator deleting
+  // the model and the app would then be confidently wrong about itself.
+  const [setupNeeded, setSetupNeeded] = useState<boolean | null>(null);
   const { snapshot, error, refresh, runAndRefresh } = useSleipnir(bridge);
 
   useEffect(() => {
@@ -38,6 +43,23 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
       setActiveView("home");
     }
   }, [activeView, advanced]);
+
+  useEffect(() => {
+    let cancelled = false;
+    bridge
+      .probeSetup()
+      .then((items) => {
+        if (!cancelled) setSetupNeeded(items.some((item) => !item.present));
+      })
+      // A probe that cannot run is not a reason to block the app behind a
+      // wizard that also cannot run. Setup stays reachable from Settings.
+      .catch(() => {
+        if (!cancelled) setSetupNeeded(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge]);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -140,6 +162,7 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
       onSave={(settings) => runAndRefresh(() => bridge.setAppSettings(settings))}
       onSelectProject={(path) => runAndRefresh(() => bridge.selectRunRoot(path))}
       onClearHistory={() => runAndRefresh(() => bridge.clearHistory())}
+      hubPairing={() => bridge.hubPairing()}
     />;
     if (activeView === "voice") {
       return <VoiceView
@@ -154,6 +177,27 @@ export function App({ bridge = runtimeBridge }: { bridge?: SleipnirBridge }) {
       onStartProject={(goal) => runAndRefresh(() => bridge.startProject(goal))}
     />;
   }, [activeView, bridge, error, runAndRefresh, snapshot]);
+
+  if (setupNeeded) {
+    return (
+      <div className="app" data-scheme={scheme} data-mode="simple">
+        <header className="topbar">
+          <Brand />
+        </header>
+        <main className="workspace">
+          <div className="workspace__stage">
+            <SetupView
+              probe={() => bridge.probeSetup()}
+              apply={() => bridge.applySetup()}
+              models={() => bridge.localModels()}
+              pull={(model) => bridge.pullModel(model)}
+              onDone={() => setSetupNeeded(false)}
+            />
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app" data-scheme={scheme} data-mode={advanced ? "advanced" : "simple"}>

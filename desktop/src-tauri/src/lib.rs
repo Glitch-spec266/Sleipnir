@@ -26,6 +26,9 @@ struct CoreOutput {
 #[serde(rename_all = "camelCase")]
 struct VoiceSettings {
     wake_name: String,
+    /// What to call the operator. A name, not a credential, so it sits beside
+    /// the wake word rather than in the encrypted history.
+    operator_name: String,
     local_wake: bool,
     listening_enabled: bool,
     start_at_login: bool,
@@ -66,6 +69,9 @@ struct AppSettings {
     telemetry_enabled: bool,
     permission_mode: String,
     provider_env: ProviderEnvironment,
+    /// Serve the LAN phone hub. Off by default: it binds every interface,
+    /// and one of its endpoints returns a picture of this screen.
+    hub_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -82,6 +88,7 @@ impl Default for AppSettings {
             },
             telemetry_enabled: true,
             permission_mode: "ask".into(),
+            hub_enabled: false,
             provider_env: ProviderEnvironment {
                 openrouter: "OPENROUTER_API_KEY".into(),
                 gemini: "GEMINI_API_KEY".into(),
@@ -95,6 +102,7 @@ impl Default for VoiceSettings {
     fn default() -> Self {
         Self {
             wake_name: "Sleipnir".into(),
+            operator_name: String::new(),
             local_wake: true,
             // Ambient listening is the product: a wake word that is off until
             // the operator finds a toggle is a wake word that does not exist.
@@ -143,6 +151,8 @@ struct DesktopState {
     project_starting: Mutex<bool>,
     history_loaded: Mutex<bool>,
     voice_listener: Mutex<Option<CommandChild>>,
+    hub: Mutex<Option<CommandChild>>,
+    hub_address: Mutex<String>,
     turn_in_flight: Mutex<bool>,
     /// The action the previous turn stopped on, awaiting one spoken "yes".
     ///
@@ -288,6 +298,7 @@ fn core_command(
             "listen" => "sleipnir.voice.listener",
             "project" => "sleipnir.gui_project",
             "history" => "sleipnir.gui_history",
+            "hub" => "sleipnir.hub",
             _ => "sleipnir.cli",
         };
         command = command.args(["-m", module]);
@@ -303,6 +314,67 @@ fn core_command(
         command.args(arguments)
     };
     Ok(command)
+}
+
+
+/// Everything a fresh install still needs, as the Python probe reports it.
+///
+/// The wizard never builds this list itself: one probe backs the CLI and the
+/// GUI, so the two can never disagree about what is missing or about the
+/// command that fixes it.
+#[tauri::command]
+async fn onboarding_probe(app: AppHandle) -> Result<Value, String> {
+    core_json(&app, vec!["onboarding".into(), "--json".into()]).await
+}
+
+/// Memory headroom and the local models that fit it.
+#[tauri::command]
+async fn onboarding_models(app: AppHandle) -> Result<Value, String> {
+    core_json(&app, vec!["onboarding".into(), "--models".into(), "--json".into()]).await
+}
+
+/// Install everything missing. Privileged steps run as one batch behind a
+/// single credential prompt, because `sudo -A` spawns its askpass helper fresh
+/// for every prompt and per-package installs would mean a dialog each.
+#[tauri::command]
+async fn onboarding_apply(app: AppHandle) -> Result<Value, String> {
+    core_json(
+        &app,
+        vec!["onboarding".into(), "--apply".into(), "--json".into()],
+    )
+    .await
+}
+
+/// Download one model and give it the alias the voice lane dispatches to.
+#[tauri::command]
+async fn onboarding_pull(app: AppHandle, model: String) -> Result<Value, String> {
+    core_json(
+        &app,
+        vec![
+            "onboarding".into(),
+            "--pull".into(),
+            model.into(),
+            "--json".into(),
+        ],
+    )
+    .await
+}
+
+async fn core_json(app: &AppHandle, arguments: Vec<OsString>) -> Result<Value, String> {
+    let output = run_core(app, "cli", arguments).await?;
+    if !output.success {
+        // The core prints its refusal on stderr; showing it is the difference
+        // between a wizard that helps and one that says "failed".
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = detail.trim();
+        return Err(if detail.is_empty() {
+            "setup step failed".into()
+        } else {
+            detail.chars().take(480).collect()
+        });
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode setup response: {error}"))
 }
 
 async fn run_core(
@@ -360,6 +432,78 @@ async fn run_core_with_stdin(
         stdout,
         stderr,
     })
+}
+
+fn stop_hub(state: &DesktopState) {
+    if let Ok(mut hub) = state.hub.lock() {
+        if let Some(child) = hub.take() {
+            let _ = child.kill();
+        }
+    }
+    if let Ok(mut address) = state.hub_address.lock() {
+        address.clear();
+    }
+}
+
+/// Serve the phone hub, and act on the one thing it cannot do itself.
+///
+/// The hub can read the run and decide a review on its own. It cannot toggle
+/// the wake listener, because the listener is a child of this process -- so it
+/// asks, over the same stdout-event contract the listener itself uses.
+fn start_hub(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
+    stop_hub(state);
+    let preferences = state
+        .preferences
+        .lock()
+        .map_err(|_| "settings lock poisoned")?
+        .clone();
+    if !preferences.settings.hub_enabled {
+        return Ok(());
+    }
+    let arguments = vec![
+        "--run-root".into(),
+        preferences.run_root.as_os_str().to_owned(),
+        "--preferences".into(),
+        state.preferences_path.as_os_str().to_owned(),
+    ];
+    let (mut receiver, child) = core_command(app, "hub", arguments)?
+        .spawn()
+        .map_err(|error| format!("start the phone hub: {error}"))?;
+    *state.hub.lock().map_err(|_| "hub lock poisoned")? = Some(child);
+
+    let hub_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = receiver.recv().await {
+            match event {
+                CommandEvent::Stdout(line) => {
+                    if let Ok(payload) = serde_json::from_slice::<Value>(&line) {
+                        match payload["type"].as_str() {
+                            Some("ready") => {
+                                if let Some(address) = payload["address"].as_str() {
+                                    if let Some(state) = hub_app.try_state::<DesktopState>() {
+                                        if let Ok(mut current) = state.hub_address.lock() {
+                                            *current = address.to_owned();
+                                        }
+                                    }
+                                }
+                            }
+                            Some("voice") => {
+                                let enabled = payload["enabled"].as_bool().unwrap_or(false);
+                                let _ = apply_listening(&hub_app, enabled);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                CommandEvent::Error(error) => {
+                    append_message(&hub_app, "sleipnir", error, "hub-error");
+                }
+                CommandEvent::Terminated(_) => break,
+                _ => {}
+            }
+        }
+    });
+    Ok(())
 }
 
 fn stop_voice_listener(state: &DesktopState) {
@@ -665,8 +809,20 @@ fn set_voice_settings(
 fn set_listening(
     app: AppHandle,
     enabled: bool,
-    state: State<'_, DesktopState>,
+    _state: State<'_, DesktopState>,
 ) -> Result<(), String> {
+    apply_listening(&app, enabled)
+}
+
+/// Turn the wake listener on or off, whoever asked.
+///
+/// Extracted from the command so the phone hub reaches exactly the same code
+/// path: a second implementation would be a second place for the preference,
+/// the child process and the orb to fall out of agreement.
+fn apply_listening(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let state = app
+        .try_state::<DesktopState>()
+        .ok_or("desktop state is unavailable")?;
     *state.listening.lock().map_err(|_| "voice lock poisoned")? = enabled;
     let mut preferences = state
         .preferences
@@ -676,12 +832,43 @@ fn set_listening(
     persist_preferences(&state.preferences_path, &preferences)?;
     drop(preferences);
     if enabled {
-        start_voice_listener(&app, &state)?;
+        start_voice_listener(app, &state)?;
     } else {
         stop_voice_listener(&state);
     }
     app.emit_to("orb", "listening-changed", enabled)
         .map_err(|error| format!("update voice listener: {error}"))
+}
+
+/// The address and token a phone needs to pair.
+///
+/// The token is handed to the operator's own screen on request and never
+/// emitted as an event, logged, or written into a dashboard snapshot -- the
+/// same rule the provider keys follow.
+#[tauri::command]
+async fn hub_pairing(app: AppHandle, state: State<'_, DesktopState>) -> Result<Value, String> {
+    let address = state
+        .hub_address
+        .lock()
+        .map_err(|_| "hub lock poisoned")?
+        .clone();
+    if address.is_empty() {
+        return Ok(json!({"running": false, "address": "", "token": ""}));
+    }
+    let output = run_core(
+        &app,
+        "cli",
+        vec!["hub-token".into()],
+    )
+    .await?;
+    if !output.success {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    Ok(json!({
+        "running": true,
+        "address": address,
+        "token": String::from_utf8_lossy(&output.stdout).trim(),
+    }))
 }
 
 #[tauri::command]
@@ -808,7 +995,11 @@ fn clear_history(state: State<'_, DesktopState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_app_settings(settings: AppSettings, state: State<'_, DesktopState>) -> Result<(), String> {
+fn set_app_settings(
+    app: AppHandle,
+    settings: AppSettings,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
     if !matches!(
         settings.color_scheme.as_str(),
         "orbit" | "index" | "glasshouse"
@@ -842,8 +1033,17 @@ fn set_app_settings(settings: AppSettings, state: State<'_, DesktopState>) -> Re
         .preferences
         .lock()
         .map_err(|_| "settings lock poisoned")?;
+    let hub_changed = preferences.settings.hub_enabled != settings.hub_enabled;
     preferences.settings = settings;
-    persist_preferences(&state.preferences_path, &preferences)
+    persist_preferences(&state.preferences_path, &preferences)?;
+    drop(preferences);
+    // Starting or stopping here rather than at next launch: a hub the
+    // operator just turned off must stop serving this screen now, not after a
+    // restart they may never perform.
+    if hub_changed {
+        start_hub(&app, &state)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -919,6 +1119,8 @@ async fn send_message(
         preferences.settings.provider_env.nvidia.clone().into(),
         "--ambient-provider".into(),
         preferences.voice.ambient_provider.clone().into(),
+        "--operator-name".into(),
+        preferences.voice.operator_name.clone().into(),
     ];
     if task_grant {
         arguments.push("--task-grant".into());
@@ -1267,6 +1469,8 @@ pub fn run() {
                 project_starting: Mutex::new(false),
                 history_loaded: Mutex::new(false),
                 voice_listener: Mutex::new(None),
+                hub: Mutex::new(None),
+                hub_address: Mutex::new(String::new()),
                 turn_in_flight: Mutex::new(false),
                 pending_approval: Mutex::new(None),
             });
@@ -1280,6 +1484,14 @@ pub fn run() {
                 let state = app.state::<DesktopState>();
                 if let Err(error) = start_voice_listener(app.handle(), &state) {
                     append_message(app.handle(), "sleipnir", error, "voice-error");
+                }
+            }
+            {
+                // start_hub returns immediately when the setting is off, so
+                // the guard lives in one place rather than at each caller.
+                let state = app.state::<DesktopState>();
+                if let Err(error) = start_hub(app.handle(), &state) {
+                    append_message(app.handle(), "sleipnir", error, "hub-error");
                 }
             }
             if env::args().any(|argument| argument == "--background") {
@@ -1335,12 +1547,18 @@ pub fn run() {
             handoff_instruction,
             speak_text,
             clear_history,
+            onboarding_probe,
+            onboarding_models,
+            onboarding_apply,
+            onboarding_pull,
+            hub_pairing,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Sleipnir desktop");
     app.run(|app, event| {
         if let RunEvent::Exit = event {
             if let Some(state) = app.try_state::<DesktopState>() {
+                stop_hub(&state);
                 stop_voice_listener(&state);
             }
         }

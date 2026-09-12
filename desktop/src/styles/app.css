@@ -1070,3 +1070,45 @@ input:focus-visible {
   .graph-nodes { grid-template-columns: repeat(2, 1fr); padding: 20px; }
   .dock button span { display: none; }
 }
+
+/* --- first-run setup ---------------------------------------------------- */
+/* The wizard is the first surface a new operator ever sees, so it is a single
+   centred column with one action at a time rather than the multi-module
+   workspace the rest of the app uses. */
+.setup-view { width: min(100%, 640px); padding: clamp(24px, 7vh, 72px) 0; display: flex; flex-direction: column; gap: 20px; }
+.setup-view__header h1 { margin: 0 0 8px; font-size: clamp(28px, 4vw, 38px); letter-spacing: -0.02em; }
+.setup-view__header p, .setup-view > p { margin: 0; color: var(--text-soft); line-height: 1.55; }
+.setup-view h2 { margin: 8px 0 0; font-size: 20px; letter-spacing: -0.01em; }
+
+.setup-view__status { display: flex; align-items: center; gap: 9px; color: var(--text-soft); }
+.setup-view__note { margin: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-soft); color: var(--text-soft); font-size: 14px; line-height: 1.5; }
+
+.setup-view__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.setup-view__list li { display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--radius-md); }
+.setup-view__list li.is-missing { background: var(--surface-soft); }
+.setup-view__list li.is-present { color: var(--text-faint); }
+.setup-view__list code { grid-column: 2; font-size: 12px; color: var(--text-faint); overflow-wrap: anywhere; }
+
+.setup-view__privileged { display: flex; align-items: center; gap: 9px; margin: 0; color: var(--text-soft); font-size: 14px; }
+.setup-view__headroom { margin: 0; color: var(--text-soft); font-variant-numeric: tabular-nums; }
+
+.setup-view__models { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.setup-view__models li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-soft); }
+.setup-view__models li.is-too-big { opacity: 0.5; }
+.setup-view__models strong { display: block; }
+.setup-view__models code { display: block; margin: 2px 0 4px; font-size: 12px; color: var(--text-soft); }
+.setup-view__models small { display: block; color: var(--text-faint); line-height: 1.45; }
+
+.setup-view__actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.setup-view button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 16px; border: 1px solid var(--signal); border-radius: 10px; background: var(--signal); color: var(--ink); font-weight: 650; cursor: pointer; }
+.setup-view button.is-secondary { border-color: var(--line-strong); background: transparent; color: var(--text-soft); font-weight: 500; }
+.setup-view button:disabled { opacity: 0.45; cursor: not-allowed; }
+.setup-view .spin { animation: setup-spin 1s linear infinite; }
+
+@keyframes setup-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .setup-view .spin { animation: none; } }
+
+/* --- phone hub pairing -------------------------------------------------- */
+.hub-pairing { display: flex; flex-direction: column; gap: 10px; }
+.hub-pairing input { font-variant-numeric: tabular-nums; }
+.hub-pairing__note { margin: 0; color: var(--text-faint); font-size: 13px; }

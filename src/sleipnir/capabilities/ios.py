@@ -107,6 +107,11 @@ def argv(
         # An IPA that is not signed cannot be installed or submitted. xtool's
         # --ipa and --sign flags are independent in 1.19.0.
         "ipa": ["dev", "build", "--sign", "--ipa"],
+        # SideStore, AltStore and TrollStore re-sign with the operator's own
+        # Apple ID on the device. Signing here would need Apple Developer
+        # authentication we may not have, and the signature would be thrown
+        # away by the installer regardless.
+        "ipa-unsigned": ["dev", "build", "--ipa"],
         "run": ["dev", "run"],
         "xcodeproj": ["dev", "generate-xcode-project"],
         "devices": ["devices"],
@@ -147,7 +152,7 @@ def run(
             "xtool's generate-xcode-project command does nothing on Linux; "
             "Sleipnir supports building the SwiftPM iOS app here, not opening Xcode projects"
         )
-    if action in {"build", "ipa", "run", "xcodeproj"}:
+    if action in {"build", "ipa", "ipa-unsigned", "run", "xcodeproj"}:
         missing = [name for name in ("Package.swift", "xtool.yml") if not (root / name).is_file()]
         if missing:
             raise IOSCapabilityError(

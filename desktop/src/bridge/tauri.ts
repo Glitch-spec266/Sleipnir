@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { SleipnirBridge } from ".";
-import type { AgentResponse, AppSettings, DashboardSnapshot, ReviewDecision, SpeechAudio, VoiceSettings } from "../domain/types";
+import type { AgentResponse, AppSettings, DashboardSnapshot, HubPairing, LocalModelReport, ReviewDecision, SetupRequirement, SetupStepResult, SpeechAudio, VoiceSettings } from "../domain/types";
 import type { InstructionRoute } from "../routing/intent";
 
 export function createTauriBridge(): SleipnirBridge {
@@ -22,5 +22,10 @@ export function createTauriBridge(): SleipnirBridge {
     handoffInstruction: (text: string) => invoke<void>("handoff_instruction", { text }),
     speak: (text: string) => invoke<SpeechAudio | null>("speak_text", { text }),
     clearHistory: () => invoke<void>("clear_history"),
+    probeSetup: () => invoke<SetupRequirement[]>("onboarding_probe"),
+    applySetup: () => invoke<SetupStepResult[]>("onboarding_apply"),
+    localModels: () => invoke<LocalModelReport>("onboarding_models"),
+    pullModel: (model: string) => invoke<SetupStepResult>("onboarding_pull", { model }),
+    hubPairing: () => invoke<HubPairing>("hub_pairing"),
   };
 }

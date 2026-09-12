@@ -1140,6 +1140,95 @@ def _setup_steps() -> list[tuple[str, str, bool]]:
     return steps + _playwright_steps()
 
 
+async def cmd_hub_token(args: argparse.Namespace) -> int:
+    """Print the phone hub's pairing token.
+
+    Printed to the operator's own terminal on request. The token is never
+    logged, audited, or included in any snapshot -- the same rule the provider
+    keys follow.
+    """
+    from sleipnir.hub import load_token
+
+    print(load_token())
+    return 0
+
+
+async def cmd_onboarding(args: argparse.Namespace) -> int:
+    """Report, or complete, everything a fresh install still needs.
+
+    The GUI wizard calls this with ``--json``, so both surfaces render the same
+    probe and neither can go stale relative to the other.
+    """
+    import json
+
+    from sleipnir import onboarding
+
+    if args.pull:
+        result = await onboarding.pull_model(args.pull)
+        payload = {"status": "ok" if result.ok else "error", "detail": result.detail}
+        print(json.dumps(payload) if args.json else result.detail)
+        return 0 if result.ok else 2
+
+    requirements = onboarding.probe()
+    if args.models:
+        space = onboarding.headroom()
+        options = await onboarding.model_options(space)
+        if args.json:
+            print(json.dumps({
+                "headroom": {
+                    "freeGib": round(space.free_gib, 1),
+                    "totalGib": round(space.total_gib, 1),
+                    "device": space.device,
+                    "accelerated": space.accelerated,
+                },
+                "options": [
+                    {
+                        "tier": option.tier, "model": option.model,
+                        "download": option.download, "fits": option.fits,
+                        "note": option.note,
+                    }
+                    for option in options
+                ],
+            }, separators=(",", ":")))
+            return 0
+        print(space.summary)
+        for option in options:
+            mark = "  " if option.fits else "x "
+            print(f"{mark}{option.tier:9} {option.model:16} {option.download:>8}  {option.note}")
+        return 0
+
+    if args.apply:
+        root = await onboarding.apply_root_steps(requirements)
+        results = list(await onboarding.apply_user_steps(requirements))
+        if root is not None:
+            results.insert(0, root)
+        if args.json:
+            print(json.dumps(
+                [{"id": r.id, "ok": r.ok, "detail": r.detail} for r in results],
+                separators=(",", ":"),
+            ))
+        else:
+            for result in results:
+                print(f"{'ok  ' if result.ok else 'FAIL'} {result.id}: {result.detail}")
+        return 0 if all(result.ok for result in results) else 2
+
+    if args.json:
+        print(json.dumps([
+            {
+                "id": item.id, "label": item.label, "present": item.present,
+                "detail": item.detail, "fix": item.fix, "needsRoot": item.needs_root,
+                "interactive": item.interactive,
+            }
+            for item in requirements
+        ], separators=(",", ":")))
+        return 0
+    for item in requirements:
+        print(f"{'ok     ' if item.present else 'MISSING'} {item.label}")
+        if not item.present and item.fix:
+            print(f"        $ {'sudo ' if item.needs_root else ''}{item.fix}")
+    return 0 if all(item.present for item in requirements) else 1
+
+
 async def cmd_setup(args: argparse.Namespace) -> int:
     """Do the one-time privileged install so no user has to hand-run sudo.
 
@@ -1620,6 +1709,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     setup_parser.set_defaults(func=cmd_setup)
 
+    onboarding_parser = subparsers.add_parser(
+        "onboarding", help="report or complete everything a fresh install needs"
+    )
+    onboarding_parser.add_argument("--json", action="store_true", help="machine-readable output")
+    onboarding_parser.add_argument(
+        "--apply", action="store_true",
+        help="install what is missing; privileged steps run as one batch behind one prompt",
+    )
+    onboarding_parser.add_argument(
+        "--models", action="store_true",
+        help="report memory headroom and the local models that fit it",
+    )
+    onboarding_parser.add_argument(
+        "--pull", metavar="MODEL", help="download a model and give it the local voice alias"
+    )
+    onboarding_parser.set_defaults(func=cmd_onboarding)
+
+    hub_token_parser = subparsers.add_parser(
+        "hub-token", help="print the phone hub pairing token"
+    )
+    hub_token_parser.set_defaults(func=cmd_hub_token)
+
     doctor_parser = subparsers.add_parser("doctor", help="report host capability status")
     doctor_parser.set_defaults(func=cmd_doctor)
 
@@ -1646,7 +1757,7 @@ def build_parser() -> argparse.ArgumentParser:
         "action",
         choices=[
             "doctor", "setup", "auth", "logout", "sdk", "sdk-remove", "new",
-            "build", "ipa", "run", "xcodeproj", "devices", "install",
+            "build", "ipa", "ipa-unsigned", "run", "xcodeproj", "devices", "install",
             "uninstall", "launch",
         ],
     )
