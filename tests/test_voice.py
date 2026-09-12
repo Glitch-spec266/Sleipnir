@@ -1099,3 +1099,73 @@ def test_the_reasoning_lane_asks_the_bare_question_then_shortens_the_answer(tmp_
     assert [message["role"] for message in reasoning["messages"]] == ["user"]
     assert reasoning["messages"][0]["content"] == "what is 17 times 24 plus 139"
     assert requests[1]["think"] is False
+
+
+# --- the look lane, the operator's name, and the age of history ------------
+
+
+def test_a_look_question_never_enters_the_tool_loop() -> None:
+    """MEASURED: this took 43.5 s and twelve steps before the lane existed."""
+    from sleipnir.voice.routing import is_observation
+
+    assert is_observation("what's on my screen right now")
+    assert is_observation("show me what is on my screen")
+    assert is_observation("what does this error dialog say")
+    # A second verb survives the look-opener strip, so real work still routes.
+    assert not is_observation("tell me what is on screen then click submit")
+    assert not is_observation("answer the question on my screen")
+    assert not is_observation("hey how are you")
+
+
+def test_the_look_lane_sends_no_tools_and_answers_in_one_step(tmp_path: Path) -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {"content": "A terminal and a browser."}})
+
+    class Observer:
+        async def capture(self, *, region: object | None = None) -> bytes:
+            return b"frame"
+
+    agent = LocalDesktopAgent(transport=httpx.MockTransport(handler), observer=Observer())
+    reply = asyncio.run(
+        agent.respond(
+            "what's on my screen right now",
+            workspace=tmp_path,
+            model="jarvis",
+            permission_mode="ask",
+            operator_name="Prahlad",
+        )
+    )
+
+    assert reply.steps == 1
+    assert reply.text == "A terminal and a browser."
+    assert len(seen) == 1
+    assert "tools" not in seen[0]
+    assert "Prahlad" in seen[0]["messages"][0]["content"]
+
+
+def test_the_name_is_absent_when_none_is_configured() -> None:
+    from sleipnir.voice.local_agent import with_operator
+
+    assert with_operator("SYS", "") == "SYS"
+    assert with_operator("SYS", "   ") == "SYS"
+    assert "Prahlad" in with_operator("SYS", "Prahlad")
+
+
+def test_history_older_than_the_conversation_is_not_replayed() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sleipnir.gui_agent import recent_turns
+
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+    entries = [
+        {"role": "operator", "text": "open that website", "at": (now - timedelta(days=2)).isoformat()},
+        {"role": "operator", "text": "what is the time", "at": (now - timedelta(minutes=5)).isoformat()},
+        {"role": "operator", "text": "no timestamp at all"},
+    ]
+
+    kept = recent_turns(entries, now=now)
+
+    assert [entry["text"] for entry in kept] == ["what is the time"]

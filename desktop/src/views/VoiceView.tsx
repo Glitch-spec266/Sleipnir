@@ -85,6 +85,11 @@ export function VoiceView({ snapshot, onSetListening, onSave }: VoiceViewProps) 
               <small>Activated by “Hey, {draft.wakeName || "…"}”</small>
             </label>
             <label>
+              <span>Your name</span>
+              <input aria-label="Your name" value={draft.operatorName} onChange={(event) => patch("operatorName", event.target.value)} />
+              <small>{draft.operatorName ? `Addressed as ${draft.operatorName}` : "Leave blank and it will not know who you are"}</small>
+            </label>
+            <label>
               <span>Push-to-talk shortcut</span>
               <input aria-label="Push-to-talk shortcut" value={draft.pushToTalkShortcut} onChange={(event) => patch("pushToTalkShortcut", event.target.value)} />
             </label>

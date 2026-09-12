@@ -38,7 +38,7 @@ from sleipnir.voice.dispatch import (
 )
 from sleipnir.schema import Tier
 from sleipnir.voice.relay import AmbientRelay
-from sleipnir.voice.routing import needs_reasoning, needs_screen, needs_tools
+from sleipnir.voice.routing import is_observation, needs_reasoning, needs_screen, needs_tools
 from sleipnir.voice.providers import VoiceProviderError
 from sleipnir.voice.relay import WorkRelay
 
@@ -196,6 +196,36 @@ CHAT_TOKENS = 320
 # long prompt. Bounded on purpose: history is the one thing on this lane that
 # could grow without limit.
 CHAT_HISTORY_TURNS = 8
+
+# Reading the screen is one vision call, not a tool loop. MEASURED 2026-09-11:
+# "what's on my screen right now" took 43.5 s and twelve steps through the tool
+# loop and produced no answer; the same frame answered in a single call in
+# roughly two seconds. The prompt forbids claiming action because the loop's
+# failure mode was narrating browser clicks it had made by accident.
+LOOK_SYSTEM = (
+    "You are JARVIS, the operator's assistant, speaking aloud. The image "
+    "attached is the operator's screen as it is right now. Answer their "
+    "question about it in one or two short spoken sentences. Describe only "
+    "what you can actually see; if text is too small to read, say so rather "
+    "than guessing. You have no tools on this turn: never say you have "
+    "opened, clicked, scrolled or changed anything, and never mention a page "
+    "or application that is not visible in this image."
+)
+LOOK_TOKENS = 320
+
+
+def with_operator(system: str, operator_name: str) -> str:
+    """Prefix a system prompt with the operator's name when one is configured.
+
+    A name is ordinary preference data, not a credential, so it travels in
+    ``preferences.json`` like the wake word. Without it the assistant answers
+    "I don't have access to your personal information" to "what is my name",
+    which is true and useless.
+    """
+    name = " ".join((operator_name or "").split())
+    if not name:
+        return system
+    return f"You are speaking with {name}. Address them by name when it is natural.\n\n{system}"
 
 
 _THINK_BLOCK = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
@@ -640,6 +670,7 @@ class LocalDesktopAgent:
         permission_mode: str,
         task_grant: bool = False,
         history: Sequence[Mapping[str, Any]] | None = None,
+        operator_name: str = "",
     ) -> LocalAgentReply:
         clean = prompt.strip()
         if not clean:
@@ -662,8 +693,12 @@ class LocalDesktopAgent:
                 # operator wait, so it has to actually hand off. Going through
                 # the tool keeps the delegation on the audited path.
                 return await self._escalate(clean, model=model, run_tool=run_tool)
+        if is_observation(clean):
+            return await self._look(clean, model=model, operator_name=operator_name)
         if not needs_tools(clean):
-            return await self._chat(clean, model=model, history=history)
+            return await self._chat(
+                clean, model=model, history=history, operator_name=operator_name
+            )
         opening: dict[str, Any] = (
             await self._visual_message(clean)
             if needs_screen(clean)
@@ -679,8 +714,12 @@ class LocalDesktopAgent:
             if menu
             else LOCAL_AGENT_SYSTEM
         )
+        # The tool loop had no history at all, so a follow-up ("do that again
+        # for the other one") reached the model with no referent and it asked
+        # about the screen instead.
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system},
+            {"role": "system", "content": with_operator(system, operator_name)},
+            *_conversation_turns(history),
             opening,
         ]
         try:
@@ -900,6 +939,7 @@ class LocalDesktopAgent:
         *,
         model: str,
         history: Sequence[Mapping[str, Any]] | None = None,
+        operator_name: str = "",
     ) -> LocalAgentReply:
         """Hold a conversation in exactly one call: no tools, no frame, no loop.
 
@@ -908,8 +948,9 @@ class LocalDesktopAgent:
         tool, which is what made a greeting take twenty seconds.
         """
         prior = _conversation_turns(history)
+        chat_system = with_operator(CHAT_SYSTEM, operator_name)
         text, _ = await self._single_turn(
-            content, model=model, system=CHAT_SYSTEM, think=False,
+            content, model=model, system=chat_system, think=False,
             num_predict=CHAT_TOKENS, prior=prior,
         )
         if not text:
@@ -917,10 +958,37 @@ class LocalDesktopAgent:
             # so every greeting fell through to the placeholder. A reply this
             # short is still fast with a bounded scratchpad.
             text, _ = await self._single_turn(
-                content, model=model, system=CHAT_SYSTEM, think=True,
+                content, model=model, system=chat_system, think=True,
                 num_predict=CHAT_TOKENS, prior=prior,
             )
         return LocalAgentReply(text=text or "I'm here.", model=model, steps=1)
+
+    async def _look(
+        self, content: str, *, model: str, operator_name: str = ""
+    ) -> LocalAgentReply:
+        """Read the screen in one vision call: no tools, no loop, no browser."""
+        message = await self._visual_message(content)
+        async with httpx.AsyncClient(transport=self.transport, timeout=120) as client:
+            response = await client.post(
+                "http://127.0.0.1:11434/api/chat",
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": with_operator(LOOK_SYSTEM, operator_name)},
+                        message,
+                    ],
+                    "stream": False,
+                    "think": False,
+                    "options": {"temperature": 0.2, "num_predict": LOOK_TOKENS},
+                },
+            )
+            response.raise_for_status()
+            text = strip_thinking(str(response.json().get("message", {}).get("content", "")))
+        return LocalAgentReply(
+            text=text or "I can see your screen but could not describe it.",
+            model=model,
+            steps=1,
+        )
 
     async def _visual_message(
         self, content: str, *, region: tuple[int, int, int, int] | None = None
@@ -934,6 +1002,6 @@ class LocalDesktopAgent:
 
 
 __all__ = [
-    "CHAT_SYSTEM", "LOCAL_AGENT_SYSTEM", "LocalCapabilityExceeded", "SHORTEN_PROMPT", "LocalAgentReply", "LocalDesktopAgent", "LocalToolbox",
+    "CHAT_SYSTEM", "LOCAL_AGENT_SYSTEM", "LOOK_SYSTEM", "with_operator", "LocalCapabilityExceeded", "SHORTEN_PROMPT", "LocalAgentReply", "LocalDesktopAgent", "LocalToolbox",
     "MAX_AGENT_STEPS", "ScreenObserver", "TOOLS", "strip_thinking",
 ]

@@ -28,6 +28,8 @@ class VoiceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     wake_name: str = "Sleipnir"
+    #: What the assistant calls the operator. Preference data, never a secret.
+    operator_name: str = Field(default="", max_length=64)
     local_wake: bool = True
     start_at_login: bool = False
     push_to_talk_shortcut: str = Field(

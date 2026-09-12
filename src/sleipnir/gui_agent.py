@@ -7,8 +7,8 @@ import asyncio
 import json
 import os
 import sys
-from collections.abc import Mapping
-from datetime import UTC, datetime
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,35 @@ MAX_INSTRUCTION_BYTES = 1_048_576
 # Bounded on purpose. The local conversation lane is the one place where a
 # growing transcript could quietly become a growing prompt.
 CONVERSATION_TURNS = 8
+# History is a *conversation*, and a conversation has an end. Without an age
+# bound the last eight entries were simply the last eight ever written, so a
+# session from two days ago was replayed as this turn's context and the
+# assistant answered about a browser tab that had been closed since.
+CONVERSATION_MAX_AGE = timedelta(hours=6)
+
+
+def recent_turns(
+    entries: Sequence[Mapping[str, Any]], *, now: datetime, max_age: timedelta = CONVERSATION_MAX_AGE
+) -> list[Mapping[str, Any]]:
+    """The tail of history that is still the same conversation.
+
+    ``now`` is an argument rather than a clock read so the bound is testable
+    without waiting, the same reason the wake detector takes one.
+    """
+    fresh: list[Mapping[str, Any]] = []
+    for entry in entries:
+        stamp = str(entry.get("at", ""))
+        try:
+            at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            # An entry with no usable timestamp cannot be shown to be recent,
+            # and stale context is worse than none.
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=UTC)
+        if now - at <= max_age:
+            fresh.append(entry)
+    return fresh[-CONVERSATION_TURNS:]
 
 
 def _activated_provider(
@@ -62,6 +91,7 @@ async def handle_instruction(
     local_agent: LocalDesktopAgent | None = None,
     work: WorkRelay | None = None,
     history: EncryptedHistory | None = None,
+    operator_name: str = "",
 ) -> dict[str, Any]:
     clean = text.strip()
     if not clean:
@@ -87,7 +117,7 @@ async def handle_instruction(
     # Read before the append: the operator's current words are the prompt, not
     # prior context, and echoing them back as history makes a model answer the
     # question twice.
-    prior = history.read(limit=64)[-CONVERSATION_TURNS:] if history else []
+    prior = recent_turns(history.read(limit=64), now=datetime.now(UTC)) if history else []
     if history:
         history.append(
             {
@@ -113,6 +143,7 @@ async def handle_instruction(
                 permission_mode=permission_mode,
                 task_grant=task_grant,
                 history=prior,
+                operator_name=operator_name,
             )
             result = {
                 "status": "complete",
@@ -181,6 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
     )
     parser.add_argument("--session-id")
+    # A name, not a credential: it travels with the wake word in preferences.
+    parser.add_argument("--operator-name", default="")
     parser.add_argument("--history", type=Path)
     parser.add_argument("--history-key", type=Path)
     parser.add_argument("--openrouter-env", default="OPENROUTER_API_KEY")
@@ -220,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
                     "nvidia-nim": args.nvidia_env,
                 },
                 history=history,
+                operator_name=args.operator_name,
             )
         )
     except Exception as error:  # noqa: BLE001 - native boundary returns a clean envelope

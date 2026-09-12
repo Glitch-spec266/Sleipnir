@@ -89,7 +89,7 @@ _ACTION_VERBS = (
     r"play|pause|resume|skip|mute|"
     r"send|email|message|reply|post|submit|download|upload|"
     r"copy|paste|select|delete|rename|move|save|print|"
-    r"run|execute|check|show\s+me|pull\s+up|bring\s+up|fill\s+in|fill\s+out|"
+    r"run|execute|check|show\s+me|pull\s+up|bring\s+up|fill\s+in|fill\s+out|answer|"
     r"make|draw|generate|prepare|produce|compose|summaris\w*|summariz\w*|"
     r"translate|book|order|schedule|add|remove|update|set)"
 )
@@ -137,6 +137,33 @@ def needs_tools(text: str) -> bool:
         or _ACTION_PATTERN.search(clean)
         or _DELEGATION_PATTERN.search(clean)
     )
+
+
+# A look-question is a request *for* the screen, not a request to act on it.
+# MEASURED 2026-09-11: "what's on my screen right now" entered the twelve-step
+# tool loop, re-fetched the frame it had already been handed, then wandered
+# into browser_scroll/browser_click_text/browser_click and returned no answer
+# after 43.5 s. Sixteen action tools in reach of a 4B model is the whole cause.
+_ANY_ACTION = re.compile(rf"\b{_ACTION_VERBS}\b", re.IGNORECASE)
+_LOOK_OPENER = re.compile(
+    r"^(?:show\s+me|tell\s+me|read\s+(?:me\s+)?|look\s+at|describe|check)\b",
+    re.IGNORECASE,
+)
+
+
+def is_observation(text: str) -> bool:
+    """True when the operator wants the screen *read*, not acted upon.
+
+    The opener is stripped before the action scan so "show me what's on my
+    screen" is a look while "tell me what's on screen then click submit" still
+    reaches the tool loop: the second verb survives the strip.
+    """
+    clean = " ".join(text.split())
+    if not clean or not _SCREEN_PATTERN.search(clean):
+        return False
+    if _WORK_PATTERN.search(clean) or _DELEGATION_PATTERN.search(clean):
+        return False
+    return not _ANY_ACTION.search(_LOOK_OPENER.sub("", clean, count=1))
 
 
 def needs_reasoning(text: str) -> bool:
@@ -202,5 +229,5 @@ def route_utterance(
 
 __all__ = [
     "RouteDecision", "RouteMode", "choose_ambient_provider", "is_smalltalk",
-    "needs_reasoning", "needs_screen", "needs_tools", "route_utterance",
+    "is_observation", "needs_reasoning", "needs_screen", "needs_tools", "route_utterance",
 ]
