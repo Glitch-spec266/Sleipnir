@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from sleipnir import platform
 from sleipnir.hub import DEFAULT_PORT, HubConfig, MAX_TASKS, decide, load_token, serve
 
 
@@ -106,7 +107,7 @@ def test_the_token_file_is_never_world_readable(tmp_path: Path) -> None:
 
     first = load_token(path)
     assert first == load_token(path)
-    assert path.stat().st_mode & 0o077 == 0
+    assert platform.path_is_private(path)
     assert len(first) >= 24
 
 

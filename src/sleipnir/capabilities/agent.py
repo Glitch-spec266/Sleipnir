@@ -40,6 +40,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from sleipnir import platform
+
 try:  # resource is absent on Windows; the credential agent is Unix-only today.
     import resource
 except ImportError:  # pragma: no cover - Windows import surface
@@ -131,10 +133,12 @@ class _ProtectedBuffer:
             import ctypes
 
             self._address = ctypes.addressof(ctypes.c_char.from_buffer(self._mapping))
-            libc = ctypes.CDLL(None, use_errno=True)
-            if libc.mlock(ctypes.c_void_p(self._address), ctypes.c_size_t(max(1, self._length))):
-                errno = ctypes.get_errno()
-                raise AgentError(f"could not lock credential memory (errno {errno})")
+            try:
+                platform.lock_memory(self._address, max(1, self._length))
+            except OSError as error:
+                raise AgentError(
+                    f"could not lock credential memory ({error.args[0]})"
+                ) from error
             if hasattr(self._mapping, "madvise") and hasattr(mmap, "MADV_DONTDUMP"):
                 self._mapping.madvise(mmap.MADV_DONTDUMP)
             self._mapping[: self._length] = value
@@ -158,11 +162,7 @@ class _ProtectedBuffer:
         allocation = max(1, self._length)
         self._mapping[:allocation] = b"\0" * allocation
         try:
-            import ctypes
-
-            ctypes.CDLL(None, use_errno=True).munlock(
-                ctypes.c_void_p(self._address), ctypes.c_size_t(allocation)
-            )
+            platform.unlock_memory(self._address, allocation)
         finally:
             self._mapping.close()
             self._length = 0
@@ -193,17 +193,14 @@ class _Entry:
         return f"<_Entry len={len(self.buffer)}>"
 
 
-def _peer_credentials(conn: socket.socket) -> tuple[int | None, int]:
-    """The pid/uid on the other end, from the kernel rather than the caller."""
-    if hasattr(socket, "SO_PEERCRED"):
-        raw = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-        _pid, uid, _gid = struct.unpack("3i", raw)
-        return _pid, uid
-    getpeereid = getattr(conn, "getpeereid", None)
-    if getpeereid is not None:  # macOS and BSD
-        uid, _gid = getpeereid()
-        return None, int(uid)
-    raise OSError("peer credentials are unavailable on this platform")
+def _peer_credentials(conn) -> tuple[int | None, str]:
+    """The pid/uid on the other end, from the kernel rather than the caller.
+
+    Returns the user id as a string because Windows identifies an account by
+    SID, not by a small integer; the only thing either platform does with it
+    is compare it against this process's own.
+    """
+    return platform.agent_peer_credentials(conn)
 
 
 def _ancestor_is_worker(pid: int | None) -> bool:
@@ -261,11 +258,18 @@ class Agent:
         self._store: dict[str, _Entry] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._server: socket.socket | None = None
+        self._server = None
 
     # -- lifecycle ---------------------------------------------------------
 
-    def _bind(self) -> socket.socket:
+    def _bind(self):
+        if not platform.agent_endpoint_is_filesystem_path():
+            # A named pipe has no directory to lock down and no stale file to
+            # unlink: the name is owned by the running process, and the ACL
+            # travels with the pipe rather than with a path.
+            return platform.agent_listen(
+                self.socket_path, backlog=16, timeout=_SWEEP_INTERVAL_S
+            )
         folder = self.socket_path.parent
         if folder.exists() and (folder.is_symlink() or not folder.is_dir()):
             raise AgentError(f"unsafe credential-agent socket directory: {folder}")
@@ -283,16 +287,7 @@ class Agent:
             if _reachable(self.socket_path):
                 raise AgentError(f"a Sleipnir agent is already listening on {self.socket_path}")
             self.socket_path.unlink()
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        old_mask = os.umask(0o077)
-        try:
-            server.bind(str(self.socket_path))
-        finally:
-            os.umask(old_mask)
-        os.chmod(self.socket_path, 0o600)
-        server.listen(16)
-        server.settimeout(_SWEEP_INTERVAL_S)
-        return server
+        return platform.agent_listen(self.socket_path, backlog=16, timeout=_SWEEP_INTERVAL_S)
 
     def serve_forever(self) -> None:
         _protect_process_memory()
@@ -301,7 +296,7 @@ class Agent:
             while not self._stop.is_set():
                 try:
                     conn, _ = self._server.accept()
-                except socket.timeout:
+                except TimeoutError:
                     self.sweep()
                     continue
                 except OSError:
@@ -313,16 +308,16 @@ class Agent:
             self.drop_all()
             if self._server is not None:
                 self._server.close()
-            self.socket_path.unlink(missing_ok=True)
+            if platform.agent_endpoint_is_filesystem_path():
+                self.socket_path.unlink(missing_ok=True)
 
     def shutdown(self) -> None:
         self._stop.set()
         # Nudge accept() out of its timeout rather than waiting the full interval.
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as poke:
-                poke.settimeout(0.5)
-                poke.connect(str(self.socket_path))
-        except OSError:
+            with platform.agent_connect(self.socket_path, 0.5):
+                pass
+        except (OSError, TimeoutError):
             pass
 
     # -- store -------------------------------------------------------------
@@ -352,10 +347,10 @@ class Agent:
 
     # -- protocol ----------------------------------------------------------
 
-    def _serve_one(self, conn: socket.socket) -> None:
+    def _serve_one(self, conn) -> None:
         try:
             peer_pid, peer_uid = _peer_credentials(conn)
-            if peer_uid != os.getuid():
+            if peer_uid != platform.current_user_id():
                 _send(conn, "ERR peer uid mismatch")
                 return
             if _ancestor_is_worker(peer_pid):
@@ -435,14 +430,14 @@ class Agent:
         return "ERR unknown verb"
 
 
-def _send(conn: socket.socket, message: str) -> None:
+def _send(conn, message: str) -> None:
     try:
         conn.sendall(message.encode("utf-8")[:MAX_RESPONSE_LINE_BYTES] + b"\n")
     except OSError:
         pass
 
 
-def _recv_line(conn: socket.socket, *, limit: int = MAX_RESPONSE_LINE_BYTES) -> str | None:
+def _recv_line(conn, *, limit: int = MAX_RESPONSE_LINE_BYTES) -> str | None:
     conn.settimeout(5.0)
     chunks = bytearray()
     while b"\n" not in chunks:
@@ -450,7 +445,7 @@ def _recv_line(conn: socket.socket, *, limit: int = MAX_RESPONSE_LINE_BYTES) -> 
             return None
         try:
             block = conn.recv(4096)
-        except (OSError, socket.timeout):
+        except (OSError, TimeoutError):
             return None
         if not block:
             return None
@@ -460,12 +455,10 @@ def _recv_line(conn: socket.socket, *, limit: int = MAX_RESPONSE_LINE_BYTES) -> 
 
 def _reachable(path: Path) -> bool:
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
-            probe.settimeout(0.5)
-            probe.connect(str(path))
+        with platform.agent_connect(path, 0.5) as probe:
             probe.sendall(b"PING\n")
             return bool(probe.recv(64))
-    except OSError:
+    except (OSError, TimeoutError):
         return False
 
 
@@ -479,12 +472,10 @@ class AgentClient:
         if len(line.encode("utf-8")) > MAX_REQUEST_LINE_BYTES:
             raise AgentError("credential-agent request is too large")
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-                conn.settimeout(10.0)
-                conn.connect(str(self.socket_path))
+            with platform.agent_connect(self.socket_path, 10.0) as conn:
                 conn.sendall(line.encode("utf-8") + b"\n")
                 reply = _recv_line(conn)
-        except OSError as error:
+        except (OSError, TimeoutError) as error:
             raise AgentError(f"no Sleipnir agent at {self.socket_path}") from error
         if reply is None:
             raise AgentError("the Sleipnir agent closed the connection")

@@ -18,6 +18,8 @@ from pathlib import Path
 
 from sleipnir.capabilities import audit
 
+from sleipnir import platform
+
 DEFAULT_DIR = Path.home() / ".sleipnir" / "clipboard"
 MAX_CLIPBOARD_BYTES = 50 * 1024 * 1024
 
@@ -90,10 +92,15 @@ def read(*, destination_dir: Path = DEFAULT_DIR) -> ClipboardPayload:
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = destination_dir / f"clipboard-{uuid.uuid4().hex}{suffix}"
         with destination.open("xb") as handle:
-            os.chmod(handle.fileno(), 0o600)
+            # chmod-by-descriptor is POSIX-only, and the mode it sets means
+            # nothing on Windows: the attachment inherits the directory's ACL
+            # and would be readable by every local account.
+            if os.chmod in os.supports_fd:
+                os.chmod(handle.fileno(), 0o600)
             handle.write(body)
             handle.flush()
             os.fsync(handle.fileno())
+        platform.make_path_private(destination)
         audit.record(
             "clipboard.image_read",
             {"mime_type": mime_type, "bytes": len(body), "path": str(destination)},

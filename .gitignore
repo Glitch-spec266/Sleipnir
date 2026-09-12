@@ -37,3 +37,10 @@ graphify-out/.graphify_root
 graphify-out/cache/
 graphify-out/*.sig
 graphify-out/20??-??-??/
+
+# Machine-specific: which backends this host actually has.
+# sleipnir.example.toml is the template that ships.
+sleipnir.toml
+
+# Firebase Hosting deploy cache.
+.firebase/

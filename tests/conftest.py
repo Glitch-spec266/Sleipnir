@@ -111,3 +111,34 @@ def make_junction(link: Path, target: Path) -> None:
     import _winapi
 
     _winapi.CreateJunction(str(target), str(link))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Report "this account may not create symlinks" as skipped, not failed.
+
+    Several guards are proved by planting a symlink and checking the code
+    refuses to follow it. Creating one on Windows needs
+    SeCreateSymbolicLinkPrivilege, which a normal account does not hold and
+    Developer Mode grants -- so on a stock install these tests cannot run at
+    all. Reporting them as failures would bury real regressions in noise;
+    reporting them as passes would be a lie. They are skipped, with the reason
+    named, and they still run in CI on Linux where the guard matters most.
+
+    Scoped as narrowly as it can be: only WinError 1314, only from the link
+    call itself. Any other OSError still fails.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    error = getattr(call, "excinfo", None)
+    if report.when != "call" or error is None:
+        return
+    value = error.value
+    if isinstance(value, OSError) and getattr(value, "winerror", None) == 1314:
+        report.outcome = "skipped"
+        report.longrepr = (
+            str(item.path),
+            item.location[1] + 1,
+            "Skipped: creating a symlink needs SeCreateSymbolicLinkPrivilege "
+            "(enable Developer Mode or run elevated to exercise this guard)",
+        )

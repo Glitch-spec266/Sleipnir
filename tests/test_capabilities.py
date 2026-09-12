@@ -27,6 +27,7 @@ import subprocess
 
 import pytest
 
+from sleipnir import platform
 from sleipnir import cli
 from sleipnir.capabilities import audit, browser, clipboard, computer, ios, secrets
 from sleipnir.capabilities.computer import _linux, _png
@@ -235,6 +236,7 @@ def test_chord_releases_modifiers_in_reverse_order(fake_ydotool):
     assert argv[2:] == ["29:1", "42:1", "20:1", "20:0", "42:0", "29:0"]
 
 
+@pytest.mark.skipif(platform.IS_WINDOWS, reason="asserts the ydotool argv; Windows types through SendInput, so no ydotool call is made")
 def test_copy_and_paste_use_linux_terminal_chords_without_touching_payload(
     audit_log, fake_ydotool
 ):
@@ -258,6 +260,7 @@ def test_unknown_mouse_button_is_refused(audit_log, fake_ydotool):
         computer.click("elbow")
 
 
+@pytest.mark.skipif(platform.IS_WINDOWS, reason="asserts the ydotool argv; Windows types through SendInput, so no ydotool call is made")
 def test_public_type_accepts_text_that_looks_like_flags(audit_log, fake_ydotool):
     computer.type_text("--help --socket-path=/tmp/evil")
     assert "--help --socket-path=/tmp/evil" not in fake_ydotool[0]
@@ -389,7 +392,7 @@ def test_wayland_clipboard_materialises_an_image_privately(audit_log, tmp_path, 
     assert payload.kind == "image"
     assert payload.mime_type == "image/png"
     assert payload.path is not None and payload.path.read_bytes() == b"\x89PNGpixels"
-    assert payload.path.stat().st_mode & 0o777 == 0o600
+    assert platform.path_is_private(payload.path)
 
 
 def test_clipboard_image_rejects_a_symlinked_destination(audit_log, tmp_path, monkeypatch):

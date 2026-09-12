@@ -29,11 +29,13 @@ import shlex
 import shutil
 import tempfile
 import subprocess  # nosec B404 - fixed argv probes, never shell
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from collections.abc import Mapping, Sequence
 
 import httpx
+
+from sleipnir import platform
 
 #: Where the local-model family lives. The *family* is a Sleipnir decision --
 #: it must be vision-capable, because reading the operator's screen is the
@@ -225,6 +227,66 @@ def alias_installed(alias: str = LOCAL_ALIAS) -> bool:
     )
 
 
+def _input_requirement() -> Requirement:
+    """Whether the assistant can type and click, however this platform does it.
+
+    ``ydotool`` is the Linux answer, not the question. Windows injects through
+    SendInput with nothing to install, so searching PATH for a binary reports a
+    present capability as missing -- and offers no package, because none exists.
+    """
+    try:
+        from sleipnir.capabilities.computer import probe as _probe
+
+        found = _probe()
+    except Exception:  # noqa: BLE001 - a probe that cannot run means "absent"
+        found = None
+    if found is not None and found.input_injection:
+        return Requirement(
+            id="ydotool",
+            label="Input control (lets the assistant type and click for you)",
+            present=True,
+            detail="SendInput" if platform.IS_WINDOWS else "ydotool",
+        )
+    return _system_requirement(
+        "ydotool",
+        "ydotool (lets the assistant type and click for you)",
+        ("ydotool",),
+        {},
+        "ydotool",
+    )
+
+
+def _screenshot_requirement() -> Requirement:
+    """Ask the desktop backend what it would actually invoke to capture a screen.
+
+    Returns "present" whenever the backend names a tool -- an installed binary
+    on Linux, the built-in GDI path on Windows -- and falls back to the Linux
+    package suggestion only when there is genuinely nothing to use.
+    """
+    tool = ""
+    try:
+        from sleipnir.capabilities.computer import probe as _probe
+
+        tool = _probe().screenshot_tool or ""
+    except Exception:  # noqa: BLE001 - a probe that cannot run means "absent"
+        tool = ""
+    if tool:
+        return Requirement(
+            id="screenshot",
+            label="Screenshot tool (lets the assistant see the screen)",
+            present=True,
+            detail=tool,
+            fix="",
+        )
+    return _system_requirement(
+        "screenshot",
+        "Screenshot tool (lets the assistant see the screen)",
+        ("grim", "spectacle", "gnome-screenshot"),
+        {},
+        "grim",
+    )
+
+
 def probe(environment: Mapping[str, str] | None = None) -> list[Requirement]:
     """Everything a new install is missing, in the order it should be fixed."""
     environment = os.environ if environment is None else environment
@@ -256,24 +318,32 @@ def probe(environment: Mapping[str, str] | None = None) -> list[Requirement]:
             "imagemagick",
         )
     )
-    items.append(
-        _system_requirement(
-            "screenshot",
-            "Screenshot tool (lets the assistant see the screen)",
-            ("grim", "spectacle", "gnome-screenshot"),
-            {},
-            "grim",
-        )
+    # Not a binary search: some platforms ship screen capture in the backend
+    # itself (Windows draws through GDI), and looking only for `grim` there
+    # reports "missing" for a capability that is present -- with no package to
+    # suggest, because there is nothing to install. `doctor` already asks the
+    # backend this question; the wizard asks the same one so the two agree.
+    items.append(_screenshot_requirement())
+    whisper = _system_requirement(
+        "whisper",
+        "whisper.cpp (transcribes your speech on this machine)",
+        ("whisper-cli", "whisper-cpp"),
+        {"apt-get": "whisper.cpp", "dnf": "whisper-cpp"},
+        "whisper.cpp",
     )
-    items.append(
-        _system_requirement(
-            "whisper",
-            "whisper.cpp (transcribes your speech on this machine)",
-            ("whisper-cli", "whisper-cpp"),
-            {"apt-get": "whisper.cpp", "dnf": "whisper-cpp"},
-            "whisper.cpp",
+    if not whisper.present and not whisper.fix:
+        # No package manager here, which is not the same as no way to install
+        # it: the project publishes a Windows build. Saying "missing" with a
+        # blank fix is what turns a wizard back into an afternoon.
+        whisper = replace(
+            whisper,
+            fix=(
+                "Download whisper-bin-x64.zip from "
+                "https://github.com/ggml-org/whisper.cpp/releases and put "
+                "whisper-cli.exe on PATH"
+            ),
         )
-    )
+    items.append(whisper)
 
     model = resolve_whisper_model(environment)
     command, target = whisper_model_fix(environment)
@@ -303,16 +373,11 @@ def probe(environment: Mapping[str, str] | None = None) -> list[Requirement]:
         )
     )
 
-    items.append(
-        _system_requirement(
-            "ydotool",
-            "ydotool (lets the assistant type and click for you)",
-            ("ydotool",),
-            {},
-            "ydotool",
-        )
-    )
-    writable = os.access("/dev/uinput", os.W_OK)
+    items.append(_input_requirement())
+    # /dev/uinput is how Linux grants input injection. Windows reaches
+    # SendInput without a device node, so there is nothing to permit and the
+    # wizard should not invent a step.
+    writable = platform.IS_WINDOWS or os.access("/dev/uinput", os.W_OK)
     items.append(
         Requirement(
             id="uinput",

@@ -304,3 +304,142 @@ gdi32.DeleteDC.restype = w.BOOL
 
 
 __all__ = [name for name in dir() if not name.startswith("_")]
+
+
+# ---------------------------------------------------------------------------
+# Named pipes and token identity -- capabilities/agent.py's credential cache
+# ---------------------------------------------------------------------------
+#
+# CPython does not expose AF_UNIX on Windows (the OS has supported it since
+# Windows 10 1803, the interpreter has not), so the credential agent's
+# transport is a named pipe. A pipe carries the two things the POSIX socket
+# was chosen for: an ACL that can name exactly one account, and a peer
+# process id the server reads from the kernel rather than from the client.
+
+advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+
+PIPE_ACCESS_DUPLEX = 0x00000003
+FILE_FLAG_OVERLAPPED = 0x40000000
+FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
+PIPE_TYPE_BYTE = 0x00000000
+PIPE_READMODE_BYTE = 0x00000000
+PIPE_WAIT = 0x00000000
+PIPE_REJECT_REMOTE_CLIENTS = 0x00000008
+PIPE_UNLIMITED_INSTANCES = 255
+GENERIC_READ = 0x80000000
+GENERIC_WRITE = 0x40000000
+OPEN_EXISTING = 3
+ERROR_PIPE_CONNECTED = 535
+ERROR_IO_PENDING = 997
+ERROR_PIPE_BUSY = 231
+ERROR_FILE_NOT_FOUND = 2
+ERROR_BROKEN_PIPE = 109
+ERROR_MORE_DATA = 234
+WAIT_OBJECT_0 = 0x00000000
+PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
+SDDL_REVISION_1 = 1
+TOKEN_QUERY = 0x0008
+TokenUser = 1
+
+
+class SECURITY_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [
+        ("nLength", w.DWORD),
+        ("lpSecurityDescriptor", ctypes.c_void_p),
+        ("bInheritHandle", w.BOOL),
+    ]
+
+
+class OVERLAPPED(ctypes.Structure):
+    _fields_ = [
+        ("Internal", ctypes.POINTER(ctypes.c_ulong)),
+        ("InternalHigh", ctypes.POINTER(ctypes.c_ulong)),
+        ("Offset", w.DWORD),
+        ("OffsetHigh", w.DWORD),
+        ("hEvent", w.HANDLE),
+    ]
+
+
+class SID_AND_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", w.DWORD)]
+
+
+class TOKEN_USER(ctypes.Structure):
+    _fields_ = [("User", SID_AND_ATTRIBUTES)]
+
+
+kernel32.CreateNamedPipeW.argtypes = [
+    w.LPCWSTR, w.DWORD, w.DWORD, w.DWORD, w.DWORD, w.DWORD, w.DWORD,
+    ctypes.POINTER(SECURITY_ATTRIBUTES),
+]
+kernel32.CreateNamedPipeW.restype = w.HANDLE
+kernel32.ConnectNamedPipe.argtypes = [w.HANDLE, ctypes.POINTER(OVERLAPPED)]
+kernel32.ConnectNamedPipe.restype = w.BOOL
+kernel32.FlushFileBuffers.argtypes = [w.HANDLE]
+kernel32.FlushFileBuffers.restype = w.BOOL
+kernel32.DisconnectNamedPipe.argtypes = [w.HANDLE]
+kernel32.DisconnectNamedPipe.restype = w.BOOL
+kernel32.GetNamedPipeClientProcessId.argtypes = [w.HANDLE, ctypes.POINTER(w.ULONG)]
+kernel32.GetNamedPipeClientProcessId.restype = w.BOOL
+kernel32.CreateFileW.argtypes = [
+    w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE,
+]
+kernel32.CreateFileW.restype = w.HANDLE
+kernel32.WaitNamedPipeW.argtypes = [w.LPCWSTR, w.DWORD]
+kernel32.WaitNamedPipeW.restype = w.BOOL
+kernel32.ReadFile.argtypes = [
+    w.HANDLE, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD), ctypes.POINTER(OVERLAPPED),
+]
+kernel32.ReadFile.restype = w.BOOL
+kernel32.WriteFile.argtypes = [
+    w.HANDLE, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD), ctypes.POINTER(OVERLAPPED),
+]
+kernel32.WriteFile.restype = w.BOOL
+kernel32.GetOverlappedResult.argtypes = [
+    w.HANDLE, ctypes.POINTER(OVERLAPPED), ctypes.POINTER(w.DWORD), w.BOOL,
+]
+kernel32.GetOverlappedResult.restype = w.BOOL
+kernel32.CreateEventW.argtypes = [ctypes.c_void_p, w.BOOL, w.BOOL, w.LPCWSTR]
+kernel32.CreateEventW.restype = w.HANDLE
+kernel32.CancelIo.argtypes = [w.HANDLE]
+kernel32.CancelIo.restype = w.BOOL
+kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+kernel32.LocalFree.restype = ctypes.c_void_p
+kernel32.GetProcessWorkingSetSize.argtypes = [
+    w.HANDLE, ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t)
+]
+kernel32.GetProcessWorkingSetSize.restype = w.BOOL
+kernel32.SetProcessWorkingSetSize.argtypes = [w.HANDLE, ctypes.c_size_t, ctypes.c_size_t]
+kernel32.SetProcessWorkingSetSize.restype = w.BOOL
+ERROR_WORKING_SET_QUOTA = 1453
+kernel32.VirtualLock.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+kernel32.VirtualLock.restype = w.BOOL
+kernel32.VirtualUnlock.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+kernel32.VirtualUnlock.restype = w.BOOL
+kernel32.GetCurrentProcess.argtypes = []
+kernel32.GetCurrentProcess.restype = w.HANDLE
+
+advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+    w.LPCWSTR, w.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(w.DWORD),
+]
+advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = w.BOOL
+advapi32.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE)]
+advapi32.OpenProcessToken.restype = w.BOOL
+advapi32.GetTokenInformation.argtypes = [
+    w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD),
+]
+advapi32.GetTokenInformation.restype = w.BOOL
+advapi32.GetFileSecurityW.argtypes = [
+    w.LPCWSTR, w.DWORD, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD)
+]
+advapi32.GetFileSecurityW.restype = w.BOOL
+advapi32.SetFileSecurityW.argtypes = [w.LPCWSTR, w.DWORD, ctypes.c_void_p]
+advapi32.SetFileSecurityW.restype = w.BOOL
+advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [
+    ctypes.c_void_p, w.DWORD, w.DWORD, ctypes.POINTER(w.LPWSTR), ctypes.POINTER(w.ULONG)
+]
+advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = w.BOOL
+DACL_SECURITY_INFORMATION = 0x00000004
+PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000
+advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(w.LPWSTR)]
+advapi32.ConvertSidToStringSidW.restype = w.BOOL

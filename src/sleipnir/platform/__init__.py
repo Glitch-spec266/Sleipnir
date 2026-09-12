@@ -89,6 +89,18 @@ shell_argv = _impl.shell_argv
 shell_kind = _impl.shell_kind
 resolve_executable = _impl.resolve_executable
 is_reparse_point = _impl.is_reparse_point
+open_no_follow = _impl.open_no_follow
+current_user_id = _impl.current_user_id
+lock_memory = _impl.lock_memory
+make_path_private = _impl.make_path_private
+path_is_private = _impl.path_is_private
+process_belongs_to_current_user = _impl.process_belongs_to_current_user
+unlock_memory = _impl.unlock_memory
+agent_endpoint_is_filesystem_path = _impl.agent_endpoint_is_filesystem_path
+agent_listen = _impl.agent_listen
+agent_connect = _impl.agent_connect
+agent_peer_credentials = _impl.agent_peer_credentials
+open_in_directory = _impl.open_in_directory
 raw_console = _impl.raw_console
 key_reader = _impl.key_reader
 replace_atomic = _impl.replace_atomic
@@ -107,6 +119,18 @@ __all__ = [
     "force_kill_tree",
     "is_reparse_point",
     "key_reader",
+    "open_in_directory",
+    "agent_connect",
+    "agent_endpoint_is_filesystem_path",
+    "agent_listen",
+    "agent_peer_credentials",
+    "current_user_id",
+    "lock_memory",
+    "make_path_private",
+    "path_is_private",
+    "process_belongs_to_current_user",
+    "unlock_memory",
+    "open_no_follow",
     "kill_pid_tree",
     "pid_is_alive",
     "posix_shell",

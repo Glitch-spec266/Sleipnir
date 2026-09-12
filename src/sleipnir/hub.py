@@ -35,6 +35,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from sleipnir import platform
+
 #: Where the shared token lives. Mode 0600, created once, never logged.
 TOKEN_PATH = Path.home() / ".sleipnir" / "hub-token"
 
@@ -65,6 +67,10 @@ def load_token(path: Path = TOKEN_PATH) -> str:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(token)
+    # The mode above is the whole story on POSIX. Windows ignores it: the file
+    # inherits its parent's ACL, which can hand this token to every local
+    # account, so the restrictive ACL is applied explicitly there.
+    platform.make_path_private(path)
     return token
 
 

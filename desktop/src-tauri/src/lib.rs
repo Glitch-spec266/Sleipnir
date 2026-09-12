@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_autostart::ManagerExt as AutoStartExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_shell::process::CommandChild;
@@ -1769,6 +1771,37 @@ pub fn run() {
                     append_message(app.handle(), "sleipnir", error, "voice-error");
                 }
             }
+
+            // The windows are built here, not in `tauri.conf.json`, because
+            // config-declared windows are created during `Builder::build()` --
+            // before this hook runs.  Their webviews would then invoke commands
+            // against unmanaged state and fail with "state not managed", which
+            // the UI reports as a permanent "Core unavailable." on a machine
+            // whose core is healthy.  State is live by this point.
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("Sleipnir")
+                .inner_size(1440.0, 960.0)
+                .min_inner_size(960.0, 680.0)
+                .center()
+                .build()?;
+            WebviewWindowBuilder::new(
+                app,
+                "orb",
+                WebviewUrl::App("index.html?surface=orb".into()),
+            )
+            .title("Sleipnir Voice")
+            .inner_size(208.0, 208.0)
+            .min_inner_size(208.0, 208.0)
+            .resizable(false)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .focused(false)
+            .visible(false)
+            .center()
+            .build()?;
+
             let _ = app.global_shortcut().register(shortcut.as_str());
             let _ = if start_at_login {
                 app.autolaunch().enable()

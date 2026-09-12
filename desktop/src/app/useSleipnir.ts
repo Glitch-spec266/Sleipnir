@@ -12,7 +12,13 @@ export function useSleipnir(bridge: SleipnirBridge) {
       setSnapshot(await bridge.loadDashboard());
       setError(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not connect to Sleipnir");
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : typeof caught === "string" && caught.trim() !== ""
+            ? caught
+            : "Could not connect to Sleipnir",
+      );
     }
   }, [bridge]);
 

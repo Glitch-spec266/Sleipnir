@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from sleipnir import platform
 from sleipnir.gui_history import EncryptedHistory, main
 
 
@@ -16,7 +17,7 @@ def test_history_is_encrypted_at_rest_and_round_trips(tmp_path):
         {"role": "operator", "text": "private project instruction"},
         {"role": "sleipnir", "text": "finished safely"},
     ]
-    assert (tmp_path / "history.key").stat().st_mode & 0o077 == 0
+    assert platform.path_is_private(tmp_path / "history.key")
 
 
 def test_history_tolerates_one_torn_trailing_record(tmp_path):

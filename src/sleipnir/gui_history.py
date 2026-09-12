@@ -7,6 +7,8 @@ import json
 import os
 import stat
 from pathlib import Path
+
+from sleipnir import platform
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -29,8 +31,10 @@ class EncryptedHistory:
         if self.key_path.exists():
             if self.key_path.is_symlink() or not self.key_path.is_file():
                 raise HistoryError(f"unsafe history key path: {self.key_path}")
-            info = self.key_path.stat()
-            if info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            # Windows reports POSIX mode bits it never enforces, so the
+            # question "can another account read this" is answered by the
+            # platform's real access check -- mode there, ACL here.
+            if not platform.path_is_private(self.key_path):
                 raise HistoryError("history key is accessible by another account")
             return self.key_path.read_bytes().strip()
 
@@ -49,6 +53,7 @@ class EncryptedHistory:
             handle.write(key)
             handle.flush()
             os.fsync(handle.fileno())
+        platform.make_path_private(self.key_path)
         return key
 
     def append(self, entry: dict[str, Any]) -> None:
@@ -60,12 +65,16 @@ class EncryptedHistory:
         flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
+        created = not self.path.exists()
         descriptor = os.open(self.path, flags, 0o600)
         with os.fdopen(descriptor, "ab") as handle:
-            os.chmod(handle.fileno(), 0o600)
+            if os.chmod in os.supports_fd:
+                os.chmod(handle.fileno(), 0o600)
             handle.write(token)
             handle.flush()
             os.fsync(handle.fileno())
+        if created:
+            platform.make_path_private(self.path)
 
     def read(self, *, limit: int = 1_000) -> list[dict[str, Any]]:
         if not self.path.exists():

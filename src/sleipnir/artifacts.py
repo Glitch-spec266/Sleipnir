@@ -186,22 +186,21 @@ class AttemptWorkspace:
         """
         if Path(filename).name != filename or filename in {"", ".", ".."}:
             raise WorkspaceCollisionError(f"unsafe workspace filename: {filename!r}")
+        # An unsafe *workspace* and an unsafe *output path* are different
+        # failures -- one means the attempt directory itself was swapped, the
+        # other that a worker planted a link where a harness file goes -- and
+        # the message has to keep saying which.
+        if platform.is_reparse_point(self.dir) or not self.dir.is_dir():
+            raise WorkspaceCollisionError(f"unsafe attempt workspace: {self.dir}")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
         try:
-            directory_fd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            file_fd = platform.open_in_directory(self.dir, filename, flags, 0o600)
         except OSError as exc:
-            raise WorkspaceCollisionError(f"unsafe attempt workspace: {self.dir}") from exc
-        try:
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
-            try:
-                file_fd = os.open(filename, flags, 0o600, dir_fd=directory_fd)
-            except OSError as exc:
-                raise WorkspaceCollisionError(
-                    f"unsafe workspace output path: {self.dir / filename}"
-                ) from exc
-            with os.fdopen(file_fd, "w", encoding="utf-8") as handle:
-                handle.write(text)
-        finally:
-            os.close(directory_fd)
+            raise WorkspaceCollisionError(
+                f"unsafe workspace output path: {self.dir / filename}"
+            ) from exc
+        with os.fdopen(file_fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
 
     def write_json(self, filename: str, payload: Any) -> None:
         self.write_text(filename, json.dumps(payload, indent=2, default=str))

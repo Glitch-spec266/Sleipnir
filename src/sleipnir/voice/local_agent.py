@@ -555,6 +555,12 @@ class LocalToolbox:
         dependencies. A machine without it gets a refusal that names the extra,
         which the model can repeat to the operator -- a traceback cannot be.
         """
+        # Containment first: whether an optional dependency happens to be
+        # installed must not decide whether an escaping path is refused. With
+        # the import check ahead of it, `../../escape.pptx` came back as
+        # "unavailable" on a machine without the extra -- a different answer to
+        # the same attack depending on the host's package list.
+        destination = self._resolved_output(path)
         try:
             from pptx import Presentation  # noqa: PLC0415 - optional extra
             from pptx.util import Pt
@@ -564,7 +570,6 @@ class LocalToolbox:
                 "reason": "presentations need the optional python-pptx extra "
                           "(pip install 'sleipnir[deck]')",
             })
-        destination = self._resolved_output(path)
         if destination.suffix.casefold() != ".pptx":
             destination = destination.with_suffix(".pptx")
         if destination.exists() and self.permission_mode != "always":

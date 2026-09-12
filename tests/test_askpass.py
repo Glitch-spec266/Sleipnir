@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from sleipnir import platform
 from sleipnir.capabilities import agent, askpass
 
 
@@ -119,6 +120,7 @@ def running_agent(tmp_path: Path):
     thread.join(timeout=5)
 
 
+@pytest.mark.skipif(platform.IS_WINDOWS, reason="a named pipe has no file mode; the Windows equivalent is the DACL assertion in test_credential_agent_transport.py")
 def test_agent_socket_is_private(running_agent: agent.Agent) -> None:
     """A socket that hands out plaintext may not be reachable by other users."""
     mode = running_agent.socket_path.stat().st_mode
@@ -309,8 +311,10 @@ def test_full_agent_status_response_is_not_truncated(running_agent: agent.Agent)
 
 
 def test_a_garbage_line_does_not_kill_the_agent(running_agent: agent.Agent) -> None:
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as raw:
-        raw.connect(str(running_agent.socket_path))
+    # Through the platform seam rather than a bare AF_UNIX socket: the point
+    # of the test is that malformed input does not kill the agent, and that
+    # holds on a named pipe too.
+    with platform.agent_connect(running_agent.socket_path, 5.0) as raw:
         raw.sendall(b"NONSENSE \xff\xfe not-base64\n")
         raw.recv(4096)
     client = agent.AgentClient(running_agent.socket_path)
@@ -459,6 +463,7 @@ def test_resolve_is_refused_inside_a_worker_task(
         askpass.resolve("[sudo] password for prahladv:", client=agent.AgentClient(running_agent.socket_path))
 
 
+@pytest.mark.skipif(platform.IS_WINDOWS, reason="Windows has no executable bit; an interpreter decides what runs")
 def test_askpass_helper_script_is_executable_and_private(tmp_path: Path) -> None:
     """SUDO_ASKPASS takes a program path and passes no arguments of its own."""
     path = askpass.write_helper(directory=tmp_path, executable="/opt/x/bin/sleipnir")
@@ -724,6 +729,7 @@ def test_sudo_refuses_to_spawn_when_the_audit_cannot_be_written(monkeypatch) -> 
     assert spawned == []
 
 
+@pytest.mark.skipif(platform.IS_WINDOWS, reason="resource.setrlimit is POSIX-only; Windows crash dumps are configured outside the process")
 def test_agent_process_disables_core_dumps(monkeypatch) -> None:
     calls: list[tuple[int, tuple[int, int]]] = []
     monkeypatch.setattr(agent.resource, "setrlimit", lambda kind, value: calls.append((kind, value)))
@@ -732,6 +738,7 @@ def test_agent_process_disables_core_dumps(monkeypatch) -> None:
     assert calls[0][1] == (0, 0)
 
 
+@pytest.mark.skipif(platform.IS_WINDOWS, reason="creating a file symlink needs SeCreateSymbolicLinkPrivilege, which a normal account lacks")
 def test_helper_replaces_a_symlink_instead_of_following_it(tmp_path: Path) -> None:
     victim = tmp_path / "victim"
     victim.write_text("keep", encoding="utf-8")
@@ -762,6 +769,7 @@ def test_default_helper_is_bound_to_this_python_install_not_path(
     assert "/tmp/stale/sleipnir" not in body
 
 
+@pytest.mark.skipif(platform.IS_WINDOWS, reason="a named pipe has no containing directory to symlink")
 def test_agent_refuses_a_symlinked_socket_directory(tmp_path: Path) -> None:
     real = tmp_path / "real"
     real.mkdir()
@@ -772,6 +780,7 @@ def test_agent_refuses_a_symlinked_socket_directory(tmp_path: Path) -> None:
         server._bind()
 
 
+@pytest.mark.skipif(platform.IS_WINDOWS, reason="a named pipe has no filesystem entry that another file could masquerade as")
 def test_agent_never_unlinks_a_regular_file_masquerading_as_its_socket(tmp_path: Path) -> None:
     path = tmp_path / "agent.sock"
     path.write_text("do not delete", encoding="utf-8")

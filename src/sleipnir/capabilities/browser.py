@@ -67,7 +67,7 @@ def _publish_pid(pid: int, path: Path | None = None) -> None:
 def _read_pid(path: Path | None = None) -> int | None:
     path = PID_FILE if path is None else path
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = platform.open_no_follow(path, os.O_RDONLY)
     except OSError:
         return None
     try:

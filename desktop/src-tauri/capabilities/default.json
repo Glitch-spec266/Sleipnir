@@ -2,6 +2,21 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Core desktop window permissions",
-  "windows": ["main", "orb"],
-  "permissions": ["core:default"]
+  "windows": [
+    "main",
+    "orb"
+  ],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/sleipnir-core",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    }
+  ]
 }

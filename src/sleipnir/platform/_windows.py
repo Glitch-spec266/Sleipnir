@@ -11,8 +11,11 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import ctypes.wintypes
+import errno
+import hashlib
 import msvcrt
 import os
+import re
 import shutil
 import signal
 import stat
@@ -388,6 +391,489 @@ def is_reparse_point(path: Path) -> bool:
     return bool(attrs & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
+def _is_same_file(opened: os.stat_result, on_disk: os.stat_result) -> bool:
+    """Whether a descriptor and a path name the same underlying file.
+
+    Windows fills ``st_ino`` with the NTFS file index and ``st_dev`` with the
+    volume serial, so the pair identifies a file the way the POSIX pair does.
+    A zero index means the filesystem did not supply one, which is treated as
+    "cannot prove they match" rather than as a match.
+    """
+    if opened.st_ino == 0 or on_disk.st_ino == 0:
+        return False
+    return (opened.st_dev, opened.st_ino) == (on_disk.st_dev, on_disk.st_ino)
+
+
+def open_no_follow(path: Path, flags: int, mode: int = 0o600) -> int:
+    """``open_no_follow`` for a platform whose Python has no ``O_NOFOLLOW``.
+
+    Windows cannot ask the kernel to refuse a reparse point through
+    ``os.open``, so the guarantee is rebuilt in two halves: refuse a path that
+    is already a reparse point, then prove after opening that the descriptor
+    and the path still name the same file.  A junction swapped in during the
+    open changes the identity, and the mismatch is what catches it -- the
+    check alone would be a plain time-of-check/time-of-use hole.
+
+    ``O_BINARY`` is forced so callers get the byte stream POSIX gives them and
+    newline translation stays with the text wrapper above, not the descriptor.
+    """
+    path = Path(path)
+    if is_reparse_point(path):
+        raise OSError(errno.ELOOP, "refusing to follow a reparse point", str(path))
+    descriptor = os.open(path, flags | os.O_BINARY, mode)
+    try:
+        opened = os.fstat(descriptor)
+        on_disk = os.lstat(path)
+    except OSError:
+        os.close(descriptor)
+        raise
+    if is_reparse_point(path) or not _is_same_file(opened, on_disk):
+        os.close(descriptor)
+        raise OSError(errno.ELOOP, "path was redirected during open", str(path))
+    return descriptor
+
+
+def open_in_directory(directory: Path, filename: str, flags: int, mode: int = 0o600) -> int:
+    """``open_in_directory`` without ``dir_fd``, which Windows does not support.
+
+    ``os.supports_dir_fd`` is empty here, so the parent is validated by path
+    instead of held open as a descriptor.  The final component still gets the
+    full ``open_no_follow`` treatment, which is the component an agent writing
+    inside its own workspace can actually control.
+    """
+    directory = Path(directory)
+    if is_reparse_point(directory) or not directory.is_dir():
+        raise OSError(errno.ENOTDIR, "unsafe directory", str(directory))
+    return open_no_follow(directory / filename, flags, mode)
+
+
+# ---------------------------------------------------------------------------
+# Local IPC -- capabilities/agent.py's credential cache
+# ---------------------------------------------------------------------------
+#
+# The POSIX agent leans on two properties of a Unix socket in a 0700
+# directory: only this account can open it, and the server learns the peer's
+# pid from the kernel rather than from the client. CPython exposes no AF_UNIX
+# here (Windows has supported it since 10/1803, the interpreter has not), so a
+# named pipe supplies both instead: a DACL naming exactly this user's SID, and
+# ``GetNamedPipeClientProcessId``. ``PIPE_REJECT_REMOTE_CLIENTS`` keeps the
+# pipe off the network, which a Unix socket never was in the first place.
+#
+# The endpoint is still addressed by the ``Path`` the agent passes around,
+# hashed into a pipe name, so nothing above this seam needs to know whether it
+# is speaking to a socket or to a pipe.
+
+
+def _pipe_name(path: Path) -> str:
+    digest = hashlib.sha256(str(path).casefold().encode("utf-8")).hexdigest()
+    return r"\\.\pipe\sleipnir-agent-" + digest[:32]
+
+
+def _token_user_sid(token: ctypes.wintypes.HANDLE) -> str:
+    size = ctypes.wintypes.DWORD(0)
+    _win32.advapi32.GetTokenInformation(token, _win32.TokenUser, None, 0, ctypes.byref(size))
+    buffer = ctypes.create_string_buffer(size.value)
+    if not _win32.advapi32.GetTokenInformation(
+        token, _win32.TokenUser, buffer, size, ctypes.byref(size)
+    ):
+        raise OSError(ctypes.get_last_error(), "could not read the token user")
+    user = ctypes.cast(buffer, ctypes.POINTER(_win32.TOKEN_USER)).contents
+    text = ctypes.wintypes.LPWSTR()
+    if not _win32.advapi32.ConvertSidToStringSidW(user.User.Sid, ctypes.byref(text)):
+        raise OSError(ctypes.get_last_error(), "could not format the token SID")
+    try:
+        return str(text.value)
+    finally:
+        _win32.kernel32.LocalFree(text)
+
+
+def current_user_id() -> str:
+    """This process's token SID -- the Windows answer to ``os.getuid()``."""
+    token = ctypes.wintypes.HANDLE()
+    if not _win32.advapi32.OpenProcessToken(
+        _win32.kernel32.GetCurrentProcess(), _win32.TOKEN_QUERY, ctypes.byref(token)
+    ):
+        raise OSError(ctypes.get_last_error(), "could not open this process's token")
+    try:
+        return _token_user_sid(token)
+    finally:
+        _win32.kernel32.CloseHandle(token)
+
+
+def _process_user_sid(pid: int) -> str:
+    handle = _win32.kernel32.OpenProcess(
+        _win32.PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if not handle:
+        raise OSError(ctypes.get_last_error(), f"could not open peer process {pid}")
+    try:
+        token = ctypes.wintypes.HANDLE()
+        if not _win32.advapi32.OpenProcessToken(handle, _win32.TOKEN_QUERY, ctypes.byref(token)):
+            raise OSError(ctypes.get_last_error(), f"could not open peer token for {pid}")
+        try:
+            return _token_user_sid(token)
+        finally:
+            _win32.kernel32.CloseHandle(token)
+    finally:
+        _win32.kernel32.CloseHandle(handle)
+
+
+def agent_endpoint_is_filesystem_path() -> bool:
+    """A pipe has no directory and no mode, so the path checks do not apply."""
+    return False
+
+
+class _PipeConnection:
+    """The subset of a socket that ``capabilities/agent.py`` actually uses."""
+
+    def __init__(self, handle: int, *, server: bool, timeout: float = 5.0) -> None:
+        self._handle = handle
+        self._server = server
+        self._timeout = timeout
+
+    def settimeout(self, timeout: float | None) -> None:
+        self._timeout = 3600.0 if timeout is None else timeout
+
+    def _finish(self, overlapped: Any, event: Any) -> int:
+        """Wait out one overlapped transfer, then give up rather than hang."""
+        millis = int(max(self._timeout, 0.0) * 1000) or 1
+        if _win32.kernel32.WaitForSingleObject(event, millis) != _win32.WAIT_OBJECT_0:
+            _win32.kernel32.CancelIo(self._handle)
+            raise TimeoutError("named pipe operation timed out")
+        moved = ctypes.wintypes.DWORD(0)
+        if not _win32.kernel32.GetOverlappedResult(
+            self._handle, ctypes.byref(overlapped), ctypes.byref(moved), False
+        ):
+            error = ctypes.get_last_error()
+            if error == _win32.ERROR_BROKEN_PIPE:
+                return 0
+            raise OSError(error, "named pipe transfer failed")
+        return moved.value
+
+    def recv(self, size: int) -> bytes:
+        buffer = ctypes.create_string_buffer(size)
+        overlapped = _win32.OVERLAPPED()
+        event = _win32.kernel32.CreateEventW(None, True, False, None)
+        overlapped.hEvent = event
+        try:
+            moved = ctypes.wintypes.DWORD(0)
+            ok = _win32.kernel32.ReadFile(
+                self._handle, buffer, size, ctypes.byref(moved), ctypes.byref(overlapped)
+            )
+            if ok:
+                count = moved.value
+            else:
+                error = ctypes.get_last_error()
+                if error == _win32.ERROR_BROKEN_PIPE:
+                    return b""
+                if error != _win32.ERROR_IO_PENDING:
+                    raise OSError(error, "named pipe read failed")
+                count = self._finish(overlapped, event)
+            return buffer.raw[:count]
+        finally:
+            _win32.kernel32.CloseHandle(event)
+
+    def sendall(self, payload: bytes) -> None:
+        overlapped = _win32.OVERLAPPED()
+        event = _win32.kernel32.CreateEventW(None, True, False, None)
+        overlapped.hEvent = event
+        try:
+            moved = ctypes.wintypes.DWORD(0)
+            ok = _win32.kernel32.WriteFile(
+                self._handle, payload, len(payload), ctypes.byref(moved), ctypes.byref(overlapped)
+            )
+            if not ok:
+                error = ctypes.get_last_error()
+                if error != _win32.ERROR_IO_PENDING:
+                    raise OSError(error, "named pipe write failed")
+                self._finish(overlapped, event)
+        finally:
+            _win32.kernel32.CloseHandle(event)
+
+    def peer_pid(self) -> int:
+        pid = ctypes.wintypes.ULONG(0)
+        if not _win32.kernel32.GetNamedPipeClientProcessId(self._handle, ctypes.byref(pid)):
+            raise OSError(ctypes.get_last_error(), "could not read the pipe client pid")
+        return int(pid.value)
+
+    def close(self) -> None:
+        if self._handle:
+            if self._server:
+                # A socket's unread data survives close; a pipe's does not.
+                # Disconnecting before the client has drained the reply throws
+                # the reply away, which surfaced as "the agent closed the
+                # connection" on the larger responses (a full LIST) only.
+                _win32.kernel32.FlushFileBuffers(self._handle)
+                _win32.kernel32.DisconnectNamedPipe(self._handle)
+            _win32.kernel32.CloseHandle(self._handle)
+            self._handle = 0
+
+    def __enter__(self) -> _PipeConnection:
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.close()
+
+
+class _PipeListener:
+    """``accept()`` with a timeout, so the agent still runs its expiry sweep."""
+
+    def __init__(self, path: Path, timeout: float | None) -> None:
+        self.name = _pipe_name(path)
+        self._timeout = timeout
+        self._attributes = self._security_attributes()
+        self._claim = None
+
+    def _security_attributes(self) -> Any:
+        # "D:P(A;;GA;;;<sid>)" -- a protected DACL with exactly one entry:
+        # full control for this account, inheritance blocked so nothing
+        # widens it later. This is the ACL equivalent of the 0700 directory
+        # the POSIX socket sits in.
+        sddl = f"D:P(A;;GA;;;{current_user_id()})"
+        descriptor = ctypes.c_void_p()
+        if not _win32.advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, _win32.SDDL_REVISION_1, ctypes.byref(descriptor), None
+        ):
+            raise OSError(ctypes.get_last_error(), "could not build the pipe ACL")
+        attributes = _win32.SECURITY_ATTRIBUTES()
+        attributes.nLength = ctypes.sizeof(_win32.SECURITY_ATTRIBUTES)
+        attributes.lpSecurityDescriptor = descriptor
+        attributes.bInheritHandle = False
+        return attributes
+
+    def _instance(self, *, first: bool) -> int:
+        flags = _win32.PIPE_ACCESS_DUPLEX | _win32.FILE_FLAG_OVERLAPPED
+        if first:
+            flags |= _win32.FILE_FLAG_FIRST_PIPE_INSTANCE
+        handle = _win32.kernel32.CreateNamedPipeW(
+            self.name,
+            flags,
+            _win32.PIPE_TYPE_BYTE
+            | _win32.PIPE_READMODE_BYTE
+            | _win32.PIPE_WAIT
+            | _win32.PIPE_REJECT_REMOTE_CLIENTS,
+            _win32.PIPE_UNLIMITED_INSTANCES,
+            65536,
+            65536,
+            0,
+            ctypes.byref(self._attributes),
+        )
+        if handle == _win32.INVALID_HANDLE_VALUE:
+            raise OSError(ctypes.get_last_error(), f"could not create pipe {self.name}")
+        return handle
+
+    def accept(self) -> tuple[_PipeConnection, None]:
+        # The instance created to claim the name is a real, connectable
+        # instance. Leaving it idle lets the first client attach to a box
+        # nobody ever reads from and time out -- which looked exactly like a
+        # dead agent. Serve on it first, then make fresh instances.
+        if self._claim is not None:
+            handle, self._claim = self._claim, None
+        else:
+            handle = self._instance(first=False)
+        overlapped = _win32.OVERLAPPED()
+        event = _win32.kernel32.CreateEventW(None, True, False, None)
+        overlapped.hEvent = event
+        try:
+            if not _win32.kernel32.ConnectNamedPipe(handle, ctypes.byref(overlapped)):
+                error = ctypes.get_last_error()
+                if error == _win32.ERROR_IO_PENDING:
+                    millis = int((self._timeout if self._timeout else 3600.0) * 1000)
+                    if _win32.kernel32.WaitForSingleObject(event, millis) != _win32.WAIT_OBJECT_0:
+                        _win32.kernel32.CancelIo(handle)
+                        _win32.kernel32.CloseHandle(handle)
+                        raise TimeoutError("no client connected")
+                elif error != _win32.ERROR_PIPE_CONNECTED:
+                    _win32.kernel32.CloseHandle(handle)
+                    raise OSError(error, "could not wait for a pipe client")
+            return _PipeConnection(handle, server=True), None
+        finally:
+            _win32.kernel32.CloseHandle(event)
+
+    def settimeout(self, timeout: float | None) -> None:
+        self._timeout = timeout
+
+    def close(self) -> None:
+        if self._claim:
+            _win32.kernel32.CloseHandle(self._claim)
+            self._claim = None
+        if self._attributes.lpSecurityDescriptor:
+            _win32.kernel32.LocalFree(self._attributes.lpSecurityDescriptor)
+            self._attributes.lpSecurityDescriptor = None
+
+
+def agent_listen(path: Path, *, backlog: int = 16, timeout: float | None = None) -> _PipeListener:
+    """Claim the pipe name, refusing to start beside a live agent.
+
+    ``FILE_FLAG_FIRST_PIPE_INSTANCE`` fails when another process already owns
+    the name, which is this platform's version of the POSIX "a Sleipnir agent
+    is already listening" check -- and unlike a stale socket file, a pipe name
+    disappears with the process that held it, so there is nothing to unlink.
+    """
+    listener = _PipeListener(path, timeout)
+    try:
+        listener._claim = listener._instance(first=True)
+    except OSError:
+        listener.close()
+        raise
+    return listener
+
+
+def agent_connect(path: Path, timeout: float) -> _PipeConnection:
+    name = _pipe_name(path)
+    deadline = time.monotonic() + timeout
+    while True:
+        handle = _win32.kernel32.CreateFileW(
+            name,
+            _win32.GENERIC_READ | _win32.GENERIC_WRITE,
+            0,
+            None,
+            _win32.OPEN_EXISTING,
+            _win32.FILE_FLAG_OVERLAPPED,
+            None,
+        )
+        if handle != _win32.INVALID_HANDLE_VALUE:
+            return _PipeConnection(handle, server=False, timeout=timeout)
+        error = ctypes.get_last_error()
+        if error not in (_win32.ERROR_PIPE_BUSY, _win32.ERROR_FILE_NOT_FOUND):
+            raise OSError(error, f"no Sleipnir agent at {name}")
+        if time.monotonic() >= deadline:
+            raise OSError(error, f"no Sleipnir agent at {name}")
+        if error == _win32.ERROR_PIPE_BUSY:
+            # Every instance is serving someone else; wait for one to free up.
+            _win32.kernel32.WaitNamedPipeW(name, 100)
+        else:
+            # A live agent creates its next instance between connections, so
+            # "not found" is normally that gap rather than a missing agent.
+            # A genuinely absent agent still fails, just at the deadline.
+            time.sleep(0.02)
+
+
+def agent_peer_credentials(conn: _PipeConnection) -> tuple[int | None, str]:
+    """Peer pid from the kernel, then that process's token SID."""
+    pid = conn.peer_pid()
+    return pid, _process_user_sid(pid)
+
+
+def lock_memory(address: int, length: int) -> None:
+    """``VirtualLock`` is the Windows ``mlock``: keeps the pages resident.
+
+    ``ctypes.CDLL(None)`` -- the POSIX way to reach libc -- raises TypeError
+    here, which is what made the credential agent fail with a bare
+    ``TypeError`` rather than anything that named the real problem.
+    """
+    if _win32.kernel32.VirtualLock(ctypes.c_void_p(address), ctypes.c_size_t(length)):
+        return
+    error = ctypes.get_last_error()
+    if error != _win32.ERROR_WORKING_SET_QUOTA:
+        raise OSError(error, "could not lock credential memory")
+    # Windows caps locked memory at the process's *minimum working set*, which
+    # defaults to a couple of hundred KiB -- enough for the first few secrets
+    # and not for a full cache. POSIX has no equivalent ceiling, so the cap is
+    # raised here rather than letting the agent refuse its 60th entry.
+    minimum, maximum = ctypes.c_size_t(0), ctypes.c_size_t(0)
+    process = _win32.kernel32.GetCurrentProcess()
+    if not _win32.kernel32.GetProcessWorkingSetSize(
+        process, ctypes.byref(minimum), ctypes.byref(maximum)
+    ):
+        raise OSError(ctypes.get_last_error(), "could not read the working-set limit")
+    headroom = max(length * 4, 1 << 20)
+    if not _win32.kernel32.SetProcessWorkingSetSize(
+        process, minimum.value + headroom, max(maximum.value, minimum.value + headroom * 2)
+    ):
+        raise OSError(ctypes.get_last_error(), "could not raise the working-set limit")
+    if not _win32.kernel32.VirtualLock(ctypes.c_void_p(address), ctypes.c_size_t(length)):
+        raise OSError(ctypes.get_last_error(), "could not lock credential memory")
+
+
+def unlock_memory(address: int, length: int) -> None:
+    _win32.kernel32.VirtualUnlock(ctypes.c_void_p(address), ctypes.c_size_t(length))
+
+
+#: Accounts whose access to a private file is not a leak: the owner, plus the
+#: two principals that can take ownership anyway. Excluding them would buy no
+#: secrecy and would break backup and repair tooling.
+_HARMLESS_TRUSTEES = frozenset({"SY", "BA", "S-1-5-18", "S-1-5-32-544"})
+
+
+def make_path_private(path: Path) -> None:
+    """Replace the file's DACL with a protected, owner-only one.
+
+    ``os.chmod(path, 0o600)`` is not a permission change on Windows: CPython
+    maps it onto the read-only attribute, and ``st_mode`` keeps reporting
+    group/other bits that were never real. The access check that does exist
+    here is the ACL, so that is what gets set.
+    """
+    sddl = f"D:P(A;;FA;;;{current_user_id()})"
+    descriptor = ctypes.c_void_p()
+    if not _win32.advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        sddl, _win32.SDDL_REVISION_1, ctypes.byref(descriptor), None
+    ):
+        raise OSError(ctypes.get_last_error(), "could not build the file ACL")
+    try:
+        if not _win32.advapi32.SetFileSecurityW(
+            str(path), _win32.DACL_SECURITY_INFORMATION, descriptor
+        ):
+            raise OSError(ctypes.get_last_error(), f"could not set the ACL on {path}")
+    finally:
+        _win32.kernel32.LocalFree(descriptor)
+
+
+def path_is_private(path: Path) -> bool:
+    """Whether the DACL grants access to nobody but this account.
+
+    Reads the descriptor back rather than trusting what was written: a file
+    restored from a backup, or created before this code ran, can carry an
+    inherited ACE that hands it to every local account.
+    """
+    size = ctypes.wintypes.DWORD(0)
+    _win32.advapi32.GetFileSecurityW(
+        str(path), _win32.DACL_SECURITY_INFORMATION, None, 0, ctypes.byref(size)
+    )
+    buffer = ctypes.create_string_buffer(size.value)
+    if not _win32.advapi32.GetFileSecurityW(
+        str(path), _win32.DACL_SECURITY_INFORMATION, buffer, size, ctypes.byref(size)
+    ):
+        raise OSError(ctypes.get_last_error(), f"could not read the ACL on {path}")
+    text = ctypes.wintypes.LPWSTR()
+    if not _win32.advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+        buffer, _win32.SDDL_REVISION_1, _win32.DACL_SECURITY_INFORMATION,
+        ctypes.byref(text), None,
+    ):
+        raise OSError(ctypes.get_last_error(), f"could not read the ACL on {path}")
+    try:
+        sddl = str(text.value)
+    finally:
+        _win32.kernel32.LocalFree(text)
+
+    me = current_user_id()
+    for ace in re.findall(r"\(([^)]*)\)", sddl):
+        parts = ace.split(";")
+        if len(parts) < 6 or not parts[0].startswith("A"):
+            continue  # a deny ACE only ever narrows access
+        trustee = parts[5]
+        if trustee != me and trustee not in _HARMLESS_TRUSTEES:
+            return False
+    return True
+
+
+def process_belongs_to_current_user(pid: int) -> bool:
+    """Whether ``pid`` is a live process owned by this account.
+
+    The POSIX version reads ``/proc/<pid>``'s owner. There is no ``/proc``
+    here, so the same question is asked of the process token -- and asking it
+    matters: the Linux code silently answered "no" on Windows, which made the
+    console treat every pending secret request as stale and delete it.
+    """
+    if not pid_is_alive(pid):
+        return False
+    try:
+        return _process_user_sid(pid) == current_user_id()
+    except OSError:
+        # A process this account cannot open is not this account's process.
+        return False
+
+
 def replace_atomic(src: Path, dst: Path) -> None:
     """``os.replace`` with a short bounded retry.
 
@@ -533,6 +1019,13 @@ __all__ = [
     "enable_ansi",
     "force_kill_tree",
     "is_reparse_point",
+    "lock_memory",
+    "make_path_private",
+    "path_is_private",
+    "process_belongs_to_current_user",
+    "unlock_memory",
+    "open_in_directory",
+    "open_no_follow",
     "key_reader",
     "kill_pid_tree",
     "pid_is_alive",
