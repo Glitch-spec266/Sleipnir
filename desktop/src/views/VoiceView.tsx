@@ -52,6 +52,7 @@ export function VoiceView({ snapshot, onSetListening, onSave }: VoiceViewProps) 
           <h1>{headings[voice.phase]}</h1>
           <p>
             Say <strong>“Hey, {voice.settings.wakeName}”</strong>, or hold your push-to-talk shortcut.
+            Then keep talking naturally; the conversation sleeps after 15 seconds of quiet.
             Speech leaves this device only after activation.
           </p>
           <div className="voice-actions">

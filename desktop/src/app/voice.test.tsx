@@ -13,6 +13,7 @@ describe("voice workspace", () => {
 
     expect(screen.getByRole("heading", { name: "Sleipnir is listening." })).toBeVisible();
     expect(screen.getByText("Wake detection is local")).toBeVisible();
+    expect(screen.getByText(/sleeps after 15 seconds of quiet/i)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Stop listening" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Voice is off." })).toBeVisible());
   });

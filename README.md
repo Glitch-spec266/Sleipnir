@@ -145,12 +145,12 @@ keys are intentionally not claimed until release credentials exist.
 
 The desktop can use an operator-installed Ollama model as a local multimodal
 assistant. The tested Linux configuration is `qwen3.5:4b` under the alias
-`jarvis`, with a 16K context and 512-token response cap. Sleipnir supplies one
-ephemeral current-screen frame, keeps only the newest frame after an action,
-and removes the temporary capture immediately. Browser work prefers bounded DOM
-state and visible-text actions; native-app work uses audited pointer, keyboard,
-scroll, and screen observation. Hard work can be delegated to the installed
-Claude Code or Codex CLI.
+`jarvis`, with a 16K context. Conversation uses a short text-only turn; screen
+observation uses one current frame without action tools. Commands receive the
+relevant browser, desktop, or document tools. Browser actions return bounded
+DOM state and replace the old image; native actions receive a fresh frame.
+Temporary screen captures are removed immediately. Hard work can be delegated
+to the installed Claude Code or Codex CLI.
 
 Continuous wake listening applies local energy-based voice segmentation before
 Whisper, so a quiet room does not spawn repeated transcription jobs. Set
@@ -158,12 +158,39 @@ Whisper, so a quiet room does not spawn repeated transcription jobs. Set
 `ggml-small.en.bin` or `ggml-base.en.bin` under
 `$XDG_DATA_HOME/whisper-models/` (normally
 `~/.local/share/whisper-models/`). Pre-wake transcripts stay inside the
-listener; only text after “Hey, <wake name>” is emitted to the app.
+listener. “Hey, <wake name>” opens a conversation: follow-ups need no repeated
+wake phrase until 15 seconds of quiet. That window restarts after the app
+finishes its reply, so processing time does not consume it. The local model
+stays warm while listening is enabled. Recent conversation is recovered from
+encrypted history across turns and wake cycles, limited to eight messages
+from the last six hours.
 
 The desktop permission posture still applies. `ask` allows observation and
-safe navigation but returns `approval_required` before clicking, filling, or
-typing; `always` enables those audited actions. Credentials remain outside the
-local model and use Sleipnir's protected credential prompt.
+safe navigation. Asking to answer or fill a form also authorizes entering its
+answers; submitting still requires an explicit request or approval. Other
+clicks, fills, and typing return `approval_required` under `ask`; one approval
+covers that turn's task. A blocked tool stops the loop immediately. `always`
+enables those audited actions. Credentials remain outside the local model and
+use Sleipnir's protected credential prompt.
+
+The workbench scrolls within its content area while the navigation dock remains
+visible. A second desktop launch opens the existing instance, keeping one wake
+listener active.
+
+### Phone hub
+
+Enable **Settings → Phone hub** and copy its address and pairing token into the
+iOS client in `ios/SleipnirHub`. Both devices must be on the same reachable
+local network; use the desktop's current address if it changes. The hub requires
+the token for every request and provides run status, pending reviews, an
+on-demand screen view, and a voice-listener toggle. Disable the hub in Settings
+to stop it immediately.
+
+The iOS client targets iOS 16 or later, declares local-network access, and keeps
+the token in the device keychain. Allow Local Network access when prompted;
+if previously denied, enable it in iOS Settings for SleipnirHub. Build an
+unsigned IPA on Linux with
+`sleipnir ios ipa-unsigned --project ios/SleipnirHub -- -c release`.
 
 On current Arch/CachyOS, Tauri's cached `linuxdeploy` contains an older `strip`
 that cannot parse modern `.relr.dyn` ELF sections. Build AppImage with:

@@ -190,7 +190,16 @@ def whisper_model_fix(environment: Mapping[str, str] | None = None) -> tuple[str
     url = (
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
     )
-    return f"mkdir -p {data_home} && curl -L --retry 5 -C - -o {target} {url}", target
+    # XDG_DATA_HOME is inherited process input. It must be a quoted shell word
+    # before this displayable command is later passed to ``sh -c`` by setup.
+    directory_word = shlex.quote(str(data_home))
+    target_word = shlex.quote(str(target))
+    url_word = shlex.quote(url)
+    return (
+        f"mkdir -p {directory_word} && "
+        f"curl -L --retry 5 -C - -o {target_word} {url_word}",
+        target,
+    )
 
 
 def alias_installed(alias: str = LOCAL_ALIAS) -> bool:

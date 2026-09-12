@@ -28,8 +28,26 @@ enum Pairing {
     }
 
     static var isPaired: Bool {
-        guard let address, !address.isEmpty, let token, !token.isEmpty else { return false }
-        return URL(string: address) != nil
+        guard let address, let url = URL(string: address),
+              let host = url.host, !host.isEmpty,
+              url.scheme == "http",
+              let token, !token.isEmpty
+        else { return false }
+        // The desktop hub is intentionally LAN-only. Refusing arbitrary web
+        // addresses keeps the local-network transport exception from turning
+        // this small client into a bearer-token sender for remote hosts.
+        return host == "localhost" || host.hasSuffix(".local") || isPrivateIPv4(host)
+    }
+
+    private static func isPrivateIPv4(_ host: String) -> Bool {
+        let octets = host.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4, octets.allSatisfy({ (0...255).contains($0) }) else {
+            return false
+        }
+        return octets[0] == 10
+            || (octets[0] == 172 && (16...31).contains(octets[1]))
+            || (octets[0] == 192 && octets[1] == 168)
+            || octets[0] == 127
     }
 
     static func forget() {

@@ -55,9 +55,10 @@ _SMALLTALK_PATTERN = re.compile(
 # displayed. Attaching it unconditionally is also what made a small model
 # narrate -- and hallucinate -- a screen nobody asked about.
 _SCREEN_PATTERN = re.compile(
-    r"\b(screen|display|monitor|window|desktop|browser|tab|page|dialog|"
+    r"\b(screen|display(?:ed)?|shown|visible|monitor|window|desktop|browser|tab|page|dialog|"
     r"looking at|see (this|that|here)|read (this|that|the)|on screen|"
-    r"in front of me|this (form|question|image|picture|chart|error))\b",
+    r"in front of me|current(?:ly)? (?:open|displayed|shown)|"
+    r"(?:this|that|the) (form|question|quiz|image|picture|chart|error)|google form)\b",
     re.IGNORECASE,
 )
 # MEASURED on this machine: with ``think: false`` every candidate model got
@@ -89,7 +90,7 @@ _ACTION_VERBS = (
     r"play|pause|resume|skip|mute|"
     r"send|email|message|reply|post|submit|download|upload|"
     r"copy|paste|select|delete|rename|move|save|print|"
-    r"run|execute|check|show\s+me|pull\s+up|bring\s+up|fill\s+in|fill\s+out|answer|"
+    r"run|execute|check|show\s+me|pull\s+up|bring\s+up|fill(?:\s+(?:in|out))?|complete|answer|"
     r"make|draw|generate|prepare|produce|compose|summaris\w*|summariz\w*|"
     r"translate|book|order|schedule|add|remove|update|set)"
 )

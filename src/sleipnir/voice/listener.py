@@ -64,7 +64,13 @@ def _wake_span(transcript: str, wake_name: str) -> tuple[int, int] | None:
     return match.span() if match else None
 
 
-ARM_TIMEOUT_SECONDS = 8.0
+# One wake phrase opens a short conversation, not one command. The timer is
+# refreshed after every utterance and again when the host unmutes us after a
+# reply, so model latency never consumes the operator's chance to answer.
+CONVERSATION_TIMEOUT_SECONDS = 15.0
+# Kept as an import-compatible name for callers that treated this as the
+# bare-wake timeout. Both are now deliberately the same conversation window.
+ARM_TIMEOUT_SECONDS = CONVERSATION_TIMEOUT_SECONDS
 REPEAT_WINDOW_SECONDS = 6.0
 
 
@@ -82,6 +88,7 @@ class WakeCommandDetector:
     repeat_window_seconds: float = REPEAT_WINDOW_SECONDS
     runtime: VoiceRuntime = field(init=False)
     _armed_at: float = field(default=0.0, init=False)
+    _conversation_until: float = field(default=0.0, init=False)
     _last_command: str = field(default="", init=False)
     _last_command_at: float = field(default=0.0, init=False)
 
@@ -91,7 +98,7 @@ class WakeCommandDetector:
     def _release(self, command: str, now: float) -> str | None:
         """Emit a command unless it repeats the previous one immediately.
 
-        The segmenter ends an utterance on 0.8 s of silence, so one spoken
+        The segmenter ends an utterance on 0.5 s of silence, so one spoken
         sentence with a pause in it arrives as two transcripts. Both used to
         reach the host, which started two turns and spoke both replies at once.
         """
@@ -101,29 +108,50 @@ class WakeCommandDetector:
         self._last_command_at = now
         return command
 
+    @property
+    def conversational(self) -> bool:
+        """Whether a wake phrase has opened a follow-up window."""
+        return self._conversation_until > 0.0
+
+    def resume(self, *, now: float) -> None:
+        """Give an active conversation a full window after a reply finishes."""
+        if self.conversational:
+            self._conversation_until = now + self.arm_timeout_seconds
+
+    def _dispatch(self, command: str, now: float) -> str | None:
+        self.runtime.begin_push_to_talk()
+        self.runtime.submit_utterance(command, remote=False)
+        heard = self.runtime.heard
+        self.runtime.complete()
+        self._conversation_until = now + self.arm_timeout_seconds
+        return self._release(heard, now)
+
     def feed(self, transcript: str, *, now: float = 0.0) -> str | None:
         clean = transcript.strip().strip(" .,!?:;-\t\n")
         if not clean:
             return None
-        if self.runtime.phase == "hearing":
-            if now - self._armed_at <= self.arm_timeout_seconds:
-                self.runtime.submit_utterance(clean, remote=False)
-                command = self.runtime.heard
-                self.runtime.complete()
-                return self._release(command, now)
-            # Nobody followed the wake phrase in time. Disarm rather than
-            # treating an unrelated remark as an instruction.
+        if self.conversational:
+            if now <= self._conversation_until:
+                span = _wake_span(clean, self.config.wake_name)
+                command = clean[span[1] :].strip(" .,!?:;-\t\n") if span else clean
+                if not command:
+                    self._conversation_until = now + self.arm_timeout_seconds
+                    self.runtime.begin_push_to_talk()
+                    return None
+                return self._dispatch(command, now)
+            # Fifteen quiet seconds end the conversation. The current words
+            # are private room speech unless they contain a fresh wake phrase.
+            self._conversation_until = 0.0
             self.runtime.complete()
         span = _wake_span(clean, self.config.wake_name)
         if span is None or not self.runtime.feed_local_transcript(clean):
             return None
         command = clean[span[1] :].strip(" .,!?:;-\t\n")
+        self._conversation_until = now + self.arm_timeout_seconds
         if not command:
             self._armed_at = now
             return None
-        self.runtime.submit_utterance(command, remote=False)
-        self.runtime.complete()
-        return self._release(command, now)
+        return self._dispatch(command, now)
 
 
 @dataclass(slots=True)
@@ -207,7 +235,10 @@ class VoiceSegmenter:
 
     frame_seconds: float = 0.1
     minimum_rms: int = 220
-    silence_seconds: float = 0.8
+    # Half a second is long enough to separate conversational turns without
+    # making every command pay an audible extra pause. Measured end-to-end,
+    # the former 0.8 s tail was the largest avoidable fixed latency.
+    silence_seconds: float = 0.5
     minimum_seconds: float = 0.45
     maximum_seconds: float = 12.0
     pre_roll_seconds: float = 0.3
@@ -319,7 +350,9 @@ async def listen_forever(
     recorder = shutil.which("parecord")
     if recorder is None:
         raise RuntimeError("continuous local listening needs parecord")
-    model = LocalWhisperTranscriber()
+    model = LocalWhisperTranscriber(
+        prompt=f"Hey {config.wake_name}. Sleipnir computer assistant commands."
+    )
     detector = WakeCommandDetector(config)
     gate = ListenerGate()
     chunk_bytes = int(_RATE * _CHANNELS * _SAMPLE_WIDTH * chunk_seconds)
@@ -375,7 +408,10 @@ async def listen_forever(
             line = await reader.readline()
             if not line:
                 break
+            was_muted = gate.muted
             gate.apply(line.decode("utf-8", "replace").strip())
+            if was_muted and not gate.muted:
+                detector.resume(now=time.monotonic())
         # EOF on a pipe means the host that spawned us is gone. Exiting here is
         # what stops an orphaned listener from holding the microphone and
         # racing the next app launch for the same wake word.
@@ -468,4 +504,7 @@ if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
 
 
-__all__ = ["VoiceSegmenter", "WakeCommandDetector", "keep_model_warm", "listen_forever", "main"]
+__all__ = [
+    "ARM_TIMEOUT_SECONDS", "CONVERSATION_TIMEOUT_SECONDS", "ListenerGate",
+    "VoiceSegmenter", "WakeCommandDetector", "keep_model_warm", "listen_forever", "main",
+]

@@ -1,2 +1,3 @@
 version: 1
 bundleID: dev.sleipnir.hub
+infoPath: Info.plist

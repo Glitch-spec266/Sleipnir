@@ -22,6 +22,30 @@ test("voice workspace is operable in every color scheme", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("voice settings scroll behind a dock that remains an exit", async ({ page }) => {
+  await page.setViewportSize({ width: 960, height: 680 });
+  await page.goto("/");
+  await expect(page.getByText("Local core connected")).toBeVisible();
+  await page.getByRole("button", { name: "Voice" }).click();
+
+  const bounds = await page.locator(".app-footer").evaluate((footer) => {
+    const rect = footer.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, viewport: window.innerHeight };
+  });
+  expect(bounds.top).toBeGreaterThanOrEqual(0);
+  expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewport);
+  await expect(page.getByRole("button", { name: "Home" })).toBeVisible();
+
+  const workspace = page.locator(".workspace");
+  await workspace.hover();
+  await page.mouse.wheel(0, 500);
+  await expect.poll(() => workspace.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Home" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Home" }).click();
+  await expect(page.getByLabel("New instruction")).toBeVisible();
+});
+
 test("advanced mode exposes the operational workspaces", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Advanced mode" }).click();

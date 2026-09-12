@@ -95,3 +95,13 @@ def test_the_probe_reports_a_fix_for_everything_it_reports_as_missing() -> None:
     for item in onboarding.probe():
         if not item.present and not item.interactive:
             assert item.fix, f"{item.id} is missing with no fix"
+
+
+def test_whisper_download_quotes_the_environment_owned_destination(tmp_path) -> None:
+    hostile = tmp_path / "models; touch escaped"
+
+    command, target = onboarding.whisper_model_fix({"XDG_DATA_HOME": str(hostile)})
+
+    assert target == hostile / "whisper-models" / "ggml-base.en.bin"
+    assert f"'{hostile / 'whisper-models'}'" in command
+    assert f"'{target}'" in command

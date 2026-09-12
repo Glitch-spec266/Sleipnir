@@ -48,8 +48,9 @@ MAX_AGENT_STEPS = 12
 
 LOCAL_AGENT_SYSTEM = """\
 You are JARVIS, Sleipnir's local multimodal operator agent. Be concise and
-truthful. You receive the freshest desktop frame at the start of the turn and
-after actions that can change the display. Use browser DOM tools when a web page
+truthful. You receive the freshest desktop frame at the start of the turn;
+browser actions return the page state they produced, while native desktop
+actions are followed by a new frame. Use browser DOM tools when a web page
 can be understood reliably from structure; use observe_screen for native apps,
 visual layouts, pictures, or when the display may have changed. Never claim an
 action succeeded until a tool result or a fresh frame verifies it.
@@ -59,6 +60,8 @@ the rectangle around it and read the close-up. Never guess at small text: say
 you cannot read it rather than inventing what it says. Form controls appear in
 the browser page state with their role and their checked flag, so read that
 state to see which option is selected rather than judging it from a picture.
+Answering a form means selecting or filling the answers. Stop once the answers
+are entered; submit the form only if the operator explicitly asks you to submit.
 
 Solve the operator's problem yourself. Reasoning, planning, explanations,
 research, maths, writing, and documents are your work, not someone else's: think
@@ -100,6 +103,44 @@ TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "open_file", "description": "Show a file you wrote to the operator in Sleipnir's browser.", "parameters": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "delegate_work", "description": "Hand a problem you cannot solve to a capable worker. Use claude or codex only when the operator names them or the task changes a source repository; use api with a tier from the delegation menu for a hard question you cannot answer yourself.", "parameters": {"type": "object", "required": ["provider", "instruction"], "properties": {"provider": {"type": "string", "enum": ["claude", "codex", "api"]}, "tier": {"type": "string", "description": "Required for provider=api: the tier name from the delegation menu."}, "instruction": {"type": "string"}}}}},
 ]
+
+_BROWSER_TOOL_NAMES = {
+    "observe_region", "browser_open", "browser_text", "browser_click",
+    "browser_click_text", "browser_fill", "browser_scroll", "computer_click",
+    "computer_type", "computer_key", "computer_scroll",
+}
+_COMPUTER_TOOL_NAMES = {
+    "observe_screen", "observe_region", "computer_click", "computer_type",
+    "computer_key", "computer_scroll",
+}
+_DOCUMENT_TOOL_NAMES = {"write_file", "build_deck", "open_file"}
+_BROWSER_REQUEST = re.compile(
+    r"\b(browser|website|web page|tab|link|google|search|form|quiz|worksheet|radio|checkbox)\b",
+    re.IGNORECASE,
+)
+_DOCUMENT_REQUEST = re.compile(
+    r"\b(document|file|notes?|essay|report|presentation|slides?|deck|powerpoint|pptx)\b",
+    re.IGNORECASE,
+)
+
+
+def tools_for(prompt: str) -> list[dict[str, Any]]:
+    """Offer the small model only the capability family this command needs.
+
+    Sixteen unrelated choices made a 4B model confuse reading, browsing and
+    desktop control. The full audited toolbox still exists; this is only the
+    per-turn menu exposed to the model.
+    """
+    names = (
+        _BROWSER_TOOL_NAMES
+        if _BROWSER_REQUEST.search(prompt)
+        else _DOCUMENT_TOOL_NAMES
+        if _DOCUMENT_REQUEST.search(prompt)
+        else _COMPUTER_TOOL_NAMES
+    )
+    if re.search(r"\b(claude|codex|delegate|repository|codebase|source code)\b", prompt, re.IGNORECASE):
+        names = {*names, "delegate_work"}
+    return [tool for tool in TOOLS if tool["function"]["name"] in names]
 
 ACTION_NUDGE = (
     "Do that now by calling the tool, without describing it first. "
@@ -209,7 +250,9 @@ LOOK_SYSTEM = (
     "what you can actually see; if text is too small to read, say so rather "
     "than guessing. You have no tools on this turn: never say you have "
     "opened, clicked, scrolled or changed anything, and never mention a page "
-    "or application that is not visible in this image."
+    "or application that is not visible in this image. Earlier conversation "
+    "is context for follow-up wording only; this newest image is authoritative "
+    "about what is on screen now."
 )
 LOOK_TOKENS = 320
 
@@ -358,6 +401,31 @@ class LocalToolbox:
         self.task_grant = task_grant
         self.blocked: list[str] = []
 
+    def _prompt_authorises(self, action: str, arguments: Mapping[str, Any]) -> bool:
+        """Recognise narrow interaction authority already present in the ask.
+
+        Choosing or filling answers is the substance of "answer this form";
+        asking again before every radio option turns the permission boundary
+        into a refusal. Submission and other finalising labels remain gated
+        unless the operator explicitly named them.
+        """
+        if not re.search(r"\b(answer|fill(?: in| out)?|complete)\b", self.original_prompt):
+            return False
+        if not re.search(r"\b(form|quiz|worksheet)\b", self.original_prompt):
+            return False
+        if action in {"browser_fill", "computer_click", "computer_type"}:
+            return True
+        if action != "browser_click_text":
+            return False
+        label = str(arguments.get("text", "")).casefold()
+        finalising = re.search(
+            r"\b(submit|send|post|purchase|buy|pay|delete|remove|confirm|finish)\b",
+            label,
+        )
+        return finalising is None or bool(
+            re.search(r"\b(submit|send|post|finish)\b", self.original_prompt)
+        )
+
     def _resolved_output(self, raw: str) -> Path:
         """Resolve a model-supplied file name inside the output folder.
 
@@ -415,7 +483,7 @@ class LocalToolbox:
                 return text[:MAX_TOOL_RESULT_CHARS]
             return json.dumps(await (await self._web()).state())[:MAX_TOOL_RESULT_CHARS]
         if name in {"browser_click", "browser_click_text", "browser_fill", "browser_scroll", "computer_click", "computer_type", "computer_key", "computer_scroll"}:
-            if blocked := self._approval(name):
+            if not self._prompt_authorises(name, arguments) and (blocked := self._approval(name)):
                 return blocked
         if name == "browser_click":
             await (await self._web()).click(str(arguments["selector"]))
@@ -687,14 +755,16 @@ class LocalDesktopAgent:
         nudged = False
         if needs_reasoning(clean):
             try:
-                return await self._reason(clean, model=model)
+                return await self._reason(clean, model=model, history=history)
             except LocalCapabilityExceeded:
                 # The deadline exists to hand off fast rather than make the
                 # operator wait, so it has to actually hand off. Going through
                 # the tool keeps the delegation on the audited path.
                 return await self._escalate(clean, model=model, run_tool=run_tool)
         if is_observation(clean):
-            return await self._look(clean, model=model, operator_name=operator_name)
+            return await self._look(
+                clean, model=model, history=history, operator_name=operator_name
+            )
         if not needs_tools(clean):
             return await self._chat(
                 clean, model=model, history=history, operator_name=operator_name
@@ -730,7 +800,7 @@ class LocalDesktopAgent:
                         json={
                             "model": model,
                             "messages": messages,
-                            "tools": TOOLS,
+                            "tools": tools_for(clean),
                             "stream": False,
                             # Small local models can spend the entire output budget
                             # on hidden reasoning and emit neither a tool nor a final
@@ -781,6 +851,7 @@ class LocalDesktopAgent:
                             approval=toolbox.blocked[0] if toolbox and toolbox.blocked else None,
                         )
                     refresh = False
+                    browser_updated = False
                     for call in calls:
                         function = call.get("function", {})
                         name = str(function.get("name", ""))
@@ -791,19 +862,54 @@ class LocalDesktopAgent:
                             result = await run_tool(name, arguments)
                         except Exception as error:  # noqa: BLE001 - error becomes bounded tool evidence
                             result = json.dumps({"status": "error", "detail": str(error)[:480]})
+                        try:
+                            outcome = json.loads(result)
+                        except (TypeError, ValueError):
+                            outcome = None
+                        if isinstance(outcome, dict) and outcome.get("status") == "approval_required":
+                            # A blocked action is not completion evidence. Stop
+                            # before the next tool in this batch, without asking
+                            # the model to describe an action that never ran.
+                            actions = {
+                                "browser_click": "clicking that page element",
+                                "browser_fill": "filling that field",
+                                "browser_scroll": "scrolling the page",
+                                "computer_click": "clicking on the screen",
+                                "computer_type": "typing in the focused window",
+                                "computer_key": "pressing that key combination",
+                                "computer_scroll": "scrolling the focused window",
+                            }
+                            action = actions.get(name, "taking that action")
+                            if name == "browser_click_text":
+                                label = " ".join(str(arguments.get("text", "")).split())[:80]
+                                action = f"clicking “{label}”" if label else "clicking that page element"
+                            return LocalAgentReply(
+                                text=f"I need your approval before {action}.",
+                                model=model,
+                                steps=step,
+                                approval=name,
+                            )
                         performed.append(name)
                         messages.append({"role": "tool", "tool_name": name, "content": result[:MAX_TOOL_RESULT_CHARS]})
+                        # Browser actions already return the post-action DOM
+                        # state. Re-encoding the same page as an image after
+                        # every click added seconds and a second source of
+                        # truth. Native desktop actions still need a frame.
                         refresh = refresh or name in {
-                            "observe_screen", "observe_region", "browser_open", "browser_click",
-                            "browser_click_text", "browser_fill", "browser_scroll",
-                            "computer_click", "computer_type", "computer_key", "computer_scroll",
+                            "observe_screen", "observe_region", "computer_click",
+                            "computer_type", "computer_key", "computer_scroll",
                         }
-                    if refresh:
+                        browser_updated = browser_updated or name in {
+                            "browser_open", "browser_click", "browser_click_text",
+                            "browser_fill", "browser_scroll",
+                        }
+                    if refresh or browser_updated:
                         # The model needs the newest visual state, not an ever-growing
-                        # filmstrip. Keeping old frames exhausts a modest local context
-                        # after one action and contradicts the live-observer contract.
+                        # filmstrip. A browser result is already the newest DOM state,
+                        # so its old opening image is dropped without replacing it.
                         for prior in messages:
                             prior.pop("images", None)
+                    if refresh:
                         region = getattr(toolbox, "pending_region", None)
                         if toolbox is not None:
                             toolbox.pending_region = None
@@ -894,7 +1000,13 @@ class LocalDesktopAgent:
             str(message.get("thinking", "")).strip(),
         )
 
-    async def _reason(self, content: str, *, model: str) -> LocalAgentReply:
+    async def _reason(
+        self,
+        content: str,
+        *,
+        model: str,
+        history: Sequence[Mapping[str, Any]] | None = None,
+    ) -> LocalAgentReply:
         """Answer with a scratchpad, and never hand back the scratchpad.
 
         Ollama reports reasoning in its own ``thinking`` field, so empty content
@@ -911,6 +1023,7 @@ class LocalDesktopAgent:
                     system="",
                     think=True,
                     num_predict=REASON_TOKENS,
+                    prior=_conversation_turns(history),
                 )
         except TimeoutError as error:
             raise LocalCapabilityExceeded(
@@ -964,7 +1077,12 @@ class LocalDesktopAgent:
         return LocalAgentReply(text=text or "I'm here.", model=model, steps=1)
 
     async def _look(
-        self, content: str, *, model: str, operator_name: str = ""
+        self,
+        content: str,
+        *,
+        model: str,
+        history: Sequence[Mapping[str, Any]] | None = None,
+        operator_name: str = "",
     ) -> LocalAgentReply:
         """Read the screen in one vision call: no tools, no loop, no browser."""
         message = await self._visual_message(content)
@@ -975,6 +1093,7 @@ class LocalDesktopAgent:
                     "model": model,
                     "messages": [
                         {"role": "system", "content": with_operator(LOOK_SYSTEM, operator_name)},
+                        *_conversation_turns(history),
                         message,
                     ],
                     "stream": False,
@@ -1003,5 +1122,5 @@ class LocalDesktopAgent:
 
 __all__ = [
     "CHAT_SYSTEM", "LOCAL_AGENT_SYSTEM", "LOOK_SYSTEM", "with_operator", "LocalCapabilityExceeded", "SHORTEN_PROMPT", "LocalAgentReply", "LocalDesktopAgent", "LocalToolbox",
-    "MAX_AGENT_STEPS", "ScreenObserver", "TOOLS", "strip_thinking",
+    "MAX_AGENT_STEPS", "ScreenObserver", "TOOLS", "strip_thinking", "tools_for",
 ]

@@ -100,6 +100,12 @@ def test_listener_segments_speech_and_never_transcribes_quiet_chunks():
     assert voice in utterance
 
 
+def test_default_silence_tail_keeps_voice_turns_responsive():
+    segmenter = VoiceSegmenter()
+
+    assert segmenter.silence_seconds == 0.5
+
+
 def test_local_agent_sends_live_vision_and_continues_after_a_tool_call(tmp_path):
     requests = []
 
@@ -135,6 +141,44 @@ def test_local_agent_sends_live_vision_and_continues_after_a_tool_call(tmp_path)
     assert requests[0]["messages"][1]["images"]
     assert any(message.get("role") == "tool" for message in requests[1]["messages"])
     assert sum(1 for message in requests[1]["messages"] if message.get("images")) == 1
+
+
+def test_browser_page_state_replaces_the_old_frame_instead_of_reencoding_it(tmp_path):
+    requests = []
+
+    class Observer:
+        calls = 0
+
+        async def capture(self):
+            self.calls += 1
+            return b"opening-frame"
+
+    async def run_tool(name, arguments):
+        assert name == "browser_scroll"
+        return json.dumps({"url": "https://example.test/form", "text": "Question two"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return httpx.Response(200, json={"message": {
+                "role": "assistant",
+                "tool_calls": [{"function": {"name": "browser_scroll", "arguments": {"amount": -3}}}],
+            }})
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "Question two is visible."}})
+
+    observer = Observer()
+    reply = asyncio.run(LocalDesktopAgent(
+        transport=httpx.MockTransport(handler), observer=observer, tool_runner=run_tool,
+    ).respond(
+        "scroll the browser form",
+        model="jarvis",
+        workspace=tmp_path,
+        permission_mode="always",
+    ))
+
+    assert reply.steps == 2
+    assert observer.calls == 1
+    assert sum(1 for message in requests[1]["messages"] if message.get("images")) == 0
 
 def test_openrouter_speech_uses_key_in_header_not_payload():
     captured = {}
@@ -640,6 +684,24 @@ def test_a_bare_wake_word_disarms_instead_of_capturing_the_next_utterance_foreve
     assert detector.runtime.phase == "armed"
 
 
+def test_one_wake_phrase_opens_a_fifteen_second_conversation():
+    """Follow-ups should sound like conversation, not repeated incantations."""
+    detector = WakeCommandDetector(VoiceConfig(wake_name="JARVIS"))
+
+    assert detector.feed("Hey JARVIS how are you", now=10.0) == "how are you"
+    assert detector.feed("what did you just say", now=24.9) == "what did you just say"
+    assert detector.feed("and one more thing", now=40.0) is None
+    assert detector.feed("Hey JARVIS wake up", now=41.0) == "wake up"
+
+
+def test_processing_time_does_not_consume_the_follow_up_window():
+    detector = WakeCommandDetector(VoiceConfig(wake_name="JARVIS"))
+
+    assert detector.feed("Hey JARVIS solve this", now=1.0) == "solve this"
+    detector.resume(now=50.0)  # the host finished speaking much later
+    assert detector.feed("why is that", now=64.9) == "why is that"
+
+
 def test_the_host_can_mute_the_listener_so_sleipnir_never_hears_its_own_voice():
     gate = ListenerGate()
 
@@ -687,6 +749,7 @@ def test_the_classifier_separates_smalltalk_from_screen_questions():
     assert needs_screen("what is on my screen right now") is True
     assert needs_screen("read the question in this window") is True
     assert needs_screen("what am I looking at") is True
+    assert needs_screen("answer the question") is True
     assert needs_screen("what's up") is False
     assert needs_screen("what is the capital of France") is False
 
@@ -887,7 +950,7 @@ def test_a_blocked_action_asks_once_for_the_whole_task_not_once_per_click(tmp_pa
     from sleipnir.voice.local_agent import LocalToolbox
 
     toolbox = LocalToolbox(
-        workspace=tmp_path, permission_mode="ask", original_prompt="fill in the form"
+        workspace=tmp_path, permission_mode="ask", original_prompt="click there"
     )
     blocked = asyncio.run(toolbox.execute("computer_click", {"x": 1, "y": 2}))
     assert json.loads(blocked)["status"] == "approval_required"
@@ -896,13 +959,40 @@ def test_a_blocked_action_asks_once_for_the_whole_task_not_once_per_click(tmp_pa
     granted = LocalToolbox(
         workspace=tmp_path,
         permission_mode="ask",
-        original_prompt="fill in the form",
+        original_prompt="click there",
         task_grant=True,
     )
     # The grant covers the task, so the gate stops answering for every action.
     assert granted._approval("computer_click") is None
     # It never reaches credentials: those stay behind the operator prompt.
     assert granted.permission_mode == "ask"
+
+
+def test_answering_a_form_does_not_refuse_each_nonfinal_answer(tmp_path):
+    from sleipnir.voice.local_agent import LocalToolbox
+
+    toolbox = LocalToolbox(
+        workspace=tmp_path,
+        permission_mode="ask",
+        original_prompt="answer the questions on this Google Form",
+    )
+
+    assert toolbox._prompt_authorises("browser_click_text", {"text": "Paris"})
+    assert toolbox._prompt_authorises("browser_fill", {"text": "Paris"})
+    assert not toolbox._prompt_authorises("browser_click_text", {"text": "Submit"})
+    assert not toolbox._prompt_authorises("browser_click", {"selector": "div"})
+
+
+def test_explicit_submission_authorises_the_form_s_submit_button(tmp_path):
+    from sleipnir.voice.local_agent import LocalToolbox
+
+    toolbox = LocalToolbox(
+        workspace=tmp_path,
+        permission_mode="ask",
+        original_prompt="answer and submit this form",
+    )
+
+    assert toolbox._prompt_authorises("browser_click_text", {"text": "Submit"})
 
 
 def test_the_reply_carries_what_it_needs_permission_for(tmp_path):
@@ -936,6 +1026,48 @@ def test_the_reply_carries_what_it_needs_permission_for(tmp_path):
     assert reply.text
 
 
+def test_a_blocked_tool_stops_the_batch_and_cannot_be_reported_as_done(tmp_path):
+    executed = []
+    requests = []
+
+    async def run_tool(name, arguments):
+        executed.append(name)
+        return json.dumps({"status": "approval_required", "action": name})
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {
+            "role": "assistant",
+            "content": "I submitted the form.",
+            "tool_calls": [
+                {"function": {"name": "browser_click_text", "arguments": {"text": "Submit"}}},
+                {"function": {"name": "browser_fill", "arguments": {"selector": "input", "text": "extra"}}},
+            ],
+        }})
+
+    class Observer:
+        async def capture(self):
+            return b"frame"
+
+    reply = asyncio.run(LocalDesktopAgent(
+        transport=httpx.MockTransport(handler), observer=Observer(), tool_runner=run_tool,
+    ).respond("answer this Google Form", model="jarvis", workspace=tmp_path, permission_mode="ask"))
+
+    assert executed == ["browser_click_text"]
+    assert len(requests) == 1
+    assert reply.approval == "browser_click_text"
+    assert "approval" in reply.text.casefold()
+    assert "submitted" not in reply.text.casefold()
+
+
+@pytest.mark.parametrize("prompt", ["complete this form", "fill this form", "fill in this worksheet"])
+def test_common_form_commands_reach_the_action_lane(prompt):
+    from sleipnir.voice.routing import is_observation, needs_tools
+
+    assert needs_tools(prompt)
+    assert not is_observation(prompt)
+
+
 def test_ordinary_conversation_stays_off_the_tool_loop():
     """A remark is not an instruction, and the tool loop is the wrong shape for it.
 
@@ -967,6 +1099,26 @@ def test_ordinary_conversation_stays_off_the_tool_loop():
         "scroll down a bit",
     ):
         assert needs_tools(instruction) is True, instruction
+
+
+def test_each_command_sees_only_its_relevant_tool_family():
+    from sleipnir.voice.local_agent import tools_for
+
+    def names(prompt: str) -> set[str]:
+        return {tool["function"]["name"] for tool in tools_for(prompt)}
+
+    form = names("answer the questions on this Google Form")
+    assert {"browser_text", "browser_click_text", "browser_fill"} <= form
+    assert "computer_click" in form  # fallback for a browser not owned by CDP
+    assert "build_deck" not in form
+
+    desktop = names("click the visible button")
+    assert "computer_click" in desktop
+    assert "browser_fill" not in desktop
+
+    deck = names("make a PowerPoint presentation")
+    assert {"build_deck", "open_file"} <= deck
+    assert "computer_click" not in deck
 
 
 def test_the_conversation_lane_sees_the_recent_turns(tmp_path):
@@ -1111,6 +1263,7 @@ def test_a_look_question_never_enters_the_tool_loop() -> None:
     assert is_observation("what's on my screen right now")
     assert is_observation("show me what is on my screen")
     assert is_observation("what does this error dialog say")
+    assert is_observation("solve the question currently displayed on my screen")
     # A second verb survives the look-opener strip, so real work still routes.
     assert not is_observation("tell me what is on screen then click submit")
     assert not is_observation("answer the question on my screen")
@@ -1144,6 +1297,34 @@ def test_the_look_lane_sends_no_tools_and_answers_in_one_step(tmp_path: Path) ->
     assert len(seen) == 1
     assert "tools" not in seen[0]
     assert "Prahlad" in seen[0]["messages"][0]["content"]
+
+
+def test_the_look_lane_keeps_conversational_context_but_trusts_the_new_frame(tmp_path: Path) -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {"content": "The second answer is four."}})
+
+    class Observer:
+        async def capture(self, *, region: object | None = None) -> bytes:
+            return b"new-frame"
+
+    agent = LocalDesktopAgent(transport=httpx.MockTransport(handler), observer=Observer())
+    asyncio.run(agent.respond(
+        "what about the second question shown here",
+        workspace=tmp_path,
+        model="jarvis",
+        permission_mode="ask",
+        history=[
+            {"role": "operator", "text": "solve the first question"},
+            {"role": "sleipnir", "text": "The first answer is two."},
+        ],
+    ))
+
+    messages = seen[0]["messages"]
+    assert [message["role"] for message in messages] == ["system", "user", "assistant", "user"]
+    assert messages[-1]["images"]
 
 
 def test_the_name_is_absent_when_none_is_configured() -> None:

@@ -316,7 +316,6 @@ fn core_command(
     Ok(command)
 }
 
-
 /// Everything a fresh install still needs, as the Python probe reports it.
 ///
 /// The wizard never builds this list itself: one probe backs the CLI and the
@@ -330,7 +329,11 @@ async fn onboarding_probe(app: AppHandle) -> Result<Value, String> {
 /// Memory headroom and the local models that fit it.
 #[tauri::command]
 async fn onboarding_models(app: AppHandle) -> Result<Value, String> {
-    core_json(&app, vec!["onboarding".into(), "--models".into(), "--json".into()]).await
+    core_json(
+        &app,
+        vec!["onboarding".into(), "--models".into(), "--json".into()],
+    )
+    .await
 }
 
 /// Install everything missing. Privileged steps run as one batch behind a
@@ -437,7 +440,7 @@ async fn run_core_with_stdin(
 fn stop_hub(state: &DesktopState) {
     if let Ok(mut hub) = state.hub.lock() {
         if let Some(child) = hub.take() {
-            let _ = child.kill();
+            terminate_sidecar(child);
         }
     }
     if let Ok(mut address) = state.hub_address.lock() {
@@ -509,9 +512,65 @@ fn start_hub(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
 fn stop_voice_listener(state: &DesktopState) {
     if let Ok(mut listener) = state.voice_listener.lock() {
         if let Some(child) = listener.take() {
-            let _ = child.kill();
+            terminate_sidecar(child);
         }
     }
+}
+
+/// Stop both Tauri's sidecar child and any process it spawned.
+///
+/// PyInstaller's one-file launcher supervises a second process. Killing only
+/// the launcher leaves that inner voice listener holding the microphone, so a
+/// push-to-talk cycle can otherwise accumulate competing listeners.
+fn terminate_sidecar(child: CommandChild) {
+    #[cfg(target_os = "linux")]
+    {
+        let descendants = linux_process_descendants(child.pid());
+        for pid in descendants.into_iter().rev() {
+            // SAFETY: `pid` came from /proc and SIGTERM does not dereference a
+            // pointer. Failure is harmless here; the process may have exited.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            }
+        }
+    }
+    let _ = child.kill();
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_descendants(root: u32) -> Vec<u32> {
+    let relationships = fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_string_lossy().parse::<u32>().ok())
+        .filter_map(|pid| {
+            let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+            let parent = status
+                .lines()
+                .find_map(|line| line.strip_prefix("PPid:\t"))?
+                .trim()
+                .parse::<u32>()
+                .ok()?;
+            Some((pid, parent))
+        })
+        .collect::<Vec<_>>();
+    process_descendants(root, &relationships)
+}
+
+#[cfg(target_os = "linux")]
+fn process_descendants(root: u32, relationships: &[(u32, u32)]) -> Vec<u32> {
+    let mut descendants = Vec::new();
+    let mut frontier = vec![root];
+    while let Some(parent) = frontier.pop() {
+        for &(pid, ppid) in relationships {
+            if ppid == parent && !descendants.contains(&pid) {
+                descendants.push(pid);
+                frontier.push(pid);
+            }
+        }
+    }
+    descendants
 }
 
 fn start_voice_listener(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
@@ -569,7 +628,12 @@ fn start_voice_listener(app: &AppHandle, state: &DesktopState) -> Result<(), Str
                             // says nothing about why.
                             Some("warning") => {
                                 if let Some(text) = payload["text"].as_str() {
-                                    append_message(&listener_app, "sleipnir", text.to_owned(), "voice-warning");
+                                    append_message(
+                                        &listener_app,
+                                        "sleipnir",
+                                        text.to_owned(),
+                                        "voice-warning",
+                                    );
                                 }
                             }
                             Some("error") => {
@@ -855,12 +919,7 @@ async fn hub_pairing(app: AppHandle, state: State<'_, DesktopState>) -> Result<V
     if address.is_empty() {
         return Ok(json!({"running": false, "address": "", "token": ""}));
     }
-    let output = run_core(
-        &app,
-        "cli",
-        vec!["hub-token".into()],
-    )
-    .await?;
+    let output = run_core(&app, "cli", vec!["hub-token".into()]).await?;
     if !output.success {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
     }
@@ -1056,7 +1115,8 @@ async fn send_message(
     if text.trim().is_empty() {
         return Err("instruction cannot be empty".into());
     }
-    let _turn = TurnGuard::claim(&app).ok_or("Sleipnir is still working on the previous request")?;
+    let _turn =
+        TurnGuard::claim(&app).ok_or("Sleipnir is still working on the previous request")?;
     // A pending approval turns the operator's next word into a decision about
     // the task Sleipnir stopped on, rather than a fresh instruction.
     let awaiting = state
@@ -1179,9 +1239,32 @@ async fn send_message(
 /// Anything that is neither a yes nor a no is a new instruction, not a silent
 /// refusal: guessing either way would be worse than asking again.
 fn approval_answer(text: &str) -> Option<bool> {
-    let clean = text.trim().trim_matches(|c: char| c.is_ascii_punctuation()).to_lowercase();
-    const YES: [&str; 10] = ["yes", "yeah", "yep", "yup", "sure", "ok", "okay", "go ahead", "do it", "please do"];
-    const NO: [&str; 8] = ["no", "nope", "nah", "stop", "cancel", "don't", "do not", "never mind"];
+    let clean = text
+        .trim()
+        .trim_matches(|c: char| c.is_ascii_punctuation())
+        .to_lowercase();
+    const YES: [&str; 10] = [
+        "yes",
+        "yeah",
+        "yep",
+        "yup",
+        "sure",
+        "ok",
+        "okay",
+        "go ahead",
+        "do it",
+        "please do",
+    ];
+    const NO: [&str; 8] = [
+        "no",
+        "nope",
+        "nah",
+        "stop",
+        "cancel",
+        "don't",
+        "do not",
+        "never mind",
+    ];
     if YES.contains(&clean.as_str()) {
         return Some(true);
     }
@@ -1416,6 +1499,14 @@ fn show_main_window(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // This must be the first plugin. A per-process turn mutex cannot stop
+        // two separately launched desktop processes from each owning a wake
+        // listener and answering the same phrase.
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _cwd| {
+                show_main(app);
+            },
+        ))
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
@@ -1568,6 +1659,15 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sidecar_descendants_include_nested_pyinstaller_processes() {
+        let processes = [(20, 10), (30, 20), (40, 30), (50, 999)];
+        let descendants = process_descendants(10, &processes);
+
+        assert_eq!(descendants, vec![20, 30, 40]);
+    }
 
     #[test]
     fn only_an_unambiguous_answer_decides_a_pending_approval() {

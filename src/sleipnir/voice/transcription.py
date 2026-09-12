@@ -122,10 +122,12 @@ class LocalWhisperTranscriber:
         executable: str | None = None,
         model: Path | None = None,
         ffmpeg: str | None = None,
+        prompt: str = "",
     ) -> None:
         self.executable = executable
         self.model = model
         self.ffmpeg = ffmpeg
+        self.prompt = " ".join(prompt.split())[:240]
 
     async def transcribe(self, audio: bytes, *, mime_type: str) -> str:
         if not audio:
@@ -166,8 +168,14 @@ class LocalWhisperTranscriber:
                     "convert recording",
                 )
             output = root / "transcript"
+            command = [
+                executable, "-m", str(model), "-f", str(wave),
+                "-l", "en", "-nt", "-np", "-otxt", "-of", str(output),
+            ]
+            if self.prompt:
+                command.extend(["--prompt", self.prompt])
             await _run_checked(
-                [executable, "-m", str(model), "-f", str(wave), "-otxt", "-of", str(output)],
+                command,
                 "transcribe recording",
             )
             transcript = output.with_suffix(".txt")
